@@ -1,0 +1,149 @@
+{
+  "medications": 7.5,
+  "bills": 0,
+  "serviceFees": 0.027000000000000003,
+  "transactions": [
+    {
+      "id": "tx-1775194882366",
+      "timestamp": "2026-04-03T05:41:22.366Z",
+      "type": "service_fee",
+      "description": "x402 query: pharmacy prices for lisinopril",
+      "amount": 0.002,
+      "recipient": "GCS3Y2TMD6NRXN4GA3YYEUIFAITK3EYBBBMP2VB3EXHRXW4IBDZE3R2U",
+      "stellarTxHash": "eyJzdWNjZXNzIjp0cnVlLCJwYXllciI6IkdCWDY0REZYTzQzV1YzUFNGNEpFR0hONU5CTVZTWEdQVVBOQUVVVkJMVVFQNEZHUjNYWURBWlFBIiwidHJhbnNhY3Rpb24iOiI0Nzk1ZGQ4NGM3YmNhN2EwYzE0YzMyMTlmNDZiNjJhNjdlZDQxODk0MTgxMjdiZDE2NTQ5MDkxNTgyNTExYTEwIiwibmV0d29yayI6InN0ZWxsYXI6dGVzdG5ldCJ9",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775194890846",
+      "timestamp": "2026-04-03T05:41:30.846Z",
+      "type": "service_fee",
+      "description": "x402 query: pharmacy prices for metformin",
+      "amount": 0.002,
+      "recipient": "GCS3Y2TMD6NRXN4GA3YYEUIFAITK3EYBBBMP2VB3EXHRXW4IBDZE3R2U",
+      "stellarTxHash": "eyJzdWNjZXNzIjp0cnVlLCJwYXllciI6IkdCWDY0REZYTzQzV1YzUFNGNEpFR0hONU5CTVZTWEdQVVBOQUVVVkJMVVFQNEZHUjNYWURBWlFBIiwidHJhbnNhY3Rpb24iOiI2Y2Q0Mzg0NjIzMWM5M2I1OGU1NjljM2E1NzhiMTkxZGIxNTViOWNiZDllMzBkMjA3YjNkNTQ0MzY3OGMwYzY2IiwibmV0d29yayI6InN0ZWxsYXI6dGVzdG5ldCJ9",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775194901773",
+      "timestamp": "2026-04-03T05:41:41.773Z",
+      "type": "service_fee",
+      "description": "x402 query: pharmacy prices for atorvastatin",
+      "amount": 0.002,
+      "recipient": "GCS3Y2TMD6NRXN4GA3YYEUIFAITK3EYBBBMP2VB3EXHRXW4IBDZE3R2U",
+      "stellarTxHash": "eyJzdWNjZXNzIjp0cnVlLCJwYXllciI6IkdCWDY0REZYTzQzV1YzUFNGNEpFR0hONU5CTVZTWEdQVVBOQUVVVkJMVVFQNEZHUjNYWURBWlFBIiwidHJhbnNhY3Rpb24iOiI0YjlkNDE0YjAwYjdkNTMyOGIyZmY5ZTM1MjYwYjZmNjExZTIwZTZjMTI3ZDdjZWI5MGFiOGMxYWNhZjQwYjY3IiwibmV0d29yayI6InN0ZWxsYXI6dGVzdG5ldCJ9",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775194909525",
+      "timestamp": "2026-04-03T05:41:49.525Z",
+      "type": "service_fee",
+      "description": "x402 query: pharmacy prices for amlodipine",
+      "amount": 0.002,
+      "recipient": "GCS3Y2TMD6NRXN4GA3YYEUIFAITK3EYBBBMP2VB3EXHRXW4IBDZE3R2U",
+      "stellarTxHash": "eyJzdWNjZXNzIjp0cnVlLCJwYXllciI6IkdCWDY0REZYTzQzV1YzUFNGNEpFR0hONU5CTVZTWEdQVVBOQUVVVkJMVVFQNEZHUjNYWURBWlFBIiwidHJhbnNhY3Rpb24iOiIzN2MyY2MzNjAzYmY0OWYyNjAxM2ZhZmRlNWJjNThiNGE5Mzk4NDRhZTE3NTJkYWM0MTU4NzM5YjFlNzFhZjFiIiwibmV0d29yayI6InN0ZWxsYXI6dGVzdG5ldCJ9",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775194923371",
+      "timestamp": "2026-04-03T05:42:03.371Z",
+      "type": "service_fee",
+      "description": "x402 query: drug interactions for lisinopril, metformin, atorvastatin, amlodipine",
+      "amount": 0.001,
+      "recipient": "GDDJOVCGIGMWKDH2N7QVJDMJF6CHROI7CUAQT442NA77NIXGH6RTM3D2",
+      "stellarTxHash": "eyJzdWNjZXNzIjp0cnVlLCJwYXllciI6IkdCWDY0REZYTzQzV1YzUFNGNEpFR0hONU5CTVZTWEdQVVBOQUVVVkJMVVFQNEZHUjNYWURBWlFBIiwidHJhbnNhY3Rpb24iOiI4Yjg2ZTQwNDZmMWY0NzcxODNhYzNiM2MyYzU5MjFiOWFkZjg1YjNmYjM1ZTFhNzE2NTg1OGYyODI4OWM5ODFmIiwibmV0d29yayI6InN0ZWxsYXI6dGVzdG5ldCJ9",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775194929494",
+      "timestamp": "2026-04-03T05:42:09.494Z",
+      "type": "medication",
+      "description": "lisinopril from Costco Pharmacy [MPP Charge]",
+      "amount": 3.5,
+      "recipient": "costco-001",
+      "stellarTxHash": "eyJtZXRob2QiOiJzdGVsbGFyIiwicmVmZXJlbmNlIjoiZTkwNWFmMzZhMTFkN2JlZTczYWZjZTkyMzU4YTg2MmM2NTNkZmRlYjY5Y2VjMDhiYTMwMmNlZTAwMTg2NWVhZiIsInN0YXR1cyI6InN1Y2Nlc3MiLCJ0aW1lc3RhbXAiOiIyMDI2LTA0LTAzVDA1OjQyOjA5LjQ5MFoifQ",
+      "status": "completed",
+      "category": "medications"
+    },
+    {
+      "id": "tx-1775194935168",
+      "timestamp": "2026-04-03T05:42:15.168Z",
+      "type": "medication",
+      "description": "metformin from Walmart Pharmacy [MPP Charge]",
+      "amount": 4,
+      "recipient": "walmart-001",
+      "stellarTxHash": "eyJtZXRob2QiOiJzdGVsbGFyIiwicmVmZXJlbmNlIjoiYTcxOTc5NmM5NTcxZDlhOTI5N2JhZDM2MDY2YTM3MTZlMWFiMTNkZDcwN2VhN2ZkNGY5MGY0OTI0YjM0YWJkMSIsInN0YXR1cyI6InN1Y2Nlc3MiLCJ0aW1lc3RhbXAiOiIyMDI2LTA0LTAzVDA1OjQyOjE1LjE2NloifQ",
+      "status": "completed",
+      "category": "medications"
+    },
+    {
+      "id": "tx-1775194951334",
+      "timestamp": "2026-04-03T05:42:31.334Z",
+      "type": "service_fee",
+      "description": "x402 query: pharmacy prices for Lisinopril",
+      "amount": 0.002,
+      "recipient": "GCS3Y2TMD6NRXN4GA3YYEUIFAITK3EYBBBMP2VB3EXHRXW4IBDZE3R2U",
+      "stellarTxHash": "eyJzdWNjZXNzIjp0cnVlLCJwYXllciI6IkdCWDY0REZYTzQzV1YzUFNGNEpFR0hONU5CTVZTWEdQVVBOQUVVVkJMVVFQNEZHUjNYWURBWlFBIiwidHJhbnNhY3Rpb24iOiIzYjM0NGFmOTRiNGZkZDE0YzI5MGEyZDUzYzU1ZjI4NTdjZjM5YTQ1Nzc5MGNlNTEzZDE3YmIxN2I1MDlmNTM4IiwibmV0d29yayI6InN0ZWxsYXI6dGVzdG5ldCJ9",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775194962793",
+      "timestamp": "2026-04-03T05:42:42.793Z",
+      "type": "service_fee",
+      "description": "x402 query: pharmacy prices for Metformin",
+      "amount": 0.002,
+      "recipient": "GCS3Y2TMD6NRXN4GA3YYEUIFAITK3EYBBBMP2VB3EXHRXW4IBDZE3R2U",
+      "stellarTxHash": "eyJzdWNjZXNzIjp0cnVlLCJwYXllciI6IkdCWDY0REZYTzQzV1YzUFNGNEpFR0hONU5CTVZTWEdQVVBOQUVVVkJMVVFQNEZHUjNYWURBWlFBIiwidHJhbnNhY3Rpb24iOiIyNGJhNTExNjM3ODk3NTUzYWE4ZGJiYTQ0YzM0MjdlYWQ1ODNiOGZlZmUxMmNkNjcwMDY1M2ViYWM5MTUzMmFmIiwibmV0d29yayI6InN0ZWxsYXI6dGVzdG5ldCJ9",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775194971241",
+      "timestamp": "2026-04-03T05:42:51.241Z",
+      "type": "service_fee",
+      "description": "x402 query: pharmacy prices for Atorvastatin",
+      "amount": 0.002,
+      "recipient": "GCS3Y2TMD6NRXN4GA3YYEUIFAITK3EYBBBMP2VB3EXHRXW4IBDZE3R2U",
+      "stellarTxHash": "eyJzdWNjZXNzIjp0cnVlLCJwYXllciI6IkdCWDY0REZYTzQzV1YzUFNGNEpFR0hONU5CTVZTWEdQVVBOQUVVVkJMVVFQNEZHUjNYWURBWlFBIiwidHJhbnNhY3Rpb24iOiIyNTc4MzY3MWYwZDQ1NTVjNzQ5NGM5NjBlOGJiZGQ0NDI1YzAxMDc1OTgxYzZjZjM5ZTE4YjgyYmFiNTkyNmFmIiwibmV0d29yayI6InN0ZWxsYXI6dGVzdG5ldCJ9",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775194979719",
+      "timestamp": "2026-04-03T05:42:59.719Z",
+      "type": "service_fee",
+      "description": "x402 query: pharmacy prices for Amlodipine",
+      "amount": 0.002,
+      "recipient": "GCS3Y2TMD6NRXN4GA3YYEUIFAITK3EYBBBMP2VB3EXHRXW4IBDZE3R2U",
+      "stellarTxHash": "eyJzdWNjZXNzIjp0cnVlLCJwYXllciI6IkdCWDY0REZYTzQzV1YzUFNGNEpFR0hONU5CTVZTWEdQVVBOQUVVVkJMVVFQNEZHUjNYWURBWlFBIiwidHJhbnNhY3Rpb24iOiI4MGIxMjA5MjY5M2Y3MjJlOGNmMmQwMzVlMjMxN2Q2YzIxMmZhZGI2MmEyM2E2NmE1MTUzNmVjODY4NGE5YTM5IiwibmV0d29yayI6InN0ZWxsYXI6dGVzdG5ldCJ9",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775194990060",
+      "timestamp": "2026-04-03T05:43:10.060Z",
+      "type": "service_fee",
+      "description": "x402 query: medical bill audit",
+      "amount": 0.01,
+      "recipient": "GBDRAD7IVVEQFM2PA6QW3R6SDHOO2VHGVA5S7BKZTDF4S75V3KJ2FKFE",
+      "stellarTxHash": "eyJzdWNjZXNzIjp0cnVlLCJwYXllciI6IkdCWDY0REZYTzQzV1YzUFNGNEpFR0hONU5CTVZTWEdQVVBOQUVVVkJMVVFQNEZHUjNYWURBWlFBIiwidHJhbnNhY3Rpb24iOiJlOThiNDYwZGM5MDViODBkNDM4NjU1NjEyNGNjZTk2OTJhNGI5MjliYTMzYzE0YjI0YzVkZGViM2VjOThmNTBjIiwibmV0d29yayI6InN0ZWxsYXI6dGVzdG5ldCJ9",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775195034635",
+      "timestamp": "2026-04-03T05:43:54.635Z",
+      "type": "bill",
+      "description": "Office visit and lab test — Example Provider",
+      "amount": 100,
+      "recipient": "ABC123",
+      "status": "pending",
+      "category": "bills"
+    }
+  ]
+}
