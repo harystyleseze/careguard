@@ -44,6 +44,13 @@ interface AgentResult {
   spending: SpendingData;
 }
 
+interface AgentInfo {
+  service: string;
+  agentWallet: string;
+  llm: string;
+  network: string;
+}
+
 export default function Dashboard() {
   const [spending, setSpending] = useState<SpendingData | null>(null);
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
@@ -52,6 +59,9 @@ export default function Dashboard() {
   const [activeTask, setActiveTask] = useState("");
   const [agentLog, setAgentLog] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<"overview" | "medications" | "bills" | "policy" | "activity">("overview");
+  const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null);
+  const [agentConnected, setAgentConnected] = useState(false);
+  const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [policyForm, setPolicyForm] = useState({
     dailyLimit: 100,
     monthlyLimit: 500,
@@ -59,6 +69,28 @@ export default function Dashboard() {
     billMonthlyBudget: 500,
     approvalThreshold: 75,
   });
+
+  const fetchAgentInfo = useCallback(async () => {
+    try {
+      const res = await fetch(`${AGENT_URL}/`);
+      if (res.ok) {
+        const data = await res.json();
+        setAgentInfo(data);
+        setAgentConnected(true);
+        // Fetch wallet balance from Horizon
+        if (data.agentWallet) {
+          try {
+            const hres = await fetch(`https://horizon-testnet.stellar.org/accounts/${data.agentWallet}`);
+            if (hres.ok) {
+              const acc = await hres.json();
+              const usdc = acc.balances?.find((b: any) => b.asset_code === "USDC");
+              setWalletBalance(usdc ? parseFloat(usdc.balance).toFixed(2) : "0.00");
+            }
+          } catch {}
+        }
+      }
+    } catch { setAgentConnected(false); }
+  }, []);
 
   const fetchSpending = useCallback(async () => {
     try {
@@ -75,25 +107,41 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    fetchSpending(); fetchTransactions();
+    fetchAgentInfo(); fetchSpending(); fetchTransactions();
     const i = setInterval(() => { fetchSpending(); fetchTransactions(); }, 3000);
-    return () => clearInterval(i);
-  }, [fetchSpending, fetchTransactions]);
+    const j = setInterval(fetchAgentInfo, 10000);
+    return () => { clearInterval(i); clearInterval(j); };
+  }, [fetchAgentInfo, fetchSpending, fetchTransactions]);
 
   const runAgentTask = async (task: string, label: string) => {
+    if (!agentConnected) {
+      setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Agent not connected. Start services with: npm run dev`]);
+      return;
+    }
     setLoading(true); setActiveTask(label);
     setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Starting: ${label}`]);
     try {
       const res = await fetch(`${AGENT_URL}/agent/run`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task }),
       });
+      if (!res.ok) {
+        const errText = await res.text();
+        const errMsg = (() => { try { return JSON.parse(errText).error; } catch { return errText.slice(0, 200); } })();
+        setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Error (${res.status}): ${errMsg}`]);
+        return;
+      }
       const data: AgentResult = await res.json();
       setAgentResult(data); setSpending(data.spending);
-      for (const tc of data.toolCalls) setAgentLog(p => [...p, `  -> ${tc.tool}(${JSON.stringify(tc.input).slice(0, 80)})`]);
+      for (const tc of data.toolCalls) {
+        const resultPreview = tc.result?.error ? `ERROR: ${tc.result.error.slice(0, 60)}` : "OK";
+        setAgentLog(p => [...p, `  -> ${tc.tool} ${resultPreview}`]);
+      }
       setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Done: ${data.toolCalls.length} tool calls`]);
       fetchTransactions();
+      fetchAgentInfo(); // refresh wallet balance
     } catch (err: any) {
-      setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Error: ${err.message}`]);
+      setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Connection error: ${err.message}`]);
+      setAgentConnected(false);
     } finally { setLoading(false); setActiveTask(""); }
   };
 
@@ -118,13 +166,26 @@ export default function Dashboard() {
               <h1 className="text-lg font-semibold leading-tight">CareGuard</h1>
               <p className="text-xs text-slate-500">AI Healthcare Agent on Stellar</p>
             </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="text-right text-xs">
-              <div className="text-slate-500">Care Recipient</div>
-              <div className="font-medium">Rosa Garcia, 78</div>
+            <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs ${agentConnected ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${agentConnected ? "bg-green-500" : "bg-red-500"}`} />
+              {agentConnected ? "Connected" : "Disconnected"}
             </div>
-            <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-sm font-medium">RG</div>
+          </div>
+          <div className="flex items-center gap-4">
+            {walletBalance && agentInfo?.agentWallet && (
+              <a href={`https://stellar.expert/explorer/testnet/account/${agentInfo.agentWallet}`} target="_blank" rel="noopener noreferrer" className="text-right group">
+                <div className="text-xs text-slate-500">Agent Wallet (USDC)</div>
+                <div className="font-semibold text-sm group-hover:text-sky-600">${walletBalance}</div>
+              </a>
+            )}
+            <div className="h-6 w-px bg-slate-200" />
+            <div className="flex items-center gap-2">
+              <div className="text-right text-xs">
+                <div className="text-slate-500">Care Recipient</div>
+                <div className="font-medium">Rosa Garcia, 78</div>
+              </div>
+              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-sm font-medium">RG</div>
+            </div>
           </div>
         </div>
       </header>
@@ -303,9 +364,11 @@ export default function Dashboard() {
 
       <footer className="mt-auto border-t border-slate-200 bg-white py-3">
         <div className="max-w-7xl mx-auto px-4 flex items-center justify-between text-xs text-slate-400">
-          <span>CareGuard v1.0 | Stellar Testnet | x402 + MPP + Soroban</span>
+          <span>CareGuard v1.0 | Stellar Testnet | x402 + MPP</span>
           <div className="flex items-center gap-3">
-            <a href="https://stellar.expert/explorer/testnet/account/GBX64DFXO43WV3PSF4JEGHN5NBMVSXGPUPNAEUVBLUQP4FGR3XYDAZQA" target="_blank" rel="noopener noreferrer" className="text-sky-500 hover:text-sky-700 underline">Agent Wallet on Explorer</a>
+            {agentInfo?.agentWallet && (
+              <a href={`https://stellar.expert/explorer/testnet/account/${agentInfo.agentWallet}`} target="_blank" rel="noopener noreferrer" className="text-sky-500 hover:text-sky-700 underline">Agent Wallet on Explorer</a>
+            )}
             <span>Stellar Hacks: Agents 2026</span>
           </div>
         </div>
