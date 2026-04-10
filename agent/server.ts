@@ -27,7 +27,7 @@ import {
   getSpendingTracker,
   resetSpendingTracker,
   TOOL_DEFINITIONS,
-} from "./tools.js";
+} from "./tools.ts";
 
 const PORT = parseInt(process.env.AGENT_PORT || "3004");
 

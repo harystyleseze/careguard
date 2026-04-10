@@ -10,7 +10,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import { applyX402Middleware, NETWORK, OZ_FACILITATOR_URL } from "../../shared/x402-middleware.js";
+import { applyX402Middleware, NETWORK, OZ_FACILITATOR_URL } from "../../shared/x402-middleware.ts";
 
 const PORT = parseInt(process.env.PHARMACY_API_PORT || "3001");
 const PAY_TO = process.env.PHARMACY_1_PUBLIC_KEY;

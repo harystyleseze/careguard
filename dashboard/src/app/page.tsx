@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { downloadBillAuditPDF, downloadMedicationPDF, downloadTransactionPDF } from "./pdf";
 
-const AGENT_URL = "http://localhost:3004";
+const AGENT_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3004";
 
 interface Transaction {
   id: string;
