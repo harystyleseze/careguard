@@ -1,7 +1,7 @@
 {
-  "medications": 18,
+  "medications": 36,
   "bills": 0,
-  "serviceFees": 0.057000000000000016,
+  "serviceFees": 0.08600000000000002,
   "transactions": [
     {
       "id": "tx-1775719466950",
@@ -187,6 +187,127 @@
       "amount": 0.01,
       "recipient": "GBDRAD7IVVEQFM2PA6QW3R6SDHOO2VHGVA5S7BKZTDF4S75V3KJ2FKFE",
       "stellarTxHash": "795082d35c4185211f53ff0f42161548f2cccc4ae2541d62a788e10243447156",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775855491832",
+      "timestamp": "2026-04-10T21:11:31.832Z",
+      "type": "service_fee",
+      "description": "x402 query: medical bill audit",
+      "amount": 0.01,
+      "recipient": "GBDRAD7IVVEQFM2PA6QW3R6SDHOO2VHGVA5S7BKZTDF4S75V3KJ2FKFE",
+      "stellarTxHash": "53a668593d0f357e6f3f510195d6f8b8bc1543e113243b6aa4f849710574e284",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775855544049",
+      "timestamp": "2026-04-10T21:12:24.049Z",
+      "type": "service_fee",
+      "description": "x402 query: drug interactions for lisinopril, metformin, atorvastatin, amlodipine",
+      "amount": 0.001,
+      "recipient": "drug-interaction-api",
+      "stellarTxHash": "e15a36847ef10cd2537408774bf093510c5d651c47c447f0b31cc31f3be698b8",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775855552613",
+      "timestamp": "2026-04-10T21:12:32.613Z",
+      "type": "service_fee",
+      "description": "x402 query: pharmacy prices for lisinopril",
+      "amount": 0.002,
+      "recipient": "GCS3Y2TMD6NRXN4GA3YYEUIFAITK3EYBBBMP2VB3EXHRXW4IBDZE3R2U",
+      "stellarTxHash": "8283fe14bd7727950f647ca61f9445211a339ff2dc82e84f59892c5647d0513d",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775855561227",
+      "timestamp": "2026-04-10T21:12:41.227Z",
+      "type": "service_fee",
+      "description": "x402 query: pharmacy prices for metformin",
+      "amount": 0.002,
+      "recipient": "GCS3Y2TMD6NRXN4GA3YYEUIFAITK3EYBBBMP2VB3EXHRXW4IBDZE3R2U",
+      "stellarTxHash": "1678b7b6d1b312616186143260c1e1fb376b5f642ecb14f1bf9a4eabef3cccc4",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775855573144",
+      "timestamp": "2026-04-10T21:12:53.144Z",
+      "type": "service_fee",
+      "description": "x402 query: pharmacy prices for atorvastatin",
+      "amount": 0.002,
+      "recipient": "GCS3Y2TMD6NRXN4GA3YYEUIFAITK3EYBBBMP2VB3EXHRXW4IBDZE3R2U",
+      "stellarTxHash": "4a685efccf6083b5a92551216da23d982fa40f04822a027c5a9eedb5195ad4f9",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775855581738",
+      "timestamp": "2026-04-10T21:13:01.738Z",
+      "type": "service_fee",
+      "description": "x402 query: pharmacy prices for amlodipine",
+      "amount": 0.002,
+      "recipient": "GCS3Y2TMD6NRXN4GA3YYEUIFAITK3EYBBBMP2VB3EXHRXW4IBDZE3R2U",
+      "stellarTxHash": "04eba047a25a78a13a79dcd4a77293db4fe5ad3660ca539e7cb4835d4fe45380",
+      "status": "completed",
+      "category": "service_fees"
+    },
+    {
+      "id": "tx-1775855591250",
+      "timestamp": "2026-04-10T21:13:11.250Z",
+      "type": "medication",
+      "description": "Lisinopril from Costco Pharmacy [MPP Charge]",
+      "amount": 3.5,
+      "recipient": "costco-001",
+      "stellarTxHash": "95c4150c1c2a9ebf64b9c0edeb6f10ac56b03cb17d367dc79dcdef774b1bc9cd",
+      "status": "completed",
+      "category": "medications"
+    },
+    {
+      "id": "tx-1775855596276",
+      "timestamp": "2026-04-10T21:13:16.276Z",
+      "type": "medication",
+      "description": "Metformin from Costco Pharmacy [MPP Charge]",
+      "amount": 4,
+      "recipient": "costco-001",
+      "stellarTxHash": "dc43c68cb73935b337bf6259209ecb00302064fcc260871a3dfabbfbdf44f5b6",
+      "status": "completed",
+      "category": "medications"
+    },
+    {
+      "id": "tx-1775855601820",
+      "timestamp": "2026-04-10T21:13:21.820Z",
+      "type": "medication",
+      "description": "Atorvastatin from Costco Pharmacy [MPP Charge]",
+      "amount": 6.5,
+      "recipient": "costco-001",
+      "stellarTxHash": "8cb1b9847c0e19a37522c02e21287d940c8d6efc92a9df5321272bb1d7abd0d9",
+      "status": "completed",
+      "category": "medications"
+    },
+    {
+      "id": "tx-1775855606854",
+      "timestamp": "2026-04-10T21:13:26.854Z",
+      "type": "medication",
+      "description": "Amlodipine from Walmart Pharmacy [MPP Charge]",
+      "amount": 4,
+      "recipient": "walmart-001",
+      "stellarTxHash": "c05715b8c5e7024c80f0c604074cc25d0fc577dce35f3b13ad4ada22164263d6",
+      "status": "completed",
+      "category": "medications"
+    },
+    {
+      "id": "tx-1775855706431",
+      "timestamp": "2026-04-10T21:15:06.431Z",
+      "type": "service_fee",
+      "description": "x402 query: medical bill audit",
+      "amount": 0.01,
+      "recipient": "GBDRAD7IVVEQFM2PA6QW3R6SDHOO2VHGVA5S7BKZTDF4S75V3KJ2FKFE",
+      "stellarTxHash": "1627780894a0b9052f37c000e855215cad98052d59760c6e9d2945afcc73d05a",
       "status": "completed",
       "category": "service_fees"
     }

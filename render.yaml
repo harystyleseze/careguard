@@ -7,7 +7,7 @@ services:
     startCommand: node --experimental-strip-types --experimental-transform-types --no-warnings server.ts
     envVars:
       - key: NODE_VERSION
-        value: "20"
+        value: "22"
       - key: STELLAR_NETWORK
         value: testnet
       - key: AGENT_SECRET_KEY
