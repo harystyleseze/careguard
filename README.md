@@ -195,3 +195,10 @@ Uses x402 (per-query API payments) + MPP Charge (medication orders) + direct Ste
 | Medication non-adherence cost | $100-300B/year | CDC |
 | Caregiver app market | $8.4B → $56.9B by 2032 | Wise Guy Reports |
 | Hospital price transparency | Rules took effect April 1, 2026 | CMS |
+
+
+---
+
+## License
+
+MIT
