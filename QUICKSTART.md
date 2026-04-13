@@ -16,7 +16,7 @@ Get CareGuard running on Stellar testnet with real x402 and MPP payments.
 ## Step 1: Install Dependencies
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/careguard
+git clone https://github.com/harystyleseze/careguard
 cd careguard
 npm install --legacy-peer-deps
 ```
