@@ -4,7 +4,6 @@
 
 Compares medication prices across pharmacies, audits medical bills for errors, checks drug interactions, and executes real USDC payments — all within caregiver-controlled spending policies. Every transaction settles on Stellar testnet via x402 and MPP.
 
-Built for [Stellar Hacks: Agents](https://dorahacks.io/hackathon/stellar-agents-x402-stripe-mpp/detail).
 
 ---
 
@@ -32,7 +31,7 @@ CareGuard is an AI agent with a Stellar wallet that acts on behalf of a family c
 
 Every payment is a real Stellar testnet transaction verifiable on [stellar.expert](https://stellar.expert/explorer/testnet).
 
-### Demo: Maria & Rosa
+### USE CASE: Maria & Rosa
 
 > Maria lives 800 miles from her 78-year-old mother Rosa. Rosa takes 4 medications from 3 pharmacies. Last month, Rosa's blood pressure medication cost $47 at CVS — $12 at Costco, 2 miles away. Nobody knew.
 >
@@ -90,7 +89,7 @@ See [QUICKSTART.md](QUICKSTART.md) for the full setup guide.
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/YOUR_USERNAME/careguard
+git clone https://github.com/harystyleseze/careguard
 cd careguard
 npm install --legacy-peer-deps
 
@@ -171,8 +170,6 @@ careguard/
 ├── data/                  # Persisted spending data + orders
 ├── .env.example           # Environment variable template
 ├── QUICKSTART.md          # Setup guide
-├── DEMO-SCRIPT.md         # 3-minute demo video script
-└── CLAUDE.md              # AI assistant project context
 ```
 
 ---
@@ -184,12 +181,6 @@ Uses x402 (per-query API payments) + MPP Charge (medication orders) + direct Ste
 
 ### Business Value
 63M caregivers, $7,200/yr out of pocket, $220B medical debt, 80% of bills have errors. CareGuard saves Rosa $2,320 in year one for $0.03 in API costs.
-
-### Presentation
-Story-driven: Maria sets up CareGuard for her 78-year-old mother Rosa. Every agent action is a visible, verifiable Stellar transaction.
-
-### Originality
-No other team builds for elderly caregivers. Spending policies as a trust mechanism for vulnerable populations is a framing unique to CareGuard.
 
 ---
 
@@ -204,7 +195,3 @@ No other team builds for elderly caregivers. Spending policies as a trust mechan
 | Medication non-adherence cost | $100-300B/year | CDC |
 | Caregiver app market | $8.4B → $56.9B by 2032 | Wise Guy Reports |
 | Hospital price transparency | Rules took effect April 1, 2026 | CMS |
-
----
-
-*Built for Stellar Hacks: Agents 2026*
