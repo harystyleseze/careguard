@@ -83,9 +83,12 @@ app.get("/drug/interactions", (req, res) => {
   res.json(checkInteractions(medications));
 });
 
-app.listen(PORT, () => {
+export { app, checkInteractions };
+
+export const server = app.listen(PORT, () => {
   console.log(`\n💊 Drug Interaction API running on http://localhost:${PORT}`);
   console.log(`   x402 payment: REQUIRED (${NETWORK})`);
   console.log(`   Facilitator: ${OZ_FACILITATOR_URL}`);
   console.log(`   Pay-to: ${PAY_TO}\n`);
 });
+server.unref();

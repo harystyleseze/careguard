@@ -150,9 +150,12 @@ app.post("/bill/audit", (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+export { app, auditBill };
+
+export const server = app.listen(PORT, () => {
   console.log(`\n🏥 Bill Audit API running on http://localhost:${PORT}`);
   console.log(`   x402 payment: REQUIRED (${NETWORK})`);
   console.log(`   Facilitator: ${OZ_FACILITATOR_URL}`);
   console.log(`   Pay-to: ${PAY_TO}\n`);
 });
+server.unref();
