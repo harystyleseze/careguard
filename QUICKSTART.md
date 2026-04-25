@@ -16,7 +16,7 @@ Get CareGuard running on Stellar testnet with real x402 and MPP payments.
 ## Step 1: Install Dependencies
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/careguard
+git clone https://github.com/harystyleseze/careguard
 cd careguard
 npm install --legacy-peer-deps
 ```
@@ -186,4 +186,30 @@ for b in d['balances']:
 | x402 returns 500 | Check OZ facilitator key is valid; the facilitator may be temporarily down |
 | Groq 429 rate limit | Wait for reset, or switch to a different model/provider |
 | Dashboard can't connect | Ensure backend services are running (`npm run dev`) |
-| Port already in use | Kill existing processes: `kill $(lsof -ti:3001,3002,3003,3004,3005)` |
+| Port already in use | Kill existing processes on the ports (see below) |
+
+### Port Cleanup by OS
+
+**macOS / Linux:**
+```bash
+kill $(lsof -ti:3001,3002,3003,3004,3005)
+```
+
+**Windows (PowerShell):**
+```powershell
+# Kill processes on specific ports
+(Get-NetTCPConnection -LocalPort 3001,3002,3003,3004,3005 -ErrorAction SilentlyContinue).OwningProcess | Stop-Process -Force
+```
+
+To find which process is using a port:
+
+**macOS / Linux:**
+```bash
+lsof -i :3001  # Shows process using port 3001
+```
+
+**Windows (PowerShell):**
+```powershell
+Get-NetTCPConnection -LocalPort 3001 | Select-Object OwningProcess
+# Then look up the PID: Get-Process -Id <PID>
+```

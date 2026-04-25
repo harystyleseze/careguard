@@ -4,7 +4,6 @@
 
 Compares medication prices across pharmacies, audits medical bills for errors, checks drug interactions, and executes real USDC payments — all within caregiver-controlled spending policies. Every transaction settles on Stellar testnet via x402 and MPP.
 
-Built for [Stellar Hacks: Agents](https://dorahacks.io/hackathon/stellar-agents-x402-stripe-mpp/detail).
 
 ---
 
@@ -32,7 +31,7 @@ CareGuard is an AI agent with a Stellar wallet that acts on behalf of a family c
 
 Every payment is a real Stellar testnet transaction verifiable on [stellar.expert](https://stellar.expert/explorer/testnet).
 
-### Demo: Maria & Rosa
+### USE CASE: Maria & Rosa
 
 > Maria lives 800 miles from her 78-year-old mother Rosa. Rosa takes 4 medications from 3 pharmacies. Last month, Rosa's blood pressure medication cost $47 at CVS — $12 at Costco, 2 miles away. Nobody knew.
 >
@@ -53,8 +52,8 @@ Every payment is a real Stellar testnet transaction verifiable on [stellar.exper
 │  Autonomous decision-making with 7 tools                     │
 ├──────────────────┬───────────────┬──────────────────────────┤
 │   x402 Client    │  MPP Client   │   Spending Policy Engine │
-│  Signs Soroban   │  Signs Soroban│   Daily/monthly limits   │
-│  auth entries    │  SAC transfers│   Category budgets       │
+│  Signs Stellar   │  Signs Stellar│   Daily/monthly limits   │
+│  transactions    │  transactions │   Category budgets       │
 │  per API query   │  per order    │   Approval thresholds    │
 ├──────────────────┴───────────────┴──────────────────────────┤
 │                  STELLAR TESTNET (USDC)                       │
@@ -67,8 +66,8 @@ Every payment is a real Stellar testnet transaction verifiable on [stellar.exper
 
 | Protocol | Purpose | How It Works |
 |----------|---------|--------------|
-| **x402** | Agent pays for API queries (pharmacy prices, bill audits, drug interactions) | Agent calls x402-protected endpoint → gets 402 → signs Soroban auth entry → OZ Facilitator settles on Stellar → agent receives data |
-| **MPP Charge** | Agent pays pharmacies for medication orders | Agent orders medication → gets 402 challenge → signs Soroban SAC transfer → server broadcasts → order confirmed |
+| **x402** | Agent pays for API queries (pharmacy prices, bill audits, drug interactions) | Agent calls x402-protected endpoint → gets 402 → signs Stellar auth entry → OZ Facilitator settles payment → agent receives data |
+| **MPP Charge** | Agent pays pharmacies for medication orders | Agent orders medication → gets 402 challenge → signs Stellar payment tx → server broadcasts → order confirmed |
 | **Stellar USDC Transfer** | Agent pays medical bills | Agent builds Stellar payment tx → signs with keypair → submits to Horizon → USDC transferred |
 
 ### Services
@@ -90,7 +89,7 @@ See [QUICKSTART.md](QUICKSTART.md) for the full setup guide.
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/YOUR_USERNAME/careguard
+git clone https://github.com/harystyleseze/careguard
 cd careguard
 npm install --legacy-peer-deps
 
@@ -143,10 +142,12 @@ From real end-to-end test on Stellar testnet:
 |--------|-------|
 | Medication savings found | **$69.76/month** ($837/year) |
 | Billing errors caught | **$1,195** (47.8% of bill) |
-| Agent x402 API cost | **$0.029** |
+| Agent x402 API cost | **$0.030** |
 | Agent wallet USDC spent | **$7.53** (medications + bills + API fees) |
 | Tool calls (autonomous) | **17** per full task |
 | Stellar transactions | All verifiable on [stellar.expert](https://stellar.expert/explorer/testnet) |
+
+**Cost breakdown:** 10 price queries @ $0.002 = $0.02, 1 drug interaction check @ $0.001 = $0.001, 1 bill audit @ $0.01 = $0.01. Total: $0.030 in autonomous AI agent operational costs.
 
 ---
 
@@ -171,8 +172,6 @@ careguard/
 ├── data/                  # Persisted spending data + orders
 ├── .env.example           # Environment variable template
 ├── QUICKSTART.md          # Setup guide
-├── DEMO-SCRIPT.md         # 3-minute demo video script
-└── CLAUDE.md              # AI assistant project context
 ```
 
 ---
@@ -184,12 +183,6 @@ Uses x402 (per-query API payments) + MPP Charge (medication orders) + direct Ste
 
 ### Business Value
 63M caregivers, $7,200/yr out of pocket, $220B medical debt, 80% of bills have errors. CareGuard saves Rosa $2,320 in year one for $0.03 in API costs.
-
-### Presentation
-Story-driven: Maria sets up CareGuard for her 78-year-old mother Rosa. Every agent action is a visible, verifiable Stellar transaction.
-
-### Originality
-No other team builds for elderly caregivers. Spending policies as a trust mechanism for vulnerable populations is a framing unique to CareGuard.
 
 ---
 
@@ -205,6 +198,9 @@ No other team builds for elderly caregivers. Spending policies as a trust mechan
 | Caregiver app market | $8.4B → $56.9B by 2032 | Wise Guy Reports |
 | Hospital price transparency | Rules took effect April 1, 2026 | CMS |
 
+
 ---
 
-*Built for Stellar Hacks: Agents 2026*
+## License
+
+MIT

@@ -14,7 +14,7 @@ import { wrapFetchWithPayment, x402Client, decodePaymentResponseHeader } from "@
 import { createEd25519Signer, ExactStellarScheme } from "@x402/stellar";
 import { Mppx } from "mppx/client";
 import { stellar as stellarCharge } from "@stellar/mpp/charge/client";
-import type { SpendingPolicy, Transaction } from "../shared/types.js";
+import type { SpendingPolicy, Transaction } from "../shared/types.ts";
 
 // Environment
 const AGENT_SECRET_KEY = process.env.AGENT_SECRET_KEY;

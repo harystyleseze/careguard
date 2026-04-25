@@ -115,4 +115,8 @@ function generateKeypair(): { publicKey: string; secretKey: string } {
   return { publicKey: kp.publicKey(), secretKey: kp.secret() };
 }
 
-main().catch(console.error);
+export { main, fundAccount, addUsdcTrustline, generateKeypair };
+
+if (!process.env.VITEST) {
+  main().catch(console.error);
+}

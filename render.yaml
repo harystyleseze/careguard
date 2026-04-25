@@ -1,0 +1,64 @@
+services:
+  - type: web
+    name: careguard-api
+    runtime: node
+    plan: free
+    buildCommand: npm install --legacy-peer-deps
+    startCommand: node --experimental-strip-types --experimental-transform-types --no-warnings server.ts
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: PORT
+        value: "3004"
+      - key: STELLAR_NETWORK
+        value: testnet
+      - key: STELLAR_RPC_URL
+        value: https://soroban-testnet.stellar.org
+      - key: AGENT_SECRET_KEY
+        sync: false
+      - key: AGENT_PUBLIC_KEY
+        sync: false
+      - key: CAREGIVER_SECRET_KEY
+        sync: false
+      - key: CAREGIVER_PUBLIC_KEY
+        sync: false
+      - key: PHARMACY_1_SECRET_KEY
+        sync: false
+      - key: PHARMACY_1_PUBLIC_KEY
+        sync: false
+      - key: PHARMACY_2_SECRET_KEY
+        sync: false
+      - key: PHARMACY_2_PUBLIC_KEY
+        sync: false
+      - key: PHARMACY_3_SECRET_KEY
+        sync: false
+      - key: PHARMACY_3_PUBLIC_KEY
+        sync: false
+      - key: BILL_PROVIDER_SECRET_KEY
+        sync: false
+      - key: BILL_PROVIDER_PUBLIC_KEY
+        sync: false
+      - key: OZ_FACILITATOR_API_KEY
+        sync: false
+      - key: X402_FACILITATOR_URL
+        value: https://channels.openzeppelin.com/x402/testnet
+      - key: MPP_SECRET_KEY
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: LLM_MODEL
+        value: llama-3.3-70b-versatile
+      - key: USDC_ISSUER
+        value: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+      - key: USDC_SAC
+        value: CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA
+      - key: PHARMACY_API_URL
+        value: http://localhost:3004
+      - key: BILL_AUDIT_API_URL
+        value: http://localhost:3004
+      - key: DRUG_INTERACTION_API_URL
+        value: http://localhost:3004
+      - key: PHARMACY_PAYMENT_URL
+        value: http://localhost:3004
