@@ -10,6 +10,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import { z } from "zod";
 import { applyX402Middleware, NETWORK, OZ_FACILITATOR_URL } from "../../shared/x402-middleware.ts";
 
 const PORT = parseInt(process.env.BILL_AUDIT_API_PORT || "3002");
@@ -37,6 +38,18 @@ const FAIR_MARKET_RATES: Record<string, { description: string; fairRate: number 
 };
 
 interface BillItem { description: string; cptCode: string; quantity: number; chargedAmount: number; }
+
+// Zod schema for validating bill items
+const BillItemSchema = z.object({
+  description: z.string().min(1, "description is required"),
+  cptCode: z.string().min(1, "cptCode is required"),
+  quantity: z.number().positive("quantity must be positive"),
+  chargedAmount: z.number().nonnegative("chargedAmount must be non-negative"),
+});
+
+const BillAuditRequestSchema = z.object({
+  lineItems: z.array(BillItemSchema).min(1, "lineItems must contain at least one item"),
+});
 
 function auditBill(lineItems: BillItem[]) {
   const results: any[] = [];
@@ -118,11 +131,23 @@ applyX402Middleware(app, {
 });
 
 app.post("/bill/audit", (req, res) => {
-  const { lineItems } = req.body;
-  if (!lineItems || !Array.isArray(lineItems) || lineItems.length === 0) {
-    res.status(400).json({ error: "Missing or empty lineItems array" }); return;
+  try {
+    const validatedData = BillAuditRequestSchema.parse(req.body);
+    res.json(auditBill(validatedData.lineItems));
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const issues = error.issues.map((issue, idx) => {
+        const path = issue.path.join(".");
+        return `Item ${path}: ${issue.message}`;
+      });
+      res.status(400).json({
+        error: "Invalid lineItems",
+        details: issues,
+      });
+    } else {
+      res.status(400).json({ error: "Invalid request body" });
+    }
   }
-  res.json(auditBill(lineItems));
 });
 
 app.listen(PORT, () => {

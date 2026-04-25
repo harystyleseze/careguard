@@ -52,8 +52,8 @@ Every payment is a real Stellar testnet transaction verifiable on [stellar.exper
 │  Autonomous decision-making with 7 tools                     │
 ├──────────────────┬───────────────┬──────────────────────────┤
 │   x402 Client    │  MPP Client   │   Spending Policy Engine │
-│  Signs Soroban   │  Signs Soroban│   Daily/monthly limits   │
-│  auth entries    │  SAC transfers│   Category budgets       │
+│  Signs Stellar   │  Signs Stellar│   Daily/monthly limits   │
+│  transactions    │  transactions │   Category budgets       │
 │  per API query   │  per order    │   Approval thresholds    │
 ├──────────────────┴───────────────┴──────────────────────────┤
 │                  STELLAR TESTNET (USDC)                       │
@@ -66,8 +66,8 @@ Every payment is a real Stellar testnet transaction verifiable on [stellar.exper
 
 | Protocol | Purpose | How It Works |
 |----------|---------|--------------|
-| **x402** | Agent pays for API queries (pharmacy prices, bill audits, drug interactions) | Agent calls x402-protected endpoint → gets 402 → signs Soroban auth entry → OZ Facilitator settles on Stellar → agent receives data |
-| **MPP Charge** | Agent pays pharmacies for medication orders | Agent orders medication → gets 402 challenge → signs Soroban SAC transfer → server broadcasts → order confirmed |
+| **x402** | Agent pays for API queries (pharmacy prices, bill audits, drug interactions) | Agent calls x402-protected endpoint → gets 402 → signs Stellar auth entry → OZ Facilitator settles payment → agent receives data |
+| **MPP Charge** | Agent pays pharmacies for medication orders | Agent orders medication → gets 402 challenge → signs Stellar payment tx → server broadcasts → order confirmed |
 | **Stellar USDC Transfer** | Agent pays medical bills | Agent builds Stellar payment tx → signs with keypair → submits to Horizon → USDC transferred |
 
 ### Services
@@ -142,10 +142,12 @@ From real end-to-end test on Stellar testnet:
 |--------|-------|
 | Medication savings found | **$69.76/month** ($837/year) |
 | Billing errors caught | **$1,195** (47.8% of bill) |
-| Agent x402 API cost | **$0.029** |
+| Agent x402 API cost | **$0.030** |
 | Agent wallet USDC spent | **$7.53** (medications + bills + API fees) |
 | Tool calls (autonomous) | **17** per full task |
 | Stellar transactions | All verifiable on [stellar.expert](https://stellar.expert/explorer/testnet) |
+
+**Cost breakdown:** 10 price queries @ $0.002 = $0.02, 1 drug interaction check @ $0.001 = $0.001, 1 bill audit @ $0.01 = $0.01. Total: $0.030 in autonomous AI agent operational costs.
 
 ---
 
