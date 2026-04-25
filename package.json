@@ -12,7 +12,9 @@
     "pharmacy-payment": "node --import tsx services/pharmacy-payment/server.ts",
     "services": "concurrently --kill-others-on-fail \"npm run pharmacy-api\" \"npm run bill-audit-api\" \"npm run drug-api\" \"npm run pharmacy-payment\"",
     "start": "node --experimental-strip-types --experimental-transform-types --no-warnings server.ts",
-    "dev": "node --experimental-strip-types --experimental-transform-types --no-warnings server.ts"
+    "dev": "node --experimental-strip-types --experimental-transform-types --no-warnings server.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -37,6 +39,7 @@
     "@types/node": "^25.5.0",
     "concurrently": "^9.2.1",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^2.1.8"
   }
 }
