@@ -89,7 +89,17 @@ async function executeTool(name: string, input: any): Promise<any> {
   switch (name) {
     case "compare_pharmacy_prices": return await comparePharmacyPrices(input.drug_name, input.zip_code);
     case "audit_medical_bill": {
-      const items = typeof input.line_items_json === "string" ? JSON.parse(input.line_items_json) : (input.line_items || input.line_items_json);
+      let items;
+      if (typeof input.line_items_json === "string") {
+        try {
+          items = JSON.parse(input.line_items_json);
+        } catch (e: any) {
+          const sample = input.line_items_json.slice(0, 200);
+          return { ok: false, reason: "INVALID_LINE_ITEMS_JSON", sample, error: e.message };
+        }
+      } else {
+        items = input.line_items || input.line_items_json;
+      }
       return await auditBill(items);
     }
     case "fetch_rosa_bill": return await fetchRosaBill();

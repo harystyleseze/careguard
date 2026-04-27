@@ -21,7 +21,7 @@ const AGENT_SECRET_KEY = process.env.AGENT_SECRET_KEY;
 const PHARMACY_API = process.env.PHARMACY_API_URL || "http://localhost:3001";
 const BILL_AUDIT_API = process.env.BILL_AUDIT_API_URL || "http://localhost:3002";
 const DRUG_INTERACTION_API = process.env.DRUG_INTERACTION_API_URL || "http://localhost:3003";
-const PHARMACY_PAYMENT_API = process.env.PHARMACY_PAYMENT_URL || "http://localhost:3005";
+const PHARMACY_PAYMENT_API = process.env.PHARMACY_PAYMENT_API_URL || "http://localhost:3005";
 const USDC_ISSUER = process.env.USDC_ISSUER || "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 const HORIZON_URL = "https://horizon-testnet.stellar.org";
 
@@ -94,6 +94,13 @@ let spendingTracker = loadSpending();
 
 const POLICY_FILE = `${DATA_DIR}/policy.json`;
 
+const MAX_PAYMENT = 1000;
+const MAX_ERROR_LENGTH = 500;
+
+function truncateError(message: string): string {
+  return message.replace(/<[^>]*>/g, "").slice(0, MAX_ERROR_LENGTH);
+}
+
 const DEFAULT_POLICY: SpendingPolicy = {
   dailyLimit: 100,
   monthlyLimit: 500,
@@ -133,7 +140,7 @@ export async function comparePharmacyPrices(drugName: string, zipCode: string = 
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Pharmacy API error (${response.status}): ${error.slice(0, 200)}`);
+    throw new Error(`Pharmacy API error (${response.status}): ${truncateError(error)}`);
   }
 
   const data = await response.json();
@@ -230,7 +237,7 @@ export async function auditBill(lineItems: Array<{ description: string; cptCode:
 
   if (!response.ok) {
     const error = await response.text();
-    const bodyPreview = error.slice(0, 200);
+    const bodyPreview = truncateError(error);
 
     if (response.status >= 500) {
       throw new Error(
@@ -279,7 +286,7 @@ export async function checkDrugInteractions(medications: string[]) {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Drug Interaction API error (${response.status}): ${error.slice(0, 200)}`);
+    throw new Error(`Drug Interaction API error (${response.status}): ${truncateError(error)}`);
   }
 
   const data = await response.json();
@@ -334,8 +341,8 @@ export function checkSpendingPolicy(amount: number, category: "medications" | "b
 
 // --- Tool: Pay for medication via MPP Charge (real Stellar payment) ---
 export async function payForMedication(pharmacyId: string, pharmacyName: string, drugName: string, amount: number) {
-  if (!amount || amount <= 0 || isNaN(amount)) {
-    return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive number.` };
+  if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_PAYMENT) {
+    return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive finite number <= $${MAX_PAYMENT}.` };
   }
   const policyCheck = checkSpendingPolicy(amount, "medications");
   if (!policyCheck.allowed) return { success: false, error: `BLOCKED BY SPENDING POLICY: ${policyCheck.reason}` };
@@ -401,8 +408,8 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
 
 // --- Tool: Pay a medical bill via real Stellar USDC transfer ---
 export async function payBill(providerId: string, providerName: string, description: string, amount: number) {
-  if (!amount || amount <= 0 || isNaN(amount)) {
-    return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive number.` };
+  if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_PAYMENT) {
+    return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive finite number <= $${MAX_PAYMENT}.` };
   }
   const policyCheck = checkSpendingPolicy(amount, "bills");
   if (!policyCheck.allowed) return { success: false, error: `BLOCKED BY SPENDING POLICY: ${policyCheck.reason}` };
