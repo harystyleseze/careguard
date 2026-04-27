@@ -1,0 +1,49 @@
+version: 2
+updates:
+  # Root npm dependencies
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      stellar:
+        patterns:
+          - "@stellar/*"
+      x402:
+        patterns:
+          - "@x402/*"
+      openai:
+        patterns:
+          - "openai"
+
+  # Dashboard npm dependencies
+  - package-ecosystem: "npm"
+    directory: "/dashboard"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      nextjs:
+        patterns:
+          - "next"
+          - "react"
+          - "react-dom"
+      tailwind:
+        patterns:
+          - "tailwindcss"
+          - "@tailwindcss/*"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/.github/workflows"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+  # Dockerfile
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
