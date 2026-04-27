@@ -1,7 +1,34 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import type { BillAuditResult, DrugInteractionResult, PharmacyCompareResult, SpendingData, Transaction } from "../lib/types";
 
 const HEADER_COLOR: [number, number, number] = [14, 165, 233]; // sky-500
+
+type AutoTableDoc = jsPDF & { lastAutoTable?: { finalY: number } };
+
+function formatTxHashDisplay(hash?: string): { display: string; decodeFailed: boolean } {
+  if (!hash) return { display: "-", decodeFailed: false };
+
+  if (hash.length === 64 && /^[0-9a-f]{64}$/i.test(hash)) {
+    return { display: `${hash.slice(0, 16)}...`, decodeFailed: false };
+  }
+
+  if (hash.length > 64) {
+    try {
+      const decoded = JSON.parse(atob(hash)) as Record<string, unknown>;
+      const extracted = (decoded.transaction || decoded.reference || decoded.hash) as unknown;
+      if (typeof extracted === "string") {
+        const trimmed = extracted.length > 16 ? `${extracted.slice(0, 16)}...` : extracted;
+        return { display: trimmed, decodeFailed: false };
+      }
+      return { display: `${hash.slice(0, 16)}... ?`, decodeFailed: true };
+    } catch {
+      return { display: `${hash.slice(0, 16)}... ?`, decodeFailed: true };
+    }
+  }
+
+  return { display: `${hash.slice(0, 16)}... ?`, decodeFailed: true };
+}
 
 function addHeader(doc: jsPDF, title: string, subtitle: string) {
   doc.setFontSize(20);
@@ -34,8 +61,8 @@ function addFooter(doc: jsPDF) {
   }
 }
 
-export function downloadBillAuditPDF(auditResult: any) {
-  const doc = new jsPDF();
+export function downloadBillAuditPDF(auditResult: BillAuditResult) {
+  const doc: AutoTableDoc = new jsPDF();
   addHeader(doc, "Medical Bill Audit Report", "Patient: Rosa Garcia | Facility: General Hospital");
 
   // Summary boxes
@@ -50,15 +77,19 @@ export function downloadBillAuditPDF(auditResult: any) {
   y += 4;
   doc.setTextColor(100, 116, 139);
   doc.setFontSize(9);
-  doc.text(`${auditResult.errorCount} errors found (${auditResult.savingsPercent}% of total bill)`, 14, y + 4);
+  doc.text(
+    `${auditResult.errorCount} errors found${typeof auditResult.savingsPercent === "number" ? ` (${auditResult.savingsPercent}% of total bill)` : ""}`,
+    14,
+    y + 4
+  );
 
   // Line items table
   autoTable(doc, {
     startY: y + 10,
     head: [["Description", "CPT Code", "Qty", "Charged", "Status", "Suggested"]],
-    body: auditResult.lineItems.map((item: any) => [
+    body: auditResult.lineItems.map((item) => [
       item.description,
-      item.cptCode,
+      item.cptCode || "-",
       item.quantity,
       `$${item.chargedAmount}`,
       item.status === "valid" ? "OK" : item.status.toUpperCase(),
@@ -67,9 +98,9 @@ export function downloadBillAuditPDF(auditResult: any) {
     headStyles: { fillColor: HEADER_COLOR, fontSize: 8 },
     bodyStyles: { fontSize: 8 },
     alternateRowStyles: { fillColor: [248, 250, 252] },
-    didParseCell: (data: any) => {
+    didParseCell: (data) => {
       if (data.section === "body" && data.column.index === 4) {
-        const val = data.cell.raw as string;
+        const val = String(data.cell.raw || "");
         if (val === "DUPLICATE") data.cell.styles.textColor = [239, 68, 68];
         else if (val === "UPCODED" || val === "OVERCHARGED") data.cell.styles.textColor = [245, 158, 11];
       }
@@ -77,7 +108,7 @@ export function downloadBillAuditPDF(auditResult: any) {
   });
 
   // Recommendation
-  const finalY = (doc as any).lastAutoTable?.finalY || 200;
+  const finalY = doc.lastAutoTable?.finalY || 200;
   doc.setFontSize(9);
   doc.setTextColor(15, 23, 42);
   doc.text(auditResult.recommendation || "", 14, finalY + 8, { maxWidth: 180 });
@@ -86,41 +117,40 @@ export function downloadBillAuditPDF(auditResult: any) {
   doc.save("careguard-bill-audit-report.pdf");
 }
 
-export function downloadMedicationPDF(toolCalls: Array<{ tool: string; result: any }>) {
-  const doc = new jsPDF();
+export function downloadMedicationPDF(params: { priceResults: PharmacyCompareResult[]; interactionResult?: DrugInteractionResult }) {
+  const doc: AutoTableDoc = new jsPDF();
   addHeader(doc, "Medication Price Comparison Report", "Patient: Rosa Garcia | 4 Medications Compared");
 
   let y = 58;
-  const priceResults = toolCalls.filter(t => t.tool === "compare_pharmacy_prices" && t.result?.cheapest);
-  const interactionResult = toolCalls.find(t => t.tool === "check_drug_interactions")?.result;
+  const priceResults = params.priceResults.filter(r => r.cheapest);
+  const interactionResult = params.interactionResult;
 
   // Total savings summary
-  const totalSavings = priceResults.reduce((sum, t) => sum + (t.result.potentialSavings || 0), 0);
+  const totalSavings = priceResults.reduce((sum, r) => sum + (r.potentialSavings || 0), 0);
   doc.setFontSize(11);
   doc.setTextColor(34, 197, 94);
   doc.text(`Total Potential Savings: $${totalSavings.toFixed(2)}/month ($${(totalSavings * 12).toFixed(2)}/year)`, 14, y);
   y += 8;
 
   // Price comparison for each drug
-  for (const tc of priceResults) {
-    const r = tc.result;
+  for (const r of priceResults) {
     doc.setFontSize(11);
     doc.setTextColor(15, 23, 42);
     doc.text(`${r.drug}`, 14, y);
     doc.setFontSize(8);
     doc.setTextColor(34, 197, 94);
-    doc.text(`Save $${r.potentialSavings}/mo (${r.savingsPercent}%)`, 60, y);
+    doc.text(`Save $${r.potentialSavings || 0}/mo (${r.savingsPercent || 0}%)`, 60, y);
     y += 2;
 
     autoTable(doc, {
       startY: y,
       head: [["Pharmacy", "Price", "Distance", "In Stock"]],
-      body: r.prices.map((p: any) => [p.pharmacyName, `$${p.price}`, p.distance, p.inStock ? "Yes" : "No"]),
+      body: r.prices.map((p) => [p.pharmacyName, `$${p.price}`, p.distance || "-", p.inStock ? "Yes" : "No"]),
       headStyles: { fillColor: HEADER_COLOR, fontSize: 7 },
       bodyStyles: { fontSize: 7 },
       alternateRowStyles: { fillColor: [248, 250, 252] },
       margin: { left: 14, right: 14 },
-      didParseCell: (data: any) => {
+      didParseCell: (data) => {
         if (data.section === "body" && data.row.index === 0) {
           data.cell.styles.fontStyle = "bold";
           data.cell.styles.textColor = [34, 197, 94];
@@ -128,7 +158,7 @@ export function downloadMedicationPDF(toolCalls: Array<{ tool: string; result: a
       },
     });
 
-    y = (doc as any).lastAutoTable?.finalY + 6 || y + 30;
+    y = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 6 : y + 30;
     if (y > 260) { doc.addPage(); y = 20; }
   }
 
@@ -143,7 +173,7 @@ export function downloadMedicationPDF(toolCalls: Array<{ tool: string; result: a
     autoTable(doc, {
       startY: y,
       head: [["Drug 1", "Drug 2", "Severity", "Recommendation"]],
-      body: interactionResult.interactions.map((ix: any) => [ix.drug1, ix.drug2, ix.severity, ix.recommendation]),
+      body: interactionResult.interactions.map((ix) => [ix.drug1, ix.drug2, ix.severity, ix.recommendation]),
       headStyles: { fillColor: [245, 158, 11], fontSize: 7 },
       bodyStyles: { fontSize: 7 },
       columnStyles: { 3: { cellWidth: 70 } },
@@ -154,8 +184,8 @@ export function downloadMedicationPDF(toolCalls: Array<{ tool: string; result: a
   doc.save("careguard-medication-report.pdf");
 }
 
-export function downloadTransactionPDF(transactions: any[], spending: any) {
-  const doc = new jsPDF();
+export function downloadTransactionPDF(transactions: Transaction[], spending: SpendingData | null) {
+  const doc: AutoTableDoc = new jsPDF();
   addHeader(doc, "Transaction Report", `Patient: Rosa Garcia | ${transactions.length} Transactions`);
 
   let y = 58;
@@ -177,23 +207,15 @@ export function downloadTransactionPDF(transactions: any[], spending: any) {
   autoTable(doc, {
     startY: y,
     head: [["Time", "Type", "Description", "Amount", "Status", "Stellar Tx"]],
-    body: transactions.map((tx: any) => {
-      let txHash = tx.stellarTxHash || "-";
-      if (txHash.length > 64) {
-        try {
-          const decoded = JSON.parse(atob(txHash));
-          txHash = (decoded.transaction || decoded.reference || txHash).slice(0, 16) + "...";
-        } catch { txHash = txHash.slice(0, 16) + "..."; }
-      } else if (txHash.length === 64) {
-        txHash = txHash.slice(0, 16) + "...";
-      }
+    body: transactions.map((tx) => {
+      const { display } = formatTxHashDisplay(tx.stellarTxHash);
       return [
         new Date(tx.timestamp).toLocaleString(),
         tx.type,
         tx.description.slice(0, 40),
         `$${tx.amount < 0.01 ? tx.amount.toFixed(4) : tx.amount.toFixed(2)}`,
         tx.status,
-        txHash,
+        display,
       ];
     }),
     headStyles: { fillColor: HEADER_COLOR, fontSize: 7 },
