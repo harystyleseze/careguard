@@ -95,6 +95,11 @@ let spendingTracker = loadSpending();
 const POLICY_FILE = `${DATA_DIR}/policy.json`;
 
 const MAX_PAYMENT = 1000;
+const MAX_ERROR_LENGTH = 500;
+
+function truncateError(message: string): string {
+  return message.replace(/<[^>]*>/g, "").slice(0, MAX_ERROR_LENGTH);
+}
 
 const DEFAULT_POLICY: SpendingPolicy = {
   dailyLimit: 100,
@@ -135,7 +140,7 @@ export async function comparePharmacyPrices(drugName: string, zipCode: string = 
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Pharmacy API error (${response.status}): ${error.slice(0, 200)}`);
+    throw new Error(`Pharmacy API error (${response.status}): ${truncateError(error)}`);
   }
 
   const data = await response.json();
@@ -232,7 +237,7 @@ export async function auditBill(lineItems: Array<{ description: string; cptCode:
 
   if (!response.ok) {
     const error = await response.text();
-    const bodyPreview = error.slice(0, 200);
+    const bodyPreview = truncateError(error);
 
     if (response.status >= 500) {
       throw new Error(
@@ -281,7 +286,7 @@ export async function checkDrugInteractions(medications: string[]) {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Drug Interaction API error (${response.status}): ${error.slice(0, 200)}`);
+    throw new Error(`Drug Interaction API error (${response.status}): ${truncateError(error)}`);
   }
 
   const data = await response.json();
