@@ -94,7 +94,10 @@ export function downloadBillAuditPDF(
     y + 4
   );
 
-  // Line items table
+  // Line items table — paginated (#225)
+  // didDrawPage redraws the column header on every continuation page so
+  // readers always know which column they are looking at, regardless of
+  // how many line items the bill contains.
   autoTable(doc, {
     startY: y + 10,
     head: [["Description", "CPT Code", "Qty", "Charged", "Status", "Suggested"]],
@@ -109,6 +112,16 @@ export function downloadBillAuditPDF(
     headStyles: { fillColor: theme.headerColor, fontSize: 8 },
     bodyStyles: { fontSize: 8 },
     alternateRowStyles: { fillColor: [248, 250, 252] },
+    // Wrap long descriptions so they don't overflow the cell on the right.
+    columnStyles: { 0: { cellWidth: "wrap" } },
+    // Repeat the column header row at the top of every continuation page.
+    showHead: "everyPage",
+    didDrawPage: (data) => {
+      // Re-draw the CareGuard page header on every page beyond the first.
+      if (data.pageNumber > 1) {
+        addHeader(doc, "Medical Bill Audit Report (cont.)", subtitle, theme);
+      }
+    },
     didParseCell: (data) => {
       if (data.section === "body" && data.column.index === 4) {
         const val = String(data.cell.raw || "");
