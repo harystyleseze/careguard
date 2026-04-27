@@ -94,6 +94,8 @@ let spendingTracker = loadSpending();
 
 const POLICY_FILE = `${DATA_DIR}/policy.json`;
 
+const MAX_PAYMENT = 1000;
+
 const DEFAULT_POLICY: SpendingPolicy = {
   dailyLimit: 100,
   monthlyLimit: 500,
@@ -334,8 +336,8 @@ export function checkSpendingPolicy(amount: number, category: "medications" | "b
 
 // --- Tool: Pay for medication via MPP Charge (real Stellar payment) ---
 export async function payForMedication(pharmacyId: string, pharmacyName: string, drugName: string, amount: number) {
-  if (!amount || amount <= 0 || isNaN(amount)) {
-    return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive number.` };
+  if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_PAYMENT) {
+    return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive finite number <= $${MAX_PAYMENT}.` };
   }
   const policyCheck = checkSpendingPolicy(amount, "medications");
   if (!policyCheck.allowed) return { success: false, error: `BLOCKED BY SPENDING POLICY: ${policyCheck.reason}` };
@@ -401,8 +403,8 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
 
 // --- Tool: Pay a medical bill via real Stellar USDC transfer ---
 export async function payBill(providerId: string, providerName: string, description: string, amount: number) {
-  if (!amount || amount <= 0 || isNaN(amount)) {
-    return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive number.` };
+  if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_PAYMENT) {
+    return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive finite number <= $${MAX_PAYMENT}.` };
   }
   const policyCheck = checkSpendingPolicy(amount, "bills");
   if (!policyCheck.allowed) return { success: false, error: `BLOCKED BY SPENDING POLICY: ${policyCheck.reason}` };
