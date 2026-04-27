@@ -1,0 +1,143 @@
+{
+  "app": {
+    "title": "CareGuard",
+    "subtitle": "AI Healthcare Agent on Stellar"
+  },
+  "status": {
+    "disconnected": "Disconnected",
+    "paused": "Paused",
+    "active": "Active"
+  },
+  "actions": {
+    "pause": "Pause",
+    "resume": "Resume"
+  },
+  "wallet": {
+    "agentWallet": "Agent Wallet (USDC)",
+    "careRecipient": "Care Recipient"
+  },
+  "tabs": {
+    "overview": "Overview",
+    "medications": "Medications",
+    "bills": "Bills",
+    "policy": "Policy",
+    "wallet": "Wallet",
+    "activity": "Activity",
+    "settings": "Settings"
+  },
+  "overview": {
+    "monthlySpending": "Monthly Spending",
+    "savingsFound": "Savings Found",
+    "billingErrors": "Billing Errors Caught",
+    "agentApiCosts": "Agent API Costs",
+    "budgetStatus": "Budget Status",
+    "agentActions": "Agent Actions",
+    "agentResponse": "Agent Response",
+    "limit": "limit",
+    "bySwitching": "by switching pharmacies",
+    "inOvercharges": "in overcharges identified",
+    "queries": "queries via x402"
+  },
+  "budget": {
+    "medications": "Medications",
+    "medicalBills": "Medical Bills"
+  },
+  "tasks": {
+    "comparePrices": "Compare Medication Prices",
+    "findCheapest": "Find cheapest pharmacies for Rosa's 4 medications",
+    "auditBill": "Audit Hospital Bill",
+    "scanBill": "Scan Rosa's bill for errors and overcharges",
+    "overBudget": "Try Over-Budget Payment",
+    "demoPayment": "Demo: agent attempts $600 payment (over $500 bill limit)",
+    "agentPaused": "Agent is paused",
+    "working": "Agent working..."
+  },
+  "medications": {
+    "title": "Rosa's Medications",
+    "downloadPdf": "Download PDF",
+    "best": "Best",
+    "notYetCompared": "Not yet compared",
+    "save": "Save",
+    "savings": "savings",
+    "drugInteractions": "Drug Interactions"
+  },
+  "bills": {
+    "title": "Bill Audit Results",
+    "downloadPdf": "Download PDF",
+    "errorsFound": "errors found",
+    "totalCharged": "Total Charged",
+    "overcharges": "Overcharges",
+    "correctAmount": "Correct Amount",
+    "lineItems": "line items",
+    "showErrors": "Show errors only",
+    "showAll": "Show all items",
+    "notAudited": "No bills audited yet. Run \"Audit Hospital Bill\" from Overview."
+  },
+  "policy": {
+    "title": "Spending Policy for Rosa",
+    "description": "These limits are enforced by Soroban smart contracts on Stellar. The agent cannot exceed them.",
+    "dailyLimit": "Daily Spending Limit ($)",
+    "monthlyLimit": "Monthly Spending Limit ($)",
+    "medicationBudget": "Medication Monthly Budget ($)",
+    "billBudget": "Bill Monthly Budget ($)",
+    "approvalThreshold": "Caregiver Approval Threshold ($)",
+    "refresh": "Refresh from server",
+    "discard": "Discard changes",
+    "updatePolicy": "Update Policy",
+    "policySaved": "Policy Saved"
+  },
+  "activity": {
+    "title": "Transaction Log",
+    "downloadReport": "Download Report",
+    "reset": "Reset All",
+    "noActivity": "No agent activity yet...",
+    "noTransactions": "No transactions yet",
+    "time": "Time",
+    "type": "Type",
+    "description": "Description",
+    "amount": "Amount",
+    "status": "Status",
+    "stellarTx": "Stellar Tx"
+  },
+  "wallet": {
+    "title": "Agent Wallet",
+    "description": "This is the AI agent's Stellar wallet. It holds USDC for paying pharmacies, medical bills, and API query fees. All balances are on Stellar testnet.",
+    "usdcBalance": "USDC Balance",
+    "xlmBalance": "XLM Balance",
+    "walletAddress": "Wallet Address",
+    "network": "Network",
+    "llmProvider": "LLM Provider",
+    "networkStellar": "Stellar Testnet",
+    "viewExplorer": "View on Stellar Explorer",
+    "fund": "Fund with USDC",
+    "howPayments": "How Payments Work"
+  },
+  "settings": {
+    "recipient": "Care Recipient",
+    "name": "Name",
+    "age": "Age",
+    "medications": "Medications",
+    "doctor": "Primary Doctor",
+    "insurance": "Insurance",
+    "caregiver": "Caregiver",
+    "relationship": "Relationship",
+    "location": "Location",
+    "notifications": "Notifications",
+    "agentConfig": "Agent Configuration",
+    "agentStatus": "Agent Status",
+    "notConnected": "Not connected"
+  },
+  "pdf": {
+    "careguard": "CareGuard",
+    "subtitle": "AI Healthcare Agent on Stellar",
+    "billAudit": "Medical Bill Audit Report",
+    "medication": "Medication Price Comparison Report",
+    "transaction": "Transaction Report",
+    "generated": "Generated"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "retry": "Try Again"
+  }
+}

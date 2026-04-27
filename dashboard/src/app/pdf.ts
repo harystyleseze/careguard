@@ -62,16 +62,17 @@ function addFooter(doc: jsPDF) {
 
 export function downloadBillAuditPDF(
   auditResult: BillAuditResult,
-  options?: { errorsOnly?: boolean; theme?: PdfTheme }
+  options?: { errorsOnly?: boolean; theme?: PdfTheme; recipientName?: string }
 ) {
   const theme = options?.theme ?? DEFAULT_PDF_THEME;
   const errorsOnly = Boolean(options?.errorsOnly);
+  const recipientName = options?.recipientName ?? "Rosa Garcia";
 
   const allItems = auditResult.lineItems;
   const filteredItems = errorsOnly ? allItems.filter((item) => item.status !== "valid") : allItems;
   const subtitle = errorsOnly
-    ? `Patient: Rosa Garcia | Facility: General Hospital | ${filteredItems.length} of ${allItems.length} items shown — errors only`
-    : "Patient: Rosa Garcia | Facility: General Hospital";
+    ? `Patient: ${recipientName} | Facility: General Hospital | ${filteredItems.length} of ${allItems.length} items shown — errors only`
+    : `Patient: ${recipientName} | Facility: General Hospital`;
 
   const doc: AutoTableDoc = new jsPDF();
   addHeader(doc, "Medical Bill Audit Report", subtitle, theme);
@@ -143,11 +144,12 @@ export function downloadBillAuditPDF(
 
 export function downloadMedicationPDF(
   params: { priceResults: PharmacyCompareResult[]; interactionResult?: DrugInteractionResult },
-  options?: { theme?: PdfTheme }
+  options?: { theme?: PdfTheme; recipientName?: string }
 ) {
   const theme = options?.theme ?? DEFAULT_PDF_THEME;
+  const recipientName = options?.recipientName ?? "Rosa Garcia";
   const doc: AutoTableDoc = new jsPDF();
-  addHeader(doc, "Medication Price Comparison Report", "Patient: Rosa Garcia | 4 Medications Compared", theme);
+  addHeader(doc, "Medication Price Comparison Report", `Patient: ${recipientName} | 4 Medications Compared`, theme);
 
   let y = 58;
   const priceResults = params.priceResults.filter(r => r.cheapest);
@@ -215,11 +217,12 @@ export function downloadMedicationPDF(
 export function downloadTransactionPDF(
   transactions: Transaction[],
   spending: SpendingData | null,
-  options?: { theme?: PdfTheme }
+  options?: { theme?: PdfTheme; recipientName?: string }
 ) {
   const theme = options?.theme ?? DEFAULT_PDF_THEME;
+  const recipientName = options?.recipientName ?? "Rosa Garcia";
   const doc: AutoTableDoc = new jsPDF();
-  addHeader(doc, "Transaction Report", `Patient: Rosa Garcia | ${transactions.length} Transactions`, theme);
+  addHeader(doc, "Transaction Report", `Patient: ${recipientName} | ${transactions.length} Transactions`, theme);
 
   let y = 58;
 
