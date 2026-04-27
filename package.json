@@ -40,7 +40,7 @@
     "@types/node": "^25.5.0",
     "concurrently": "^9.2.1",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2",
+    "typescript": "^6.0.3",
     "vitest": "^2.1.8"
   }
 }
