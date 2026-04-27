@@ -1,43 +1,20 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { downloadBillAuditPDF, downloadMedicationPDF, downloadTransactionPDF } from "./pdf";
+import {
+  BillAuditResultSchema,
+  DrugInteractionResultSchema,
+  PharmacyCompareResultSchema,
+  SpendingDataSchema,
+  TransactionSchema,
+  type SpendingData,
+  type Transaction,
+} from "../lib/types";
 
 const AGENT_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3004";
-
-interface Transaction {
-  id: string;
-  timestamp: string;
-  type: "medication" | "bill" | "service_fee";
-  description: string;
-  amount: number;
-  recipient: string;
-  stellarTxHash?: string;
-  status: string;
-  category: string;
-}
-
-interface SpendingData {
-  policy: {
-    dailyLimit: number;
-    monthlyLimit: number;
-    medicationMonthlyBudget: number;
-    billMonthlyBudget: number;
-    approvalThreshold: number;
-  };
-  spending: {
-    medications: number;
-    bills: number;
-    serviceFees: number;
-    total: number;
-  };
-  budgetRemaining: {
-    medications: number;
-    bills: number;
-  };
-  transactionCount: number;
-  recentTransactions: Transaction[];
-}
 
 interface AgentResult {
   response: string;
@@ -53,13 +30,26 @@ interface AgentInfo {
 }
 
 export default function Dashboard() {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const allowedTabs = useMemo(
+    () => ["overview", "medications", "bills", "policy", "wallet", "activity", "settings"] as const,
+    []
+  );
+  type Tab = typeof allowedTabs[number];
+
+  const activeTab = useMemo<Tab>(() => {
+    const tab = searchParams.get("tab");
+    return (allowedTabs as readonly string[]).includes(tab || "") ? (tab as Tab) : "overview";
+  }, [allowedTabs, searchParams]);
+
   const [spending, setSpending] = useState<SpendingData | null>(null);
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
   const [agentResult, setAgentResult] = useState<AgentResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeTask, setActiveTask] = useState("");
   const [agentLog, setAgentLog] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<"overview" | "medications" | "bills" | "policy" | "activity" | "wallet" | "settings">("overview");
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null);
   const [agentConnected, setAgentConnected] = useState(false);
   const [agentPaused, setAgentPaused] = useState(false);
@@ -80,6 +70,12 @@ export default function Dashboard() {
     billMonthlyBudget: 500,
     approvalThreshold: 75,
   });
+  const [policyDirty, setPolicyDirty] = useState(false);
+
+  const activeTabRef = useRef(activeTab);
+  const policyDirtyRef = useRef(policyDirty);
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  useEffect(() => { policyDirtyRef.current = policyDirty; }, [policyDirty]);
 
   const fetchAgentInfo = useCallback(async () => {
     try {
@@ -106,25 +102,34 @@ export default function Dashboard() {
     } catch { setAgentConnected(false); }
   }, []);
 
-  const fetchSpending = useCallback(async () => {
+  const fetchSpending = useCallback(async (opts?: { forcePolicySync?: boolean }) => {
     try {
       const res = await fetch(`${AGENT_URL}/agent/spending`);
       if (res.ok) {
-        const data = await res.json();
+        const data = SpendingDataSchema.parse(await res.json());
         setSpending(data);
         // Only sync policy form from server when NOT on the Policy tab
         // (prevents overwriting user's in-progress edits every 3 seconds)
-        if (activeTab !== "policy") {
+        const forcePolicySync = Boolean(opts?.forcePolicySync);
+        const shouldSyncPolicy =
+          forcePolicySync ||
+          (activeTabRef.current !== "policy" && !policyDirtyRef.current);
+        if (shouldSyncPolicy) {
           setPolicyForm(data.policy);
+          setPolicyDirty(false);
         }
       }
     } catch {}
-  }, [activeTab]);
+  }, []);
 
   const fetchTransactions = useCallback(async () => {
     try {
       const res = await fetch(`${AGENT_URL}/agent/transactions`);
-      if (res.ok) { const data = await res.json(); setAllTransactions(data.transactions || []); }
+      if (res.ok) {
+        const data = await res.json();
+        const txs = Array.isArray(data.transactions) ? data.transactions.map((t: unknown) => TransactionSchema.parse(t)) : [];
+        setAllTransactions(txs);
+      }
     } catch {}
   }, []);
 
@@ -175,9 +180,10 @@ export default function Dashboard() {
       if (res.ok) {
         const spendingRes = await fetch(`${AGENT_URL}/agent/spending`);
         if (spendingRes.ok) {
-          const data = await spendingRes.json();
+          const data = SpendingDataSchema.parse(await spendingRes.json());
           setSpending(data);
           setPolicyForm(data.policy);
+          setPolicyDirty(false);
         }
         setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Policy updated: daily=$${policyForm.dailyLimit}, monthly=$${policyForm.monthlyLimit}, meds=$${policyForm.medicationMonthlyBudget}, bills=$${policyForm.billMonthlyBudget}, approval=$${policyForm.approvalThreshold}`]);
         setPolicySaved(true);
@@ -245,13 +251,23 @@ export default function Dashboard() {
       </header>
 
       <div className="max-w-7xl mx-auto px-4 py-6">
-        <nav className="flex gap-1 mb-6 bg-white rounded-lg p-1 border border-slate-200 w-fit">
-          {(["overview", "medications", "bills", "policy", "wallet", "activity", "settings"] as const).map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${activeTab === tab ? "bg-sky-500 text-white" : "text-slate-600 hover:bg-slate-100 active:bg-slate-200"}`}>
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </button>
-          ))}
+        <nav role="tablist" aria-label="Dashboard tabs" className="flex gap-1 mb-6 bg-white rounded-lg p-1 border border-slate-200 w-fit">
+          {allowedTabs.map((tab) => {
+            const isActive = activeTab === tab;
+            const href = tab === "overview" ? pathname : `${pathname}?tab=${tab}`;
+            return (
+              <Link
+                key={tab}
+                href={href}
+                role="tab"
+                aria-selected={isActive}
+                tabIndex={isActive ? 0 : -1}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${isActive ? "bg-sky-500 text-white" : "text-slate-600 hover:bg-slate-100 active:bg-slate-200"}`}
+              >
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </Link>
+            );
+          })}
         </nav>
 
         {activeTab === "overview" && (
@@ -300,7 +316,21 @@ export default function Dashboard() {
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-sm font-semibold text-slate-700">Rosa&apos;s Medications</h2>
                 {agentResult?.toolCalls.some(t => t.tool === "compare_pharmacy_prices") && (
-                  <button onClick={() => downloadMedicationPDF(agentResult!.toolCalls)} className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all">Download PDF</button>
+                  <button
+                    onClick={() => {
+                      const priceResults = agentResult!.toolCalls
+                        .filter(t => t.tool === "compare_pharmacy_prices")
+                        .map(t => PharmacyCompareResultSchema.parse(t.result));
+                      const interactionResult = agentResult!.toolCalls.find(t => t.tool === "check_drug_interactions")?.result;
+                      downloadMedicationPDF({
+                        priceResults,
+                        interactionResult: interactionResult ? DrugInteractionResultSchema.parse(interactionResult) : undefined,
+                      });
+                    }}
+                    className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
+                  >
+                    Download PDF
+                  </button>
                 )}
               </div>
               <div className="space-y-3">
@@ -342,7 +372,12 @@ export default function Dashboard() {
                   <div className="flex items-center justify-between mb-4">
                     <h2 className="text-sm font-semibold text-slate-700">Bill Audit Results</h2>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => downloadBillAuditPDF(t.result)} className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all">Download PDF</button>
+                      <button
+                        onClick={() => downloadBillAuditPDF(BillAuditResultSchema.parse(t.result))}
+                        className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
+                      >
+                        Download PDF
+                      </button>
                       <span className={`px-3 py-1 rounded-full text-xs font-medium ${t.result.errorCount > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>{t.result.errorCount} errors found</span>
                     </div>
                   </div>
@@ -388,9 +423,26 @@ export default function Dashboard() {
             <div className="space-y-4">
               {([["dailyLimit","Daily Spending Limit ($)"],["monthlyLimit","Monthly Spending Limit ($)"],["medicationMonthlyBudget","Medication Monthly Budget ($)"],["billMonthlyBudget","Bill Monthly Budget ($)"],["approvalThreshold","Caregiver Approval Threshold ($)"]] as const).map(([key, label]) => (
                 <div key={key}><label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
-                  <input type="number" value={policyForm[key]} onChange={e => setPolicyForm(p => ({...p, [key]: Number(e.target.value)}))}
+                  <input
+                    type="number"
+                    value={policyForm[key]}
+                    onChange={e => { setPolicyDirty(true); setPolicyForm(p => ({ ...p, [key]: Number(e.target.value) })); }}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" /></div>
               ))}
+              <div className="flex gap-2">
+                <button onClick={() => fetchSpending({ forcePolicySync: true })} className="flex-1 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 active:bg-slate-300 transition-all cursor-pointer">
+                  Refresh from server
+                </button>
+                <button
+                  onClick={() => {
+                    if (spending?.policy) setPolicyForm(spending.policy);
+                    setPolicyDirty(false);
+                  }}
+                  className="flex-1 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 active:bg-slate-300 transition-all cursor-pointer"
+                >
+                  Discard changes
+                </button>
+              </div>
               <button onClick={updatePolicy} className={`w-full py-2 rounded-lg text-sm font-medium transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 ${policySaved ? "bg-green-500 text-white" : "bg-sky-500 text-white hover:bg-sky-600 active:bg-sky-700"}`}>
                 {policySaved ? "Policy Saved" : "Update Policy"}
               </button>
@@ -588,6 +640,7 @@ function TxLink({ hash }: { hash?: string }) {
   // Clean up hash — might be base64 encoded receipt, raw hash, or order ID
   let displayHash = hash;
   let explorerHash = hash;
+  let decodeFailed = false;
 
   // If it looks like base64 (x402 SettleResponse or MPP receipt), decode and extract tx hash
   if (hash.length > 64 && !hash.match(/^[0-9a-f]{64}$/i)) {
@@ -601,7 +654,7 @@ function TxLink({ hash }: { hash?: string }) {
         displayHash = txId;
       }
     } catch {
-      // Not decodable, use as-is
+      decodeFailed = true;
     }
   }
 
@@ -623,5 +676,18 @@ function TxLink({ hash }: { hash?: string }) {
   }
 
   // Non-hash identifier (order ID, etc.)
-  return <span className="text-xs text-slate-400 font-mono" title={hash}>{displayHash.slice(0, 12)}...</span>;
+  return (
+    <span className="inline-flex items-center gap-1 justify-end">
+      <span className="text-xs text-slate-400 font-mono" title={hash}>
+        {displayHash.slice(0, 12)}...
+      </span>
+      <span
+        className="text-[10px] leading-none text-slate-500 border border-slate-300 rounded-full w-4 h-4 inline-flex items-center justify-center"
+        title={decodeFailed ? "Couldn't extract a Stellar tx hash. The receipt may be in a different format." : "Not a Stellar transaction hash."}
+        aria-label="Transaction link info"
+      >
+        ?
+      </span>
+    </span>
+  );
 }
