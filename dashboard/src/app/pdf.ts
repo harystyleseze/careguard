@@ -2,6 +2,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { BillAuditResult, DrugInteractionResult, PharmacyCompareResult, SpendingData, Transaction } from "../lib/types";
 import { DEFAULT_PDF_THEME, type PdfTheme } from "../lib/pdf-theme";
+import type { RecipientProfile } from "../lib/types";
 
 type AutoTableDoc = jsPDF & { lastAutoTable?: { finalY: number } };
 
@@ -27,6 +28,11 @@ function formatTxHashDisplay(hash?: string): { display: string; decodeFailed: bo
   }
 
   return { display: `${hash.slice(0, 16)}... ?`, decodeFailed: true };
+}
+
+function formatRecipient(recipient: RecipientProfile): string {
+  const age = typeof recipient.age === "number" ? `, ${recipient.age}` : "";
+  return `${recipient.name}${age}`;
 }
 
 function addHeader(doc: jsPDF, title: string, subtitle: string, theme: PdfTheme) {
@@ -62,6 +68,16 @@ function addFooter(doc: jsPDF) {
 
 export function downloadBillAuditPDF(
   auditResult: BillAuditResult,
+  options?: { errorsOnly?: boolean; theme?: PdfTheme; recipient?: RecipientProfile }
+) {
+  const theme = options?.theme ?? DEFAULT_PDF_THEME;
+  const errorsOnly = Boolean(options?.errorsOnly);
+  const recipient = options?.recipient ?? {
+    name: "Rosa Garcia",
+    age: 78,
+    facility: "General Hospital",
+  };
+  const recipientLabel = formatRecipient(recipient);
   options?: { errorsOnly?: boolean; theme?: PdfTheme; recipientName?: string }
 ) {
   const theme = options?.theme ?? DEFAULT_PDF_THEME;
@@ -71,10 +87,19 @@ export function downloadBillAuditPDF(
   const allItems = auditResult.lineItems;
   const filteredItems = errorsOnly ? allItems.filter((item) => item.status !== "valid") : allItems;
   const subtitle = errorsOnly
+    ? `Patient: ${recipientLabel} | Facility: ${recipient.facility || "N/A"} | ${filteredItems.length} of ${allItems.length} items shown — errors only`
+    : `Patient: ${recipientLabel} | Facility: ${recipient.facility || "N/A"}`;
     ? `Patient: ${recipientName} | Facility: General Hospital | ${filteredItems.length} of ${allItems.length} items shown — errors only`
     : `Patient: ${recipientName} | Facility: General Hospital`;
 
   const doc: AutoTableDoc = new jsPDF();
+  doc.setProperties({
+    title: "CareGuard Medical Bill Audit Report",
+    subject: `Bill audit for ${recipient.name}`,
+    author: "CareGuard",
+    keywords: `${recipient.name},bill,audit,stellar`,
+    creator: `CareGuard ${new Date().toISOString()}`,
+  });
   addHeader(doc, "Medical Bill Audit Report", subtitle, theme);
 
   // Summary boxes
@@ -144,6 +169,28 @@ export function downloadBillAuditPDF(
 
 export function downloadMedicationPDF(
   params: { priceResults: PharmacyCompareResult[]; interactionResult?: DrugInteractionResult },
+  options?: { theme?: PdfTheme; recipient?: RecipientProfile }
+) {
+  const theme = options?.theme ?? DEFAULT_PDF_THEME;
+  const recipient = options?.recipient ?? {
+    name: "Rosa Garcia",
+    age: 78,
+    facility: "General Hospital",
+  };
+  const doc: AutoTableDoc = new jsPDF();
+  doc.setProperties({
+    title: "CareGuard Medication Price Comparison Report",
+    subject: `Medication comparison for ${recipient.name}`,
+    author: "CareGuard",
+    keywords: `${recipient.name},medication,prices,stellar`,
+    creator: `CareGuard ${new Date().toISOString()}`,
+  });
+  addHeader(
+    doc,
+    "Medication Price Comparison Report",
+    `Patient: ${formatRecipient(recipient)} | ${params.priceResults.length} Medications Compared`,
+    theme
+  );
   options?: { theme?: PdfTheme; recipientName?: string }
 ) {
   const theme = options?.theme ?? DEFAULT_PDF_THEME;
@@ -217,6 +264,28 @@ export function downloadMedicationPDF(
 export function downloadTransactionPDF(
   transactions: Transaction[],
   spending: SpendingData | null,
+  options?: { theme?: PdfTheme; recipient?: RecipientProfile }
+) {
+  const theme = options?.theme ?? DEFAULT_PDF_THEME;
+  const recipient = options?.recipient ?? {
+    name: "Rosa Garcia",
+    age: 78,
+    facility: "General Hospital",
+  };
+  const doc: AutoTableDoc = new jsPDF();
+  doc.setProperties({
+    title: "CareGuard Transaction Report",
+    subject: `Transactions for ${recipient.name}`,
+    author: "CareGuard",
+    keywords: `${recipient.name},transactions,stellar`,
+    creator: `CareGuard ${new Date().toISOString()}`,
+  });
+  addHeader(
+    doc,
+    "Transaction Report",
+    `Patient: ${formatRecipient(recipient)} | ${transactions.length} Transactions`,
+    theme
+  );
   options?: { theme?: PdfTheme; recipientName?: string }
 ) {
   const theme = options?.theme ?? DEFAULT_PDF_THEME;

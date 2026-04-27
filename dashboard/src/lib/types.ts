@@ -93,3 +93,9 @@ export const SpendingDataSchema = z.object({
 
 export type SpendingData = z.infer<typeof SpendingDataSchema>;
 
+export type RecipientProfile = {
+  name: string;
+  age?: number;
+  facility?: string;
+};
+

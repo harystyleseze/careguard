@@ -1,0 +1,55 @@
+{
+  "response": "Compared prices and found cheaper options.",
+  "toolCalls": [
+    {
+      "tool": "compare_pharmacy_prices",
+      "input": {},
+      "result": {
+        "drug": "Lisinopril",
+        "prices": [
+          {
+            "pharmacyName": "Costco",
+            "price": 12.5,
+            "distance": "2mi",
+            "inStock": true
+          },
+          {
+            "pharmacyName": "CVS",
+            "price": 24.0,
+            "distance": "1mi",
+            "inStock": true
+          }
+        ],
+        "cheapest": {
+          "pharmacyName": "Costco",
+          "price": 12.5,
+          "distance": "2mi",
+          "inStock": true
+        },
+        "potentialSavings": 11.5,
+        "savingsPercent": 47.9
+      }
+    }
+  ],
+  "spending": {
+    "policy": {
+      "dailyLimit": 100,
+      "monthlyLimit": 500,
+      "medicationMonthlyBudget": 300,
+      "billMonthlyBudget": 500,
+      "approvalThreshold": 75
+    },
+    "spending": {
+      "medications": 42.5,
+      "bills": 120,
+      "serviceFees": 0.021,
+      "total": 162.521
+    },
+    "budgetRemaining": {
+      "medications": 257.5,
+      "bills": 380
+    },
+    "transactionCount": 2,
+    "recentTransactions": []
+  }
+}

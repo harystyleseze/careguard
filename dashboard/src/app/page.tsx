@@ -14,6 +14,7 @@ import {
   type SpendingData,
   type Transaction,
 } from "../lib/types";
+import { useProfile } from "../lib/useProfile";
 
 const AGENT_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3004";
 
@@ -31,6 +32,13 @@ interface AgentInfo {
 }
 
 export default function Dashboard() {
+  const { recipient } = useProfile();
+  const recipientInitials = recipient.name
+    .split(" ")
+    .map((chunk) => chunk[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -270,9 +278,12 @@ export default function Dashboard() {
             <div className="flex items-center gap-2">
               <div className="text-right text-xs">
                 <div className="text-slate-500">Care Recipient</div>
-                <div className="font-medium">Rosa Garcia, 78</div>
+                <div className="font-medium">
+                  {recipient.name}
+                  {typeof recipient.age === "number" ? `, ${recipient.age}` : ""}
+                </div>
               </div>
-              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-sm font-medium">RG</div>
+              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-sm font-medium">{recipientInitials}</div>
             </div>
           </div>
         </div>
@@ -342,7 +353,7 @@ export default function Dashboard() {
           <div className="space-y-6">
             <div className="bg-white rounded-xl border border-slate-200 p-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-semibold text-slate-700">Rosa&apos;s Medications</h2>
+                <h2 className="text-sm font-semibold text-slate-700">{recipient.name}&apos;s Medications</h2>
                 {agentResult?.toolCalls.some(t => t.tool === "compare_pharmacy_prices") && (
                   <button
                     onClick={() => {
@@ -353,7 +364,7 @@ export default function Dashboard() {
                       downloadMedicationPDF({
                         priceResults,
                         interactionResult: interactionResult ? DrugInteractionResultSchema.parse(interactionResult) : undefined,
-                      });
+                      }, { recipient });
                     }}
                     className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
                   >
@@ -401,7 +412,12 @@ export default function Dashboard() {
                     <h2 className="text-sm font-semibold text-slate-700">Bill Audit Results</h2>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => downloadBillAuditPDF(BillAuditResultSchema.parse(t.result), { errorsOnly: billShowErrorsOnly })}
+                        onClick={() =>
+                          downloadBillAuditPDF(BillAuditResultSchema.parse(t.result), {
+                            errorsOnly: billShowErrorsOnly,
+                            recipient,
+                          })
+                        }
                         className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
                       >
                         Download PDF
@@ -420,12 +436,17 @@ export default function Dashboard() {
                       {billShowErrorsOnly ? "Show all items" : "Show errors only"}
                     </button>
                   </div>
-                  <div className="space-y-2">
+                  <div className="overflow-x-auto rounded-lg shadow-[inset_-10px_0_12px_-12px_rgba(15,23,42,0.25)]">
+                    <div className="space-y-2 min-w-[640px]">
                     {t.result.lineItems.filter((item: any) => !billShowErrorsOnly || item.status !== "valid").map((item: any, j: number) => (
                       <div key={j} className={`flex items-center justify-between p-3 rounded-lg text-sm ${item.status === "valid" ? "bg-slate-50" : item.status === "duplicate" ? "bg-red-50 border border-red-200" : "bg-amber-50 border border-amber-200"}`}>
                         <div className="flex-1">
                           <div className="font-medium">{item.description}</div>
-                          <div className="text-xs text-slate-500">CPT: {item.cptCode}</div>
+                          <div className="hidden md:block text-xs text-slate-500">CPT: {item.cptCode}</div>
+                          <details className="md:hidden mt-1">
+                            <summary className="cursor-pointer text-xs text-slate-500">More details</summary>
+                            <div className="text-xs text-slate-500 mt-1">CPT: {item.cptCode || "N/A"}</div>
+                          </details>
                           {item.errorDescription && <div className="text-xs text-red-600 mt-1">{item.errorDescription}</div>}
                         </div>
                         <div className="text-right ml-4">
@@ -434,6 +455,7 @@ export default function Dashboard() {
                         </div>
                       </div>
                     ))}
+                    </div>
                   </div>
                   <p className="mt-4 text-sm font-medium text-slate-700">{t.result.recommendation}</p>
                 </div>
@@ -446,7 +468,7 @@ export default function Dashboard() {
 
         {activeTab === "policy" && (
           <div className="bg-white rounded-xl border border-slate-200 p-6 max-w-lg">
-            <h2 className="text-sm font-semibold text-slate-700 mb-4">Spending Policy for Rosa</h2>
+            <h2 className="text-sm font-semibold text-slate-700 mb-4">Spending Policy for {recipient.name}</h2>
             <p className="text-xs text-slate-500 mb-6">These limits are enforced by Soroban smart contracts on Stellar. The agent cannot exceed them.</p>
             <div className="space-y-4">
               {([["dailyLimit","Daily Spending Limit ($)"],["monthlyLimit","Monthly Spending Limit ($)"],["medicationMonthlyBudget","Medication Monthly Budget ($)"],["billMonthlyBudget","Bill Monthly Budget ($)"],["approvalThreshold","Caregiver Approval Threshold ($)"]] as const).map(([key, label]) => (
@@ -484,7 +506,7 @@ export default function Dashboard() {
               <h2 className="text-sm font-semibold text-slate-700">Transaction Log</h2>
               <div className="flex items-center gap-3">
                 {allTransactions.length > 0 && (
-                  <button onClick={() => downloadTransactionPDF(allTransactions, spending)} className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all">Download Report</button>
+                  <button onClick={() => downloadTransactionPDF(allTransactions, spending, { recipient })} className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all">Download Report</button>
                 )}
                 <button onClick={resetAgent} className="text-xs text-red-500 hover:text-red-700 hover:underline active:text-red-800 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 rounded px-1">Reset All</button>
               </div>
@@ -497,9 +519,10 @@ export default function Dashboard() {
             </div>
             <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
               {allTransactions.length === 0 ? <div className="p-8 text-center text-sm text-slate-400">No transactions yet</div> : (
-                <table className="w-full text-sm">
+                <div className="overflow-x-auto shadow-[inset_-10px_0_12px_-12px_rgba(15,23,42,0.25)]">
+                <table className="w-full min-w-[640px] text-sm">
                   <thead className="bg-slate-50 border-b border-slate-200"><tr>
-                    <th className="text-left px-4 py-2 text-xs font-medium text-slate-500">Time</th>
+                    <th className="hidden md:table-cell text-left px-4 py-2 text-xs font-medium text-slate-500">Time</th>
                     <th className="text-left px-4 py-2 text-xs font-medium text-slate-500">Type</th>
                     <th className="text-left px-4 py-2 text-xs font-medium text-slate-500">Description</th>
                     <th className="text-right px-4 py-2 text-xs font-medium text-slate-500">Amount</th>
@@ -508,7 +531,7 @@ export default function Dashboard() {
                   </tr></thead>
                   <tbody>{[...allTransactions].reverse().map(tx => (
                     <tr key={tx.id} className="border-b border-slate-100 last:border-0">
-                      <td className="px-4 py-2 text-xs text-slate-400">{new Date(tx.timestamp).toLocaleTimeString()}</td>
+                      <td className="hidden md:table-cell px-4 py-2 text-xs text-slate-400">{new Date(tx.timestamp).toLocaleTimeString()}</td>
                       <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded text-xs font-medium ${tx.type === "medication" ? "bg-blue-100 text-blue-700" : tx.type === "bill" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-600"}`}>{tx.type}</span></td>
                       <td className="px-4 py-2 text-xs">{tx.description}</td>
                       <td className="px-4 py-2 text-right text-xs font-mono">${tx.amount < 0.01 ? tx.amount.toFixed(4) : tx.amount.toFixed(2)}</td>
@@ -517,6 +540,7 @@ export default function Dashboard() {
                     </tr>
                   ))}</tbody>
                 </table>
+                </div>
               )}
             </div>
           </div>
@@ -587,10 +611,10 @@ export default function Dashboard() {
             <div className="bg-white rounded-xl border border-slate-200 p-6">
               <h2 className="text-sm font-semibold text-slate-700 mb-4">Care Recipient</h2>
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">Name</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">Rosa Garcia</div></div>
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">Age</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">78</div></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Name</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">{recipient.name}</div></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Age</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">{recipient.age ?? "N/A"}</div></div>
                 <div className="col-span-2"><label className="block text-xs font-medium text-slate-600 mb-1">Medications</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">Lisinopril, Metformin, Atorvastatin, Amlodipine</div></div>
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">Primary Doctor</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">Dr. Chen, General Hospital</div></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Primary Doctor</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">Dr. Chen, {recipient.facility || "General Hospital"}</div></div>
                 <div><label className="block text-xs font-medium text-slate-600 mb-1">Insurance</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">Medicare Part D</div></div>
               </div>
             </div>
