@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { downloadBillAuditPDF, downloadMedicationPDF, downloadTransactionPDF } from "./pdf";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import {
+  downloadBillAuditPDF,
+  downloadMedicationPDF,
+  downloadTransactionPDF,
+} from "./pdf";
 import { LiveRegion } from "../components/primitives/live-region";
 import {
   BillAuditResultSchema,
@@ -31,6 +36,20 @@ interface AgentInfo {
   network: string;
 }
 
+interface AgentLogEntry {
+  id: string;
+  timestamp: number;
+  message: string;
+}
+
+interface PaginationData {
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  hasPrevious: boolean;
+}
+
 export default function Dashboard() {
   const { recipient } = useProfile();
   const recipientInitials = recipient.name
@@ -43,38 +62,93 @@ export default function Dashboard() {
   const searchParams = useSearchParams();
 
   const allowedTabs = useMemo(
-    () => ["overview", "medications", "bills", "policy", "wallet", "activity", "settings"] as const,
-    []
+    () =>
+      [
+        "overview",
+        "medications",
+        "bills",
+        "policy",
+        "wallet",
+        "activity",
+        "settings",
+      ] as const,
+    [],
   );
-  type Tab = typeof allowedTabs[number];
+  type Tab = (typeof allowedTabs)[number];
 
   const activeTab = useMemo<Tab>(() => {
     const tab = searchParams.get("tab");
-    return (allowedTabs as readonly string[]).includes(tab || "") ? (tab as Tab) : "overview";
+    return (allowedTabs as readonly string[]).includes(tab || "")
+      ? (tab as Tab)
+      : "overview";
   }, [allowedTabs, searchParams]);
 
   const [spending, setSpending] = useState<SpendingData | null>(null);
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
+  const [pagination, setPagination] = useState<PaginationData | null>(null);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
   const [agentResult, setAgentResult] = useState<AgentResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeTask, setActiveTask] = useState("");
-  const [agentLog, setAgentLog] = useState<string[]>([]);
+  const [agentLog, setAgentLog] = useState<AgentLogEntry[]>([]);
+  const [showAllLogEntries, setShowAllLogEntries] = useState(false);
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null);
   const [agentConnected, setAgentConnected] = useState(false);
   const [agentPaused, setAgentPaused] = useState(false);
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [billShowErrorsOnly, setBillShowErrorsOnly] = useState(false);
   const [walletXlm, setWalletXlm] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [focusedTab, setFocusedTab] = useState<Tab>(activeTab);
   const [liveMessage, setLiveMessage] = useState("");
   const [debouncedAriaLog, setDebouncedAriaLog] = useState<string[]>([]);
   const logDebounceRef = useRef<number | null>(null);
   const lastConnectionStateRef = useRef<string | null>(null);
 
-  const copyToClipboard = (text: string) => {
+  const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    const currentIndex = allowedTabs.indexOf(focusedTab);
+    let newIndex = currentIndex;
+
+    switch (e.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        e.preventDefault();
+        newIndex = (currentIndex + 1) % allowedTabs.length;
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        e.preventDefault();
+        newIndex =
+          currentIndex === 0 ? allowedTabs.length - 1 : currentIndex - 1;
+        break;
+      case "Home":
+        e.preventDefault();
+        newIndex = 0;
+        break;
+      case "End":
+        e.preventDefault();
+        newIndex = allowedTabs.length - 1;
+        break;
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        // Navigate to the focused tab
+        const tab = allowedTabs[newIndex];
+        const href = tab === "overview" ? pathname : `${pathname}?tab=${tab}`;
+        window.location.href = href;
+        return;
+      default:
+        return;
+    }
+
+    setFocusedTab(allowedTabs[newIndex]);
   };
   const [policyForm, setPolicyForm] = useState({
     dailyLimit: 100,
@@ -87,13 +161,17 @@ export default function Dashboard() {
 
   const activeTabRef = useRef(activeTab);
   const policyDirtyRef = useRef(policyDirty);
-  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
-  useEffect(() => { policyDirtyRef.current = policyDirty; }, [policyDirty]);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+  useEffect(() => {
+    policyDirtyRef.current = policyDirty;
+  }, [policyDirty]);
 
   useEffect(() => {
     if (logDebounceRef.current) window.clearTimeout(logDebounceRef.current);
     logDebounceRef.current = window.setTimeout(() => {
-      setDebouncedAriaLog(agentLog.slice(-20));
+      setDebouncedAriaLog(agentLog.slice(-20).map((entry) => entry.message));
     }, 800);
     return () => {
       if (logDebounceRef.current) window.clearTimeout(logDebounceRef.current);
@@ -101,13 +179,18 @@ export default function Dashboard() {
   }, [agentLog]);
 
   useEffect(() => {
-    const connectionState = !agentConnected ? "disconnected" : agentPaused ? "paused" : "active";
+    const connectionState = !agentConnected
+      ? "disconnected"
+      : agentPaused
+        ? "paused"
+        : "active";
     const prev = lastConnectionStateRef.current;
     if (prev === connectionState) return;
     lastConnectionStateRef.current = connectionState;
     if (connectionState === "active") setLiveMessage("Agent connected");
     if (connectionState === "paused") setLiveMessage("Agent paused");
-    if (connectionState === "disconnected") setLiveMessage("Agent disconnected");
+    if (connectionState === "disconnected")
+      setLiveMessage("Agent disconnected");
   }, [agentConnected, agentPaused]);
 
   const fetchAgentInfo = useCallback(async () => {
@@ -121,96 +204,156 @@ export default function Dashboard() {
         // Fetch wallet balance from Horizon
         if (data.agentWallet) {
           try {
-            const hres = await fetch(`https://horizon-testnet.stellar.org/accounts/${data.agentWallet}`);
+            const hres = await fetch(
+              `https://horizon-testnet.stellar.org/accounts/${data.agentWallet}`,
+            );
             if (hres.ok) {
               const acc = await hres.json();
-              const usdc = acc.balances?.find((b: any) => b.asset_code === "USDC");
-              const xlm = acc.balances?.find((b: any) => b.asset_type === "native");
-              setWalletBalance(usdc ? parseFloat(usdc.balance).toFixed(2) : "0.00");
+              const usdc = acc.balances?.find(
+                (b: any) => b.asset_code === "USDC",
+              );
+              const xlm = acc.balances?.find(
+                (b: any) => b.asset_type === "native",
+              );
+              setWalletBalance(
+                usdc ? parseFloat(usdc.balance).toFixed(2) : "0.00",
+              );
               setWalletXlm(xlm ? parseFloat(xlm.balance).toFixed(2) : "0.00");
             }
           } catch {}
         }
       }
-    } catch { setAgentConnected(false); }
+    } catch {
+      setAgentConnected(false);
+    }
   }, []);
 
-  const fetchSpending = useCallback(async (opts?: { forcePolicySync?: boolean }) => {
-    try {
-      const res = await fetch(`${AGENT_URL}/agent/spending`);
-      if (res.ok) {
-        const data = SpendingDataSchema.parse(await res.json());
-        setSpending(data);
-        // Only sync policy form from server when NOT on the Policy tab
-        // (prevents overwriting user's in-progress edits every 3 seconds)
-        const forcePolicySync = Boolean(opts?.forcePolicySync);
-        const shouldSyncPolicy =
-          forcePolicySync ||
-          (activeTabRef.current !== "policy" && !policyDirtyRef.current);
-        if (shouldSyncPolicy) {
-          setPolicyForm(data.policy);
-          setPolicyDirty(false);
+  const fetchSpending = useCallback(
+    async (opts?: { forcePolicySync?: boolean }) => {
+      try {
+        const res = await fetch(`${AGENT_URL}/agent/spending`);
+        if (res.ok) {
+          const data = SpendingDataSchema.parse(await res.json());
+          setSpending(data);
+          // Only sync policy form from server when NOT on the Policy tab
+          // (prevents overwriting user's in-progress edits every 3 seconds)
+          const forcePolicySync = Boolean(opts?.forcePolicySync);
+          const shouldSyncPolicy =
+            forcePolicySync ||
+            (activeTabRef.current !== "policy" && !policyDirtyRef.current);
+          if (shouldSyncPolicy) {
+            setPolicyForm(data.policy);
+            setPolicyDirty(false);
+          }
         }
-      }
-    } catch {}
-  }, []);
+      } catch {}
+    },
+    [],
+  );
 
-  const fetchTransactions = useCallback(async () => {
-    try {
-      const res = await fetch(`${AGENT_URL}/agent/transactions`);
-      if (res.ok) {
-        const data = await res.json();
-        const txs = Array.isArray(data.transactions) ? data.transactions.map((t: unknown) => TransactionSchema.parse(t)) : [];
-        setAllTransactions(txs);
-      }
-    } catch {}
-  }, []);
+  const fetchTransactions = useCallback(
+    async (limit?: number, offset?: number) => {
+      try {
+        const params = new URLSearchParams();
+        if (limit) params.append("limit", limit.toString());
+        if (offset) params.append("offset", offset.toString());
+
+        const res = await fetch(`${AGENT_URL}/agent/transactions?${params}`);
+        if (res.ok) {
+          const data = await res.json();
+          const txs = Array.isArray(data.transactions)
+            ? data.transactions.map((t: unknown) => TransactionSchema.parse(t))
+            : [];
+          setAllTransactions(txs);
+          if (data.pagination) {
+            setPagination(data.pagination);
+          }
+        }
+      } catch {}
+    },
+    [],
+  );
 
   useEffect(() => {
-    fetchAgentInfo(); fetchSpending(); fetchTransactions();
-    const i = setInterval(() => { fetchSpending(); fetchTransactions(); }, 3000);
+    fetchAgentInfo();
+    fetchSpending();
+    fetchTransactions(pageSize, currentPage * pageSize);
+    const i = setInterval(() => {
+      fetchSpending();
+      fetchTransactions(pageSize, currentPage * pageSize);
+    }, 3000);
     const j = setInterval(fetchAgentInfo, 10000);
-    return () => { clearInterval(i); clearInterval(j); };
-  }, [fetchAgentInfo, fetchSpending, fetchTransactions]);
+    return () => {
+      clearInterval(i);
+      clearInterval(j);
+    };
+  }, [fetchAgentInfo, fetchSpending, fetchTransactions, pageSize, currentPage]);
 
   const runAgentTask = async (task: string, label: string) => {
     if (!agentConnected) {
-      setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Agent not connected. Start services with: npm run dev`]);
+      addLogEntry(
+        `[${new Date().toLocaleTimeString()}] Agent not connected. Start services with: npm run dev`,
+      );
       return;
     }
-    setLoading(true); setActiveTask(label);
-    setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Starting: ${label}`]);
+    setLoading(true);
+    setActiveTask(label);
+    addLogEntry(`[${new Date().toLocaleTimeString()}] Starting: ${label}`);
     try {
       const res = await fetch(`${AGENT_URL}/agent/run`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task }),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task }),
       });
       if (!res.ok) {
         const errText = await res.text();
-        const errMsg = (() => { try { return JSON.parse(errText).error; } catch { return errText.slice(0, 200); } })();
-        setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Error (${res.status}): ${errMsg}`]);
+        const errMsg = (() => {
+          try {
+            return JSON.parse(errText).error;
+          } catch {
+            return errText.slice(0, 200);
+          }
+        })();
+        addLogEntry(
+          `[${new Date().toLocaleTimeString()}] Error (${res.status}): ${errMsg}`,
+        );
         return;
       }
       const data: AgentResult = await res.json();
-      setAgentResult(data); setSpending(data.spending);
+      setAgentResult(data);
+      setSpending(data.spending);
       setLiveMessage(`Task complete — ${data.toolCalls.length} tool calls`);
       for (const tc of data.toolCalls) {
-        const resultPreview = tc.result?.error ? `ERROR: ${tc.result.error.slice(0, 60)}` : "OK";
-        setAgentLog(p => [...p, `  -> ${tc.tool} ${resultPreview}`]);
+        const resultPreview = tc.result?.error
+          ? `ERROR: ${tc.result.error.slice(0, 60)}`
+          : "OK";
+        addLogEntry(`  -> ${tc.tool} ${resultPreview}`);
       }
-      setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Done: ${data.toolCalls.length} tool calls`]);
-      fetchTransactions();
+      addLogEntry(
+        `[${new Date().toLocaleTimeString()}] Done: ${data.toolCalls.length} tool calls`,
+      );
+      fetchTransactions(pageSize, 0);
       fetchAgentInfo(); // refresh wallet balance
     } catch (err: any) {
-      setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Connection error: ${err.message}`]);
+      addLogEntry(
+        `[${new Date().toLocaleTimeString()}] Connection error: ${err.message}`,
+      );
       setAgentConnected(false);
-    } finally { setLoading(false); setActiveTask(""); }
+    } finally {
+      setLoading(false);
+      setActiveTask("");
+    }
   };
 
   const [policySaved, setPolicySaved] = useState(false);
 
   const updatePolicy = async () => {
     try {
-      const res = await fetch(`${AGENT_URL}/agent/policy`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(policyForm) });
+      const res = await fetch(`${AGENT_URL}/agent/policy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(policyForm),
+      });
       if (res.ok) {
         const spendingRes = await fetch(`${AGENT_URL}/agent/spending`);
         if (spendingRes.ok) {
@@ -219,19 +362,44 @@ export default function Dashboard() {
           setPolicyForm(data.policy);
           setPolicyDirty(false);
         }
-        setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Policy updated: daily=$${policyForm.dailyLimit}, monthly=$${policyForm.monthlyLimit}, meds=$${policyForm.medicationMonthlyBudget}, bills=$${policyForm.billMonthlyBudget}, approval=$${policyForm.approvalThreshold}`]);
+        addLogEntry(
+          `[${new Date().toLocaleTimeString()}] Policy updated: daily=$${policyForm.dailyLimit}, monthly=$${policyForm.monthlyLimit}, meds=$${policyForm.medicationMonthlyBudget}, bills=$${policyForm.billMonthlyBudget}, approval=$${policyForm.approvalThreshold}`,
+        );
         setLiveMessage("Policy updated");
         setPolicySaved(true);
         setTimeout(() => setPolicySaved(false), 3000);
       }
     } catch (err: any) {
-      setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Failed to update policy: ${err.message}`]);
+      addLogEntry(
+        `[${new Date().toLocaleTimeString()}] Failed to update policy: ${err.message}`,
+      );
     }
   };
 
+  const addLogEntry = useCallback((message: string) => {
+    const entry: AgentLogEntry = {
+      id: `${Date.now()}-${Math.random()}`,
+      timestamp: Date.now(),
+      message,
+    };
+    setAgentLog((prev) => {
+      const newLog = [...prev, entry];
+      // Cap at 200 entries, drop oldest when adding new
+      if (newLog.length > 200) {
+        return newLog.slice(-200);
+      }
+      return newLog;
+    });
+  }, []);
+
   const resetAgent = async () => {
     await fetch(`${AGENT_URL}/agent/reset`, { method: "POST" });
-    setAllTransactions([]); setAgentResult(null); setAgentLog([]); fetchSpending();
+    setAllTransactions([]);
+    setPagination(null);
+    setCurrentPage(0);
+    setAgentResult(null);
+    setAgentLog([]);
+    fetchSpending();
   };
 
   const togglePause = async () => {
@@ -241,7 +409,9 @@ export default function Dashboard() {
       if (res.ok) {
         const data = await res.json();
         setAgentPaused(data.paused);
-        setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Agent ${data.paused ? "paused" : "resumed"}`]);
+        addLogEntry(
+          `[${new Date().toLocaleTimeString()}] Agent ${data.paused ? "paused" : "resumed"}`,
+        );
       }
     } catch {}
   };
@@ -252,26 +422,50 @@ export default function Dashboard() {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-sky-500 flex items-center justify-center text-white font-bold text-sm">CG</div>
+            <div className="w-9 h-9 rounded-lg bg-sky-500 flex items-center justify-center text-white font-bold text-sm">
+              CG
+            </div>
             <div>
               <h1 className="text-lg font-semibold leading-tight">CareGuard</h1>
-              <p className="text-xs text-slate-500">AI Healthcare Agent on Stellar</p>
+              <p className="text-xs text-slate-500">
+                AI Healthcare Agent on Stellar
+              </p>
             </div>
-            <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs ${agentConnected ? (agentPaused ? "bg-amber-50 text-amber-700" : "bg-green-50 text-green-700") : "bg-red-50 text-red-600"}`}>
-              <div className={`w-1.5 h-1.5 rounded-full ${agentConnected ? (agentPaused ? "bg-amber-500" : "bg-green-500") : "bg-red-500"}`} />
-              {!agentConnected ? "Disconnected" : agentPaused ? "Paused" : "Active"}
+            <div
+              className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs ${agentConnected ? (agentPaused ? "bg-amber-50 text-amber-700" : "bg-green-50 text-green-700") : "bg-red-50 text-red-600"}`}
+            >
+              <div
+                className={`w-1.5 h-1.5 rounded-full ${agentConnected ? (agentPaused ? "bg-amber-500" : "bg-green-500") : "bg-red-500"}`}
+              />
+              {!agentConnected
+                ? "Disconnected"
+                : agentPaused
+                  ? "Paused"
+                  : "Active"}
             </div>
             {agentConnected && (
-              <button onClick={togglePause} className={`px-3 py-1 rounded-full text-xs font-medium transition-all cursor-pointer ${agentPaused ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-amber-100 text-amber-700 hover:bg-amber-200"}`}>
+              <button
+                onClick={togglePause}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-all cursor-pointer ${agentPaused ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-amber-100 text-amber-700 hover:bg-amber-200"}`}
+              >
                 {agentPaused ? "Resume" : "Pause"}
               </button>
             )}
           </div>
           <div className="flex items-center gap-4">
             {walletBalance && agentInfo?.agentWallet && (
-              <a href={`https://stellar.expert/explorer/testnet/account/${agentInfo.agentWallet}`} target="_blank" rel="noopener noreferrer" className="text-right group">
-                <div className="text-xs text-slate-500">Agent Wallet (USDC)</div>
-                <div className="font-semibold text-sm group-hover:text-sky-600">${walletBalance}</div>
+              <a
+                href={`https://stellar.expert/explorer/testnet/account/${agentInfo.agentWallet}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-right group"
+              >
+                <div className="text-xs text-slate-500">
+                  Agent Wallet (USDC)
+                </div>
+                <div className="font-semibold text-sm group-hover:text-sky-600">
+                  ${walletBalance}
+                </div>
               </a>
             )}
             <div className="h-6 w-px bg-slate-200" />
@@ -280,27 +474,40 @@ export default function Dashboard() {
                 <div className="text-slate-500">Care Recipient</div>
                 <div className="font-medium">
                   {recipient.name}
-                  {typeof recipient.age === "number" ? `, ${recipient.age}` : ""}
+                  {typeof recipient.age === "number"
+                    ? `, ${recipient.age}`
+                    : ""}
                 </div>
               </div>
-              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-sm font-medium">{recipientInitials}</div>
+              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-sm font-medium">
+                {recipientInitials}
+              </div>
             </div>
           </div>
         </div>
       </header>
 
       <div className="max-w-7xl mx-auto px-4 py-6">
-        <nav role="tablist" aria-label="Dashboard tabs" className="flex gap-1 mb-6 bg-white rounded-lg p-1 border border-slate-200 w-fit">
+        <nav
+          role="tablist"
+          aria-label="Dashboard tabs"
+          className="flex gap-1 mb-6 bg-white rounded-lg p-1 border border-slate-200 w-fit"
+          onKeyDown={handleKeyDown}
+        >
           {allowedTabs.map((tab) => {
             const isActive = activeTab === tab;
-            const href = tab === "overview" ? pathname : `${pathname}?tab=${tab}`;
+            const href =
+              tab === "overview" ? pathname : `${pathname}?tab=${tab}`;
             return (
               <Link
                 key={tab}
                 href={href}
                 role="tab"
                 aria-selected={isActive}
+                aria-controls={`tabpanel-${tab}`}
+                id={`tab-${tab}`}
                 tabIndex={isActive ? 0 : -1}
+                onFocus={() => setFocusedTab(tab)}
                 className={`px-4 py-2 rounded-md text-sm font-medium transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${isActive ? "bg-sky-500 text-white" : "text-slate-600 hover:bg-slate-100 active:bg-slate-200"}`}
               >
                 {tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -310,61 +517,199 @@ export default function Dashboard() {
         </nav>
 
         {activeTab === "overview" && (
-          <div className="space-y-6">
+          <div
+            role="tabpanel"
+            id="tabpanel-overview"
+            aria-labelledby="tab-overview"
+            tabIndex={0}
+            className="space-y-6"
+          >
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <Card label="Monthly Spending" value={`$${spending?.spending.total.toFixed(2) || "0.00"}`} sub={`of $${spending?.policy.monthlyLimit || 500} limit`} color="sky" />
-              <Card label="Savings Found" value={agentResult ? `$${agentResult.toolCalls.filter(t => t.tool === "compare_pharmacy_prices").reduce((s, t) => s + (t.result?.potentialSavings || 0), 0).toFixed(2)}/mo` : "$0.00/mo"} sub="by switching pharmacies" color="green" />
-              <Card label="Billing Errors Caught" value={agentResult ? `$${agentResult.toolCalls.filter(t => t.tool === "audit_medical_bill" || t.tool === "fetch_and_audit_bill").reduce((s, t) => s + (t.result?.totalOvercharge || 0), 0).toFixed(2)}` : "$0.00"} sub="in overcharges identified" color="amber" />
-              <Card label="Agent API Costs" value={`$${spending?.spending.serviceFees.toFixed(4) || "0.0000"}`} sub={`${spending?.transactionCount || 0} queries via x402`} color="slate" />
+              <Card
+                label="Monthly Spending"
+                value={`$${spending?.spending.total.toFixed(2) || "0.00"}`}
+                sub={`of $${spending?.policy.monthlyLimit || 500} limit`}
+                color="sky"
+              />
+              <Card
+                label="Savings Found"
+                value={
+                  agentResult
+                    ? `$${agentResult.toolCalls
+                        .filter((t) => t.tool === "compare_pharmacy_prices")
+                        .reduce(
+                          (s, t) => s + (t.result?.potentialSavings || 0),
+                          0,
+                        )
+                        .toFixed(2)}/mo`
+                    : "$0.00/mo"
+                }
+                sub="by switching pharmacies"
+                color="green"
+              />
+              <Card
+                label="Billing Errors Caught"
+                value={
+                  agentResult
+                    ? `$${agentResult.toolCalls
+                        .filter(
+                          (t) =>
+                            t.tool === "audit_medical_bill" ||
+                            t.tool === "fetch_and_audit_bill",
+                        )
+                        .reduce(
+                          (s, t) => s + (t.result?.totalOvercharge || 0),
+                          0,
+                        )
+                        .toFixed(2)}`
+                    : "$0.00"
+                }
+                sub="in overcharges identified"
+                color="amber"
+              />
+              <Card
+                label="Agent API Costs"
+                value={`$${spending?.spending.serviceFees.toFixed(4) || "0.0000"}`}
+                sub={`${spending?.transactionCount || 0} queries via x402`}
+                color="slate"
+              />
             </div>
 
             <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <h2 className="text-sm font-semibold text-slate-700 mb-4">Budget Status</h2>
+              <h2 className="text-sm font-semibold text-slate-700 mb-4">
+                Budget Status
+              </h2>
               <div className="space-y-4">
-                <Bar label="Medications" spent={spending?.spending.medications || 0} budget={spending?.policy.medicationMonthlyBudget || 300} />
-                <Bar label="Medical Bills" spent={spending?.spending.bills || 0} budget={spending?.policy.billMonthlyBudget || 500} />
+                <Bar
+                  label="Medications"
+                  spent={spending?.spending.medications || 0}
+                  budget={spending?.policy.medicationMonthlyBudget || 300}
+                />
+                <Bar
+                  label="Medical Bills"
+                  spent={spending?.spending.bills || 0}
+                  budget={spending?.policy.billMonthlyBudget || 500}
+                />
               </div>
             </div>
 
             <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <h2 className="text-sm font-semibold text-slate-700 mb-4">Agent Actions</h2>
+              <h2 className="text-sm font-semibold text-slate-700 mb-4">
+                Agent Actions
+              </h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <Btn label="Compare Medication Prices" desc={agentPaused ? "Agent is paused" : "Find cheapest pharmacies for Rosa's 4 medications"} busy={(loading && activeTask === "meds") || agentPaused}
-                  onClick={() => runAgentTask("Compare prices for all of Rosa's medications (lisinopril, metformin, atorvastatin, amlodipine) and order from the cheapest pharmacies. Also check for drug interactions.", "meds")} />
-                <Btn label="Audit Hospital Bill" desc={agentPaused ? "Agent is paused" : "Scan Rosa's bill for errors and overcharges"} busy={(loading && activeTask === "bill") || agentPaused}
-                  onClick={() => runAgentTask("Audit Rosa's hospital bill from General Hospital and pay the corrected amount if errors are found.", "bill")} />
-                <Btn label="Try Over-Budget Payment" desc={agentPaused ? "Agent is paused" : "Demo: agent attempts $600 payment (over $500 bill limit)"} busy={(loading && activeTask === "block") || agentPaused}
-                  onClick={() => runAgentTask("Pay a $600 medical bill to General Hospital for Rosa's recent surgery follow-up.", "block")} />
+                <Btn
+                  label="Compare Medication Prices"
+                  desc={
+                    agentPaused
+                      ? "Agent is paused"
+                      : "Find cheapest pharmacies for Rosa's 4 medications"
+                  }
+                  busy={(loading && activeTask === "meds") || agentPaused}
+                  onClick={() =>
+                    runAgentTask(
+                      "Compare prices for all of Rosa's medications (lisinopril, metformin, atorvastatin, amlodipine) and order from the cheapest pharmacies. Also check for drug interactions.",
+                      "meds",
+                    )
+                  }
+                />
+                <Btn
+                  label="Audit Hospital Bill"
+                  desc={
+                    agentPaused
+                      ? "Agent is paused"
+                      : "Scan Rosa's bill for errors and overcharges"
+                  }
+                  busy={(loading && activeTask === "bill") || agentPaused}
+                  onClick={() =>
+                    runAgentTask(
+                      "Audit Rosa's hospital bill from General Hospital and pay the corrected amount if errors are found.",
+                      "bill",
+                    )
+                  }
+                />
+                <Btn
+                  label="Try Over-Budget Payment"
+                  desc={
+                    agentPaused
+                      ? "Agent is paused"
+                      : "Demo: agent attempts $600 payment (over $500 bill limit)"
+                  }
+                  busy={(loading && activeTask === "block") || agentPaused}
+                  onClick={() =>
+                    runAgentTask(
+                      "Pay a $600 medical bill to General Hospital for Rosa's recent surgery follow-up.",
+                      "block",
+                    )
+                  }
+                />
               </div>
-              {loading && <div className="mt-4 flex items-center gap-2 text-sm text-sky-600"><div className="w-4 h-4 border-2 border-sky-600 border-t-transparent rounded-full animate-spin" />Agent working...</div>}
+              {loading && (
+                <div className="mt-4 flex items-center gap-2 text-sm text-sky-600">
+                  <div className="w-4 h-4 border-2 border-sky-600 border-t-transparent rounded-full animate-spin" />
+                  Agent working...
+                </div>
+              )}
             </div>
 
             {agentResult && (
-              <div className="bg-white rounded-xl border border-slate-200 p-6" aria-live="polite" aria-atomic="true">
-                <h2 className="text-sm font-semibold text-slate-700 mb-3">Agent Response</h2>
-                <p className="text-sm text-slate-600 whitespace-pre-wrap">{agentResult.response}</p>
-                <div className="mt-4 text-xs text-slate-400">{agentResult.toolCalls.length} tool calls | API cost: ${agentResult.spending.spending.serviceFees.toFixed(4)}</div>
+              <div
+                className="bg-white rounded-xl border border-slate-200 p-6"
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                <h2 className="text-sm font-semibold text-slate-700 mb-3">
+                  Agent Response
+                </h2>
+                <p className="text-sm text-slate-600 whitespace-pre-wrap">
+                  {agentResult.response}
+                </p>
+                <div className="mt-4 text-xs text-slate-400">
+                  {agentResult.toolCalls.length} tool calls | API cost: $
+                  {agentResult.spending.spending.serviceFees.toFixed(4)}
+                </div>
               </div>
             )}
           </div>
         )}
 
         {activeTab === "medications" && (
-          <div className="space-y-6">
+          <div
+            role="tabpanel"
+            id="tabpanel-medications"
+            aria-labelledby="tab-medications"
+            tabIndex={0}
+            className="space-y-6"
+          >
             <div className="bg-white rounded-xl border border-slate-200 p-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-semibold text-slate-700">{recipient.name}&apos;s Medications</h2>
-                {agentResult?.toolCalls.some(t => t.tool === "compare_pharmacy_prices") && (
+                <h2 className="text-sm font-semibold text-slate-700">
+                  {recipient.name}&apos;s Medications
+                </h2>
+                {agentResult?.toolCalls.some(
+                  (t) => t.tool === "compare_pharmacy_prices",
+                ) && (
                   <button
                     onClick={() => {
                       const priceResults = agentResult!.toolCalls
-                        .filter(t => t.tool === "compare_pharmacy_prices")
-                        .map(t => PharmacyCompareResultSchema.parse(t.result));
-                      const interactionResult = agentResult!.toolCalls.find(t => t.tool === "check_drug_interactions")?.result;
-                      downloadMedicationPDF({
-                        priceResults,
-                        interactionResult: interactionResult ? DrugInteractionResultSchema.parse(interactionResult) : undefined,
-                      }, { recipient });
+                        .filter((t) => t.tool === "compare_pharmacy_prices")
+                        .map((t) =>
+                          PharmacyCompareResultSchema.parse(t.result),
+                        );
+                      const interactionResult = agentResult!.toolCalls.find(
+                        (t) => t.tool === "check_drug_interactions",
+                      )?.result;
+                      downloadMedicationPDF(
+                        {
+                          priceResults,
+                          interactionResult: interactionResult
+                            ? DrugInteractionResultSchema.parse(
+                                interactionResult,
+                              )
+                            : undefined,
+                        },
+                        { recipient },
+                      );
                     }}
                     className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
                   >
@@ -373,114 +718,235 @@ export default function Dashboard() {
                 )}
               </div>
               <div className="space-y-3">
-                {["Lisinopril", "Metformin", "Atorvastatin", "Amlodipine"].map(drug => {
-                  const r = agentResult?.toolCalls.find(t => t.tool === "compare_pharmacy_prices" && t.result?.drug?.toLowerCase() === drug.toLowerCase())?.result;
-                  return (
-                    <div key={drug} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
-                      <div><div className="font-medium text-sm">{drug}</div><div className="text-xs text-slate-500">{r ? `Best: ${r.cheapest.pharmacyName} at $${r.cheapest.price}` : "Not yet compared"}</div></div>
-                      {r && <div className="text-right"><div className="text-sm font-medium text-green-600">Save ${r.potentialSavings}/mo</div><div className="text-xs text-slate-400">{r.savingsPercent}% savings</div></div>}
-                    </div>
-                  );
-                })}
+                {["Lisinopril", "Metformin", "Atorvastatin", "Amlodipine"].map(
+                  (drug) => {
+                    const r = agentResult?.toolCalls.find(
+                      (t) =>
+                        t.tool === "compare_pharmacy_prices" &&
+                        t.result?.drug?.toLowerCase() === drug.toLowerCase(),
+                    )?.result;
+                    return (
+                      <div
+                        key={drug}
+                        className="flex items-center justify-between p-4 bg-slate-50 rounded-lg"
+                      >
+                        <div>
+                          <div className="font-medium text-sm">{drug}</div>
+                          <div className="text-xs text-slate-500">
+                            {r
+                              ? `Best: ${r.cheapest.pharmacyName} at $${r.cheapest.price}`
+                              : "Not yet compared"}
+                          </div>
+                        </div>
+                        {r && (
+                          <div className="text-right">
+                            <div className="text-sm font-medium text-green-600">
+                              Save ${r.potentialSavings}/mo
+                            </div>
+                            <div className="text-xs text-slate-400">
+                              {r.savingsPercent}% savings
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  },
+                )}
               </div>
             </div>
-            {agentResult?.toolCalls.some(t => t.tool === "check_drug_interactions") && (
+            {agentResult?.toolCalls.some(
+              (t) => t.tool === "check_drug_interactions",
+            ) && (
               <div className="bg-white rounded-xl border border-slate-200 p-6">
-                <h2 className="text-sm font-semibold text-slate-700 mb-4">Drug Interactions</h2>
-                {agentResult.toolCalls.filter(t => t.tool === "check_drug_interactions").map((t, i) => (
-                  <div key={i} className="space-y-2">
-                    <p className="text-sm text-slate-600">{t.result.summary}</p>
-                    {t.result.interactions?.map((ix: any, j: number) => (
-                      <div key={j} className={`p-3 rounded-lg text-sm ${ix.severity === "severe" ? "bg-red-50 border border-red-200" : ix.severity === "moderate" ? "bg-amber-50 border border-amber-200" : "bg-blue-50 border border-blue-200"}`}>
-                        <div className="font-medium">{ix.drug1} + {ix.drug2} ({ix.severity})</div>
-                        <div className="text-xs mt-1 text-slate-600">{ix.recommendation}</div>
-                      </div>
-                    ))}
-                  </div>
-                ))}
+                <h2 className="text-sm font-semibold text-slate-700 mb-4">
+                  Drug Interactions
+                </h2>
+                {agentResult.toolCalls
+                  .filter((t) => t.tool === "check_drug_interactions")
+                  .map((t, i) => (
+                    <div key={i} className="space-y-2">
+                      <p className="text-sm text-slate-600">
+                        {t.result.summary}
+                      </p>
+                      {t.result.interactions?.map((ix: any, j: number) => (
+                        <div
+                          key={j}
+                          className={`p-3 rounded-lg text-sm ${ix.severity === "severe" ? "bg-red-50 border border-red-200" : ix.severity === "moderate" ? "bg-amber-50 border border-amber-200" : "bg-blue-50 border border-blue-200"}`}
+                        >
+                          <div className="font-medium">
+                            {ix.drug1} + {ix.drug2} ({ix.severity})
+                          </div>
+                          <div className="text-xs mt-1 text-slate-600">
+                            {ix.recommendation}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
               </div>
             )}
           </div>
         )}
 
         {activeTab === "bills" && (
-          <div className="space-y-6">
-            {agentResult?.toolCalls.some(t => t.tool === "audit_medical_bill" || t.tool === "fetch_and_audit_bill") ? (
-              agentResult.toolCalls.filter(t => t.tool === "audit_medical_bill" || t.tool === "fetch_and_audit_bill").map((t, i) => (
-                <div key={i} className="bg-white rounded-xl border border-slate-200 p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-sm font-semibold text-slate-700">Bill Audit Results</h2>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() =>
-                          downloadBillAuditPDF(BillAuditResultSchema.parse(t.result), {
-                            errorsOnly: billShowErrorsOnly,
-                            recipient,
-                          })
-                        }
-                        className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
-                      >
-                        Download PDF
-                      </button>
-                      <span className={`px-3 py-1 rounded-full text-xs font-medium ${t.result.errorCount > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>{t.result.errorCount} errors found</span>
+          <div
+            role="tabpanel"
+            id="tabpanel-bills"
+            aria-labelledby="tab-bills"
+            tabIndex={0}
+            className="space-y-6"
+          >
+            {agentResult?.toolCalls.some(
+              (t) =>
+                t.tool === "audit_medical_bill" ||
+                t.tool === "fetch_and_audit_bill",
+            ) ? (
+              agentResult.toolCalls
+                .filter(
+                  (t) =>
+                    t.tool === "audit_medical_bill" ||
+                    t.tool === "fetch_and_audit_bill",
+                )
+                .map((t, i) => (
+                  <div
+                    key={i}
+                    className="bg-white rounded-xl border border-slate-200 p-6"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-sm font-semibold text-slate-700">
+                        Bill Audit Results
+                      </h2>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() =>
+                            downloadBillAuditPDF(
+                              BillAuditResultSchema.parse(t.result),
+                              {
+                                errorsOnly: billShowErrorsOnly,
+                                recipient,
+                              },
+                            )
+                          }
+                          className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
+                        >
+                          Download PDF
+                        </button>
+                        <span
+                          className={`px-3 py-1 rounded-full text-xs font-medium ${t.result.errorCount > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}
+                        >
+                          {t.result.errorCount} errors found
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-4 mb-4">
-                    <div className="bg-slate-50 rounded-lg p-3 text-center"><div className="text-lg font-bold">${t.result.totalCharged}</div><div className="text-xs text-slate-500">Total Charged</div></div>
-                    <div className="bg-red-50 rounded-lg p-3 text-center"><div className="text-lg font-bold text-red-600">${t.result.totalOvercharge}</div><div className="text-xs text-slate-500">Overcharges</div></div>
-                    <div className="bg-green-50 rounded-lg p-3 text-center"><div className="text-lg font-bold text-green-600">${t.result.totalCorrect}</div><div className="text-xs text-slate-500">Correct Amount</div></div>
-                  </div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-slate-500">{t.result.lineItems.length} line items</span>
-                    <button onClick={() => setBillShowErrorsOnly(!billShowErrorsOnly)} className="text-xs text-sky-600 hover:text-sky-800 cursor-pointer">
-                      {billShowErrorsOnly ? "Show all items" : "Show errors only"}
-                    </button>
-                  </div>
-                  <div className="overflow-x-auto rounded-lg shadow-[inset_-10px_0_12px_-12px_rgba(15,23,42,0.25)]">
-                    <div className="space-y-2 min-w-[640px]">
-                    {t.result.lineItems.filter((item: any) => !billShowErrorsOnly || item.status !== "valid").map((item: any, j: number) => (
-                      <div key={j} className={`flex items-center justify-between p-3 rounded-lg text-sm ${item.status === "valid" ? "bg-slate-50" : item.status === "duplicate" ? "bg-red-50 border border-red-200" : "bg-amber-50 border border-amber-200"}`}>
-                        <div className="flex-1">
-                          <div className="font-medium">{item.description}</div>
-                          <div className="hidden md:block text-xs text-slate-500">CPT: {item.cptCode}</div>
-                          <details className="md:hidden mt-1">
-                            <summary className="cursor-pointer text-xs text-slate-500">More details</summary>
-                            <div className="text-xs text-slate-500 mt-1">CPT: {item.cptCode || "N/A"}</div>
-                          </details>
-                          {item.errorDescription && <div className="text-xs text-red-600 mt-1">{item.errorDescription}</div>}
+                    <div className="grid grid-cols-3 gap-4 mb-4">
+                      <div className="bg-slate-50 rounded-lg p-3 text-center">
+                        <div className="text-lg font-bold">
+                          ${t.result.totalCharged}
                         </div>
-                        <div className="text-right ml-4">
-                          <div className={item.status !== "valid" ? "line-through text-red-500" : ""}>${item.chargedAmount}</div>
-                          {item.status !== "valid" && <div className="text-green-600 font-medium">${item.suggestedAmount}</div>}
+                        <div className="text-xs text-slate-500">
+                          Total Charged
                         </div>
                       </div>
-                    ))}
+                      <div className="bg-red-50 rounded-lg p-3 text-center">
+                        <div className="text-lg font-bold text-red-600">
+                          ${t.result.totalOvercharge}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          Overcharges
+                        </div>
+                      </div>
+                      <div className="bg-green-50 rounded-lg p-3 text-center">
+                        <div className="text-lg font-bold text-green-600">
+                          ${t.result.totalCorrect}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          Correct Amount
+                        </div>
+                      </div>
                     </div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-slate-500">
+                        {t.result.lineItems.length} line items
+                      </span>
+                      <button
+                        onClick={() =>
+                          setBillShowErrorsOnly(!billShowErrorsOnly)
+                        }
+                        className="text-xs text-sky-600 hover:text-sky-800 cursor-pointer"
+                      >
+                        {billShowErrorsOnly
+                          ? "Show all items"
+                          : "Show errors only"}
+                      </button>
+                    </div>
+                    <BillLineItemsVirtualized
+                      lineItems={t.result.lineItems.filter(
+                        (item: any) =>
+                          !billShowErrorsOnly || item.status !== "valid",
+                      )}
+                    />
+                    <p className="mt-4 text-sm font-medium text-slate-700">
+                      {t.result.recommendation}
+                    </p>
                   </div>
-                  <p className="mt-4 text-sm font-medium text-slate-700">{t.result.recommendation}</p>
-                </div>
-              ))
+                ))
             ) : (
-              <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-sm text-slate-400">No bills audited yet. Run &quot;Audit Hospital Bill&quot; from Overview.</div>
+              <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-sm text-slate-400">
+                No bills audited yet. Run &quot;Audit Hospital Bill&quot; from
+                Overview.
+              </div>
             )}
           </div>
         )}
 
         {activeTab === "policy" && (
-          <div className="bg-white rounded-xl border border-slate-200 p-6 max-w-lg">
-            <h2 className="text-sm font-semibold text-slate-700 mb-4">Spending Policy for {recipient.name}</h2>
-            <p className="text-xs text-slate-500 mb-6">These limits are enforced by Soroban smart contracts on Stellar. The agent cannot exceed them.</p>
+          <div
+            role="tabpanel"
+            id="tabpanel-policy"
+            aria-labelledby="tab-policy"
+            tabIndex={0}
+            className="bg-white rounded-xl border border-slate-200 p-6 max-w-lg"
+          >
+            <h2 className="text-sm font-semibold text-slate-700 mb-4">
+              Spending Policy for {recipient.name}
+            </h2>
+            <p className="text-xs text-slate-500 mb-6">
+              These limits are enforced by Soroban smart contracts on Stellar.
+              The agent cannot exceed them.
+            </p>
             <div className="space-y-4">
-              {([["dailyLimit","Daily Spending Limit ($)"],["monthlyLimit","Monthly Spending Limit ($)"],["medicationMonthlyBudget","Medication Monthly Budget ($)"],["billMonthlyBudget","Bill Monthly Budget ($)"],["approvalThreshold","Caregiver Approval Threshold ($)"]] as const).map(([key, label]) => (
-                <div key={key}><label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
+              {(
+                [
+                  ["dailyLimit", "Daily Spending Limit ($)"],
+                  ["monthlyLimit", "Monthly Spending Limit ($)"],
+                  ["medicationMonthlyBudget", "Medication Monthly Budget ($)"],
+                  ["billMonthlyBudget", "Bill Monthly Budget ($)"],
+                  ["approvalThreshold", "Caregiver Approval Threshold ($)"],
+                ] as const
+              ).map(([key, label]) => (
+                <div key={key}>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    {label}
+                  </label>
                   <input
                     type="number"
                     value={policyForm[key]}
-                    onChange={e => { setPolicyDirty(true); setPolicyForm(p => ({ ...p, [key]: Number(e.target.value) })); }}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" /></div>
+                    onChange={(e) => {
+                      setPolicyDirty(true);
+                      setPolicyForm((p) => ({
+                        ...p,
+                        [key]: Number(e.target.value),
+                      }));
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                </div>
               ))}
               <div className="flex gap-2">
-                <button onClick={() => fetchSpending({ forcePolicySync: true })} className="flex-1 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 active:bg-slate-300 transition-all cursor-pointer">
+                <button
+                  onClick={() => fetchSpending({ forcePolicySync: true })}
+                  className="flex-1 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 active:bg-slate-300 transition-all cursor-pointer"
+                >
                   Refresh from server
                 </button>
                 <button
@@ -493,7 +959,10 @@ export default function Dashboard() {
                   Discard changes
                 </button>
               </div>
-              <button onClick={updatePolicy} className={`w-full py-2 rounded-lg text-sm font-medium transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 ${policySaved ? "bg-green-500 text-white" : "bg-sky-500 text-white hover:bg-sky-600 active:bg-sky-700"}`}>
+              <button
+                onClick={updatePolicy}
+                className={`w-full py-2 rounded-lg text-sm font-medium transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 ${policySaved ? "bg-green-500 text-white" : "bg-sky-500 text-white hover:bg-sky-600 active:bg-sky-700"}`}
+              >
                 {policySaved ? "Policy Saved" : "Update Policy"}
               </button>
             </div>
@@ -501,152 +970,515 @@ export default function Dashboard() {
         )}
 
         {activeTab === "activity" && (
-          <div className="space-y-4">
+          <div
+            role="tabpanel"
+            id="tabpanel-activity"
+            aria-labelledby="tab-activity"
+            tabIndex={0}
+            className="space-y-4"
+          >
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-700">Transaction Log</h2>
+              <h2 className="text-sm font-semibold text-slate-700">
+                Transaction Log
+              </h2>
               <div className="flex items-center gap-3">
                 {allTransactions.length > 0 && (
-                  <button onClick={() => downloadTransactionPDF(allTransactions, spending, { recipient })} className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all">Download Report</button>
+                  <button
+                    onClick={() =>
+                      downloadTransactionPDF(allTransactions, spending, {
+                        recipient,
+                      })
+                    }
+                    className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
+                  >
+                    Download Report
+                  </button>
                 )}
-                <button onClick={resetAgent} className="text-xs text-red-500 hover:text-red-700 hover:underline active:text-red-800 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 rounded px-1">Reset All</button>
+                <button
+                  onClick={() => setAgentLog([])}
+                  className="text-xs text-amber-500 hover:text-amber-700 hover:underline active:text-amber-800 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-500 rounded px-1"
+                >
+                  Clear Log
+                </button>
+                <button
+                  onClick={resetAgent}
+                  className="text-xs text-red-500 hover:text-red-700 hover:underline active:text-red-800 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 rounded px-1"
+                >
+                  Reset All
+                </button>
               </div>
             </div>
-            <div className="bg-slate-900 rounded-xl p-4 font-mono text-xs text-green-400 max-h-48 overflow-y-auto" aria-live="polite">
+            <div
+              className="bg-slate-900 rounded-xl p-4 font-mono text-xs text-green-400 max-h-48 overflow-y-auto"
+              aria-live="polite"
+            >
               <div aria-hidden="true">
-                {agentLog.length === 0 ? <span className="text-slate-500">No agent activity yet...</span> : agentLog.map((l, i) => <div key={i}>{l}</div>)}
+                {agentLog.length === 0 ? (
+                  <span className="text-slate-500">
+                    No agent activity yet...
+                  </span>
+                ) : (
+                  <>
+                    {!showAllLogEntries && agentLog.length > 50 && (
+                      <div className="text-slate-400 mb-2">
+                        Showing last 50 of {agentLog.length} entries.{" "}
+                        <button
+                          onClick={() => setShowAllLogEntries(true)}
+                          className="text-sky-400 hover:text-sky-300 underline"
+                        >
+                          Show all
+                        </button>
+                      </div>
+                    )}
+                    {(showAllLogEntries ? agentLog : agentLog.slice(-50)).map(
+                      (entry) => (
+                        <div key={entry.id}>{entry.message}</div>
+                      ),
+                    )}
+                    {showAllLogEntries && agentLog.length > 50 && (
+                      <div className="text-slate-400 mt-2">
+                        <button
+                          onClick={() => setShowAllLogEntries(false)}
+                          className="text-sky-400 hover:text-sky-300 underline"
+                        >
+                          Show last 50
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
-              <div className="sr-only">{debouncedAriaLog.join("\n")}</div>
+              <div className="sr-only">
+                {agentLog
+                  .slice(-20)
+                  .map((entry) => entry.message)
+                  .join("\n")}
+              </div>
             </div>
             <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-              {allTransactions.length === 0 ? <div className="p-8 text-center text-sm text-slate-400">No transactions yet</div> : (
-                <div className="overflow-x-auto shadow-[inset_-10px_0_12px_-12px_rgba(15,23,42,0.25)]">
-                <table className="w-full min-w-[640px] text-sm">
-                  <thead className="bg-slate-50 border-b border-slate-200"><tr>
-                    <th className="hidden md:table-cell text-left px-4 py-2 text-xs font-medium text-slate-500">Time</th>
-                    <th className="text-left px-4 py-2 text-xs font-medium text-slate-500">Type</th>
-                    <th className="text-left px-4 py-2 text-xs font-medium text-slate-500">Description</th>
-                    <th className="text-right px-4 py-2 text-xs font-medium text-slate-500">Amount</th>
-                    <th className="text-right px-4 py-2 text-xs font-medium text-slate-500">Status</th>
-                    <th className="text-right px-4 py-2 text-xs font-medium text-slate-500">Stellar Tx</th>
-                  </tr></thead>
-                  <tbody>{[...allTransactions].reverse().map(tx => (
-                    <tr key={tx.id} className="border-b border-slate-100 last:border-0">
-                      <td className="hidden md:table-cell px-4 py-2 text-xs text-slate-400">{new Date(tx.timestamp).toLocaleTimeString()}</td>
-                      <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded text-xs font-medium ${tx.type === "medication" ? "bg-blue-100 text-blue-700" : tx.type === "bill" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-600"}`}>{tx.type}</span></td>
-                      <td className="px-4 py-2 text-xs">{tx.description}</td>
-                      <td className="px-4 py-2 text-right text-xs font-mono">${tx.amount < 0.01 ? tx.amount.toFixed(4) : tx.amount.toFixed(2)}</td>
-                      <td className="px-4 py-2 text-right"><span className={`px-2 py-0.5 rounded text-xs ${tx.status === "completed" ? "bg-green-100 text-green-700" : tx.status === "blocked" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{tx.status}</span></td>
-                      <td className="px-4 py-2 text-right"><TxLink hash={tx.stellarTxHash} /></td>
-                    </tr>
-                  ))}</tbody>
-                </table>
+              {allTransactions.length === 0 && !pagination ? (
+                <div className="p-8 text-center text-sm text-slate-400">
+                  No transactions yet
                 </div>
+              ) : (
+                <>
+                  {pagination && (
+                    <div className="border-b border-slate-200 px-4 py-3 bg-slate-50">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs text-slate-500">
+                          Showing{" "}
+                          {Math.min(
+                            pagination.limit,
+                            pagination.total - pagination.offset,
+                          )}{" "}
+                          of {pagination.total} transactions
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={pageSize}
+                            onChange={(e) => {
+                              setPageSize(Number(e.target.value));
+                              setCurrentPage(0);
+                            }}
+                            className="px-2 py-1 text-xs border border-slate-300 rounded bg-white"
+                          >
+                            <option value={10}>10/page</option>
+                            <option value={25}>25/page</option>
+                            <option value={50}>50/page</option>
+                            <option value={100}>100/page</option>
+                          </select>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() =>
+                                setCurrentPage(Math.max(0, currentPage - 1))
+                              }
+                              disabled={!pagination.hasPrevious}
+                              className="px-2 py-1 text-xs border border-slate-300 rounded bg-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100"
+                            >
+                              Previous
+                            </button>
+                            <span className="px-2 py-1 text-xs text-slate-600">
+                              Page {currentPage + 1} of{" "}
+                              {Math.ceil(pagination.total / pagination.limit)}
+                            </span>
+                            <button
+                              onClick={() => setCurrentPage(currentPage + 1)}
+                              disabled={!pagination.hasMore}
+                              className="px-2 py-1 text-xs border border-slate-300 rounded bg-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100"
+                            >
+                              Next
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div className="overflow-x-auto shadow-[inset_-10px_0_12px_-12px_rgba(15,23,42,0.25)]">
+                    <table className="w-full min-w-[640px] text-sm">
+                      <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr>
+                          <th className="hidden md:table-cell text-left px-4 py-2 text-xs font-medium text-slate-500">
+                            Time
+                          </th>
+                          <th className="text-left px-4 py-2 text-xs font-medium text-slate-500">
+                            Type
+                          </th>
+                          <th className="text-left px-4 py-2 text-xs font-medium text-slate-500">
+                            Description
+                          </th>
+                          <th className="text-right px-4 py-2 text-xs font-medium text-slate-500">
+                            Amount
+                          </th>
+                          <th className="text-right px-4 py-2 text-xs font-medium text-slate-500">
+                            Status
+                          </th>
+                          <th className="text-right px-4 py-2 text-xs font-medium text-slate-500">
+                            Stellar Tx
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allTransactions.map((tx) => (
+                          <tr
+                            key={tx.id}
+                            className="border-b border-slate-100 last:border-0"
+                          >
+                            <td className="hidden md:table-cell px-4 py-2 text-xs text-slate-400">
+                              {new Date(tx.timestamp).toLocaleTimeString()}
+                            </td>
+                            <td className="px-4 py-2">
+                              <span
+                                className={`px-2 py-0.5 rounded text-xs font-medium ${tx.type === "medication" ? "bg-blue-100 text-blue-700" : tx.type === "bill" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-600"}`}
+                              >
+                                {tx.type}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2 text-xs">
+                              {tx.description}
+                            </td>
+                            <td className="px-4 py-2 text-right text-xs font-mono">
+                              $
+                              {tx.amount < 0.01
+                                ? tx.amount.toFixed(4)
+                                : tx.amount.toFixed(2)}
+                            </td>
+                            <td className="px-4 py-2 text-right">
+                              <span
+                                className={`px-2 py-0.5 rounded text-xs ${tx.status === "completed" ? "bg-green-100 text-green-700" : tx.status === "blocked" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}
+                              >
+                                {tx.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2 text-right">
+                              <TxLink hash={tx.stellarTxHash} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </div>
           </div>
         )}
 
         {activeTab === "wallet" && (
-          <div className="space-y-6 max-w-2xl">
+          <div
+            role="tabpanel"
+            id="tabpanel-wallet"
+            aria-labelledby="tab-wallet"
+            tabIndex={0}
+            className="space-y-6 max-w-2xl"
+          >
             <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <h2 className="text-sm font-semibold text-slate-700 mb-4">Agent Wallet</h2>
-              <p className="text-xs text-slate-500 mb-4">This is the AI agent&apos;s Stellar wallet. It holds USDC for paying pharmacies, medical bills, and API query fees. All balances are on Stellar testnet.</p>
+              <h2 className="text-sm font-semibold text-slate-700 mb-4">
+                Agent Wallet
+              </h2>
+              <p className="text-xs text-slate-500 mb-4">
+                This is the AI agent&apos;s Stellar wallet. It holds USDC for
+                paying pharmacies, medical bills, and API query fees. All
+                balances are on Stellar testnet.
+              </p>
 
               <div className="grid grid-cols-2 gap-4 mb-6">
                 <div className="bg-sky-50 rounded-lg p-4 text-center border border-sky-200">
-                  <div className="text-2xl font-bold text-sky-700">${walletBalance || "0.00"}</div>
-                  <div className="text-xs text-slate-500 mt-1">USDC Balance</div>
+                  <div className="text-2xl font-bold text-sky-700">
+                    ${walletBalance || "0.00"}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    USDC Balance
+                  </div>
                 </div>
                 <div className="bg-slate-50 rounded-lg p-4 text-center border border-slate-200">
-                  <div className="text-2xl font-bold text-slate-700">{walletXlm || "0.00"}</div>
+                  <div className="text-2xl font-bold text-slate-700">
+                    {walletXlm || "0.00"}
+                  </div>
                   <div className="text-xs text-slate-500 mt-1">XLM Balance</div>
                 </div>
               </div>
 
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Wallet Address</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Wallet Address
+                  </label>
                   <div className="flex items-center gap-2">
-                    <code className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono break-all">{agentInfo?.agentWallet || "Not connected"}</code>
+                    <code className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono break-all">
+                      {agentInfo?.agentWallet || "Not connected"}
+                    </code>
                     {agentInfo?.agentWallet && (
-                      <button onClick={() => copyToClipboard(agentInfo.agentWallet)} className={`px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${copied ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
-                        {copied ? "Copied" : "Copy"}
+                      <button
+                        onClick={() =>
+                          copyToClipboard(
+                            agentInfo.agentWallet,
+                            "wallet-address",
+                          )
+                        }
+                        className={`px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${copiedId === "wallet-address" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+                      >
+                        {copiedId === "wallet-address" ? "Copied" : "Copy"}
                       </button>
                     )}
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Network</label>
-                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">Stellar Testnet</div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Network
+                  </label>
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+                    Stellar Testnet
+                  </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">LLM Provider</label>
-                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">{agentInfo?.llm || "Not connected"}</div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    LLM Provider
+                  </label>
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+                    {agentInfo?.llm || "Not connected"}
+                  </div>
                 </div>
               </div>
 
               <div className="mt-6 flex gap-3">
                 {agentInfo?.agentWallet && (
-                  <a href={`https://stellar.expert/explorer/testnet/account/${agentInfo.agentWallet}`} target="_blank" rel="noopener noreferrer" className="flex-1 text-center px-4 py-2 bg-sky-500 text-white rounded-lg text-sm font-medium hover:bg-sky-600 active:bg-sky-700 cursor-pointer transition-all">View on Stellar Explorer</a>
+                  <a
+                    href={`https://stellar.expert/explorer/testnet/account/${agentInfo.agentWallet}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 text-center px-4 py-2 bg-sky-500 text-white rounded-lg text-sm font-medium hover:bg-sky-600 active:bg-sky-700 cursor-pointer transition-all"
+                  >
+                    View on Stellar Explorer
+                  </a>
                 )}
-                <a href="https://faucet.circle.com" target="_blank" rel="noopener noreferrer" className="flex-1 text-center px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200 active:bg-slate-300 cursor-pointer transition-all">Fund with USDC</a>
+                <a
+                  href="https://faucet.circle.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 text-center px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200 active:bg-slate-300 cursor-pointer transition-all"
+                >
+                  Fund with USDC
+                </a>
               </div>
             </div>
 
             <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <h2 className="text-sm font-semibold text-slate-700 mb-3">How Payments Work</h2>
+              <h2 className="text-sm font-semibold text-slate-700 mb-3">
+                How Payments Work
+              </h2>
               <div className="space-y-3 text-xs text-slate-600">
-                <div className="flex gap-3 items-start"><span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded font-medium shrink-0">x402</span><span>API queries (pharmacy prices, bill audits, drug interactions) are paid per-request via x402. The agent signs a Soroban authorization entry, and the OZ Facilitator settles the payment on Stellar.</span></div>
-                <div className="flex gap-3 items-start"><span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded font-medium shrink-0">MPP</span><span>Medication orders are paid via MPP Charge mode. The agent signs a Soroban SAC transfer, and the pharmacy server broadcasts the transaction.</span></div>
-                <div className="flex gap-3 items-start"><span className="px-2 py-0.5 bg-green-100 text-green-700 rounded font-medium shrink-0">USDC</span><span>Bill payments are direct Stellar USDC transfers. The agent builds a payment transaction, signs it, and submits to Horizon.</span></div>
+                <div className="flex gap-3 items-start">
+                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded font-medium shrink-0">
+                    x402
+                  </span>
+                  <span>
+                    API queries (pharmacy prices, bill audits, drug
+                    interactions) are paid per-request via x402. The agent signs
+                    a Soroban authorization entry, and the OZ Facilitator
+                    settles the payment on Stellar.
+                  </span>
+                </div>
+                <div className="flex gap-3 items-start">
+                  <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded font-medium shrink-0">
+                    MPP
+                  </span>
+                  <span>
+                    Medication orders are paid via MPP Charge mode. The agent
+                    signs a Soroban SAC transfer, and the pharmacy server
+                    broadcasts the transaction.
+                  </span>
+                </div>
+                <div className="flex gap-3 items-start">
+                  <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded font-medium shrink-0">
+                    USDC
+                  </span>
+                  <span>
+                    Bill payments are direct Stellar USDC transfers. The agent
+                    builds a payment transaction, signs it, and submits to
+                    Horizon.
+                  </span>
+                </div>
               </div>
             </div>
           </div>
         )}
 
         {activeTab === "settings" && (
-          <div className="space-y-6 max-w-2xl">
+          <div
+            role="tabpanel"
+            id="tabpanel-settings"
+            aria-labelledby="tab-settings"
+            tabIndex={0}
+            className="space-y-6 max-w-2xl"
+          >
             <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <h2 className="text-sm font-semibold text-slate-700 mb-4">Care Recipient</h2>
+              <h2 className="text-sm font-semibold text-slate-700 mb-4">
+                Care Recipient
+              </h2>
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">Name</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">{recipient.name}</div></div>
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">Age</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">{recipient.age ?? "N/A"}</div></div>
-                <div className="col-span-2"><label className="block text-xs font-medium text-slate-600 mb-1">Medications</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">Lisinopril, Metformin, Atorvastatin, Amlodipine</div></div>
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">Primary Doctor</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">Dr. Chen, {recipient.facility || "General Hospital"}</div></div>
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">Insurance</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">Medicare Part D</div></div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <h2 className="text-sm font-semibold text-slate-700 mb-4">Caregiver</h2>
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">Name</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">Maria Garcia</div></div>
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">Relationship</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">Daughter</div></div>
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">Location</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">Phoenix, AZ (800 miles from Rosa)</div></div>
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">Notifications</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">Email + SMS</div></div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <h2 className="text-sm font-semibold text-slate-700 mb-4">Agent Configuration</h2>
-              <div className="space-y-3">
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">Agent Status</label>
-                  <div className="flex items-center gap-2">
-                    <div className={`px-3 py-2 flex-1 bg-slate-50 border border-slate-200 rounded-lg text-sm ${agentPaused ? "text-amber-600" : "text-green-600"}`}>{agentPaused ? "Paused" : "Active"}</div>
-                    <button onClick={togglePause} className={`px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-all ${agentPaused ? "bg-green-500 text-white hover:bg-green-600" : "bg-amber-500 text-white hover:bg-amber-600"}`}>{agentPaused ? "Resume Agent" : "Pause Agent"}</button>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Name
+                  </label>
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    {recipient.name}
                   </div>
                 </div>
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">LLM Provider</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono">{agentInfo?.llm || "Not connected"}</div></div>
-                <div><label className="block text-xs font-medium text-slate-600 mb-1">Network</label><div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">{agentInfo?.network || "stellar:testnet"}</div></div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Agent Wallet</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Age
+                  </label>
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    {recipient.age ?? "N/A"}
+                  </div>
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Medications
+                  </label>
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    Lisinopril, Metformin, Atorvastatin, Amlodipine
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Primary Doctor
+                  </label>
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    Dr. Chen, {recipient.facility || "General Hospital"}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Insurance
+                  </label>
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    Medicare Part D
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 p-6">
+              <h2 className="text-sm font-semibold text-slate-700 mb-4">
+                Caregiver
+              </h2>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Name
+                  </label>
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    Maria Garcia
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Relationship
+                  </label>
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    Daughter
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Location
+                  </label>
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    Phoenix, AZ (800 miles from Rosa)
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Notifications
+                  </label>
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    Email + SMS
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 p-6">
+              <h2 className="text-sm font-semibold text-slate-700 mb-4">
+                Agent Configuration
+              </h2>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Agent Status
+                  </label>
                   <div className="flex items-center gap-2">
-                    <code className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono break-all">{agentInfo?.agentWallet || "Not connected"}</code>
+                    <div
+                      className={`px-3 py-2 flex-1 bg-slate-50 border border-slate-200 rounded-lg text-sm ${agentPaused ? "text-amber-600" : "text-green-600"}`}
+                    >
+                      {agentPaused ? "Paused" : "Active"}
+                    </div>
+                    <button
+                      onClick={togglePause}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-all ${agentPaused ? "bg-green-500 text-white hover:bg-green-600" : "bg-amber-500 text-white hover:bg-amber-600"}`}
+                    >
+                      {agentPaused ? "Resume Agent" : "Pause Agent"}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    LLM Provider
+                  </label>
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono">
+                    {agentInfo?.llm || "Not connected"}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Network
+                  </label>
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    {agentInfo?.network || "stellar:testnet"}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Agent Wallet
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono break-all">
+                      {agentInfo?.agentWallet || "Not connected"}
+                    </code>
                     {agentInfo?.agentWallet && (
-                      <button onClick={() => copyToClipboard(agentInfo.agentWallet)} className={`px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${copied ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
-                        {copied ? "Copied" : "Copy"}
+                      <button
+                        onClick={() =>
+                          copyToClipboard(
+                            agentInfo.agentWallet,
+                            "settings-wallet",
+                          )
+                        }
+                        className={`px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${copiedId === "settings-wallet" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+                      >
+                        {copiedId === "settings-wallet" ? "Copied" : "Copy"}
                       </button>
                     )}
                   </div>
@@ -662,7 +1494,14 @@ export default function Dashboard() {
           <span>CareGuard | Stellar Testnet | x402 + MPP</span>
           <div className="flex items-center gap-3">
             {agentInfo?.agentWallet && (
-              <a href={`https://stellar.expert/explorer/testnet/account/${agentInfo.agentWallet}`} target="_blank" rel="noopener noreferrer" className="text-sky-500 hover:text-sky-700 underline">Agent Wallet on Explorer</a>
+              <a
+                href={`https://stellar.expert/explorer/testnet/account/${agentInfo.agentWallet}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sky-500 hover:text-sky-700 underline"
+              >
+                Agent Wallet on Explorer
+              </a>
             )}
             <span>Careguard Agent 2026</span>
           </div>
@@ -672,19 +1511,82 @@ export default function Dashboard() {
   );
 }
 
-function Card({ label, value, sub, color }: { label: string; value: string; sub: string; color: string }) {
-  const c: Record<string,string> = { sky: "border-sky-200 bg-sky-50", green: "border-green-200 bg-green-50", amber: "border-amber-200 bg-amber-50", slate: "border-slate-200 bg-white" };
-  return <div className={`rounded-xl border p-4 ${c[color] || c.slate}`}><div className="text-xs font-medium text-slate-500 mb-1">{label}</div><div className="text-xl font-bold">{value}</div><div className="text-xs text-slate-400 mt-1">{sub}</div></div>;
+function Card({
+  label,
+  value,
+  sub,
+  color,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  color: string;
+}) {
+  const c: Record<string, string> = {
+    sky: "border-sky-200 bg-sky-50",
+    green: "border-green-200 bg-green-50",
+    amber: "border-amber-200 bg-amber-50",
+    slate: "border-slate-200 bg-white",
+  };
+  return (
+    <div className={`rounded-xl border p-4 ${c[color] || c.slate}`}>
+      <div className="text-xs font-medium text-slate-500 mb-1">{label}</div>
+      <div className="text-xl font-bold">{value}</div>
+      <div className="text-xs text-slate-400 mt-1">{sub}</div>
+    </div>
+  );
 }
 
-function Bar({ label, spent, budget }: { label: string; spent: number; budget: number }) {
+function Bar({
+  label,
+  spent,
+  budget,
+}: {
+  label: string;
+  spent: number;
+  budget: number;
+}) {
   const pct = Math.min((spent / budget) * 100, 100);
   const c = pct > 90 ? "bg-red-500" : pct > 70 ? "bg-amber-500" : "bg-sky-500";
-  return <div><div className="flex items-center justify-between text-xs mb-1"><span className="font-medium text-slate-600">{label}</span><span className="text-slate-400">${spent.toFixed(2)} / ${budget}</span></div><div className="h-2 bg-slate-100 rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all duration-500 ${c}`} style={{width:`${pct}%`}} /></div></div>;
+  return (
+    <div>
+      <div className="flex items-center justify-between text-xs mb-1">
+        <span className="font-medium text-slate-600">{label}</span>
+        <span className="text-slate-400">
+          ${spent.toFixed(2)} / ${budget}
+        </span>
+      </div>
+      <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${c}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
 }
 
-function Btn({ label, desc, busy, onClick }: { label: string; desc: string; busy: boolean; onClick: () => void }) {
-  return <button onClick={onClick} disabled={busy} className="text-left p-4 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 rounded-lg border border-slate-200 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"><div className="text-sm font-medium">{label}</div><div className="text-xs text-slate-500 mt-1">{desc}</div></button>;
+function Btn({
+  label,
+  desc,
+  busy,
+  onClick,
+}: {
+  label: string;
+  desc: string;
+  busy: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={busy}
+      className="text-left p-4 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 rounded-lg border border-slate-200 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"
+    >
+      <div className="text-sm font-medium">{label}</div>
+      <div className="text-xs text-slate-500 mt-1">{desc}</div>
+    </button>
+  );
 }
 
 const EXPLORER_URL = "https://stellar.expert/explorer/testnet/tx";
@@ -738,11 +1640,156 @@ function TxLink({ hash }: { hash?: string }) {
       </span>
       <span
         className="text-[10px] leading-none text-slate-500 border border-slate-300 rounded-full w-4 h-4 inline-flex items-center justify-center"
-        title={decodeFailed ? "Couldn't extract a Stellar tx hash. The receipt may be in a different format." : "Not a Stellar transaction hash."}
+        title={
+          decodeFailed
+            ? "Couldn't extract a Stellar tx hash. The receipt may be in a different format."
+            : "Not a Stellar transaction hash."
+        }
         aria-label="Transaction link info"
       >
         ?
       </span>
     </span>
+  );
+}
+
+// Virtualized bill line items component
+function BillLineItemsVirtualized({ lineItems }: { lineItems: any[] }) {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: lineItems.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 80, // Approximate height of each line item
+    overscan: 5,
+  });
+
+  // For small lists, render normally to avoid virtualization overhead
+  if (lineItems.length <= 50) {
+    return (
+      <div className="overflow-x-auto rounded-lg shadow-[inset_-10px_0_12px_-12px_rgba(15,23,42,0.25)]">
+        <div className="space-y-2 min-w-[640px]">
+          {lineItems.map((item: any, j: number) => (
+            <div
+              key={j}
+              className={`flex items-center justify-between p-3 rounded-lg text-sm ${item.status === "valid" ? "bg-slate-50" : item.status === "duplicate" ? "bg-red-50 border border-red-200" : "bg-amber-50 border border-amber-200"}`}
+            >
+              <div className="flex-1">
+                <div className="font-medium">{item.description}</div>
+                <div className="hidden md:block text-xs text-slate-500">
+                  CPT: {item.cptCode}
+                </div>
+                <details className="md:hidden mt-1">
+                  <summary className="cursor-pointer text-xs text-slate-500">
+                    More details
+                  </summary>
+                  <div className="text-xs text-slate-500 mt-1">
+                    CPT: {item.cptCode || "N/A"}
+                  </div>
+                </details>
+                {item.errorDescription && (
+                  <div className="text-xs text-red-600 mt-1">
+                    {item.errorDescription}
+                  </div>
+                )}
+              </div>
+              <div className="text-right ml-4">
+                <div
+                  className={
+                    item.status !== "valid" ? "line-through text-red-500" : ""
+                  }
+                >
+                  ${item.chargedAmount}
+                </div>
+                {item.status !== "valid" && (
+                  <div className="text-green-600 font-medium">
+                    ${item.suggestedAmount}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Virtualized rendering for large lists
+  return (
+    <div className="overflow-x-auto rounded-lg shadow-[inset_-10px_0_12px_-12px_rgba(15,23,42,0.25)]">
+      <div
+        ref={parentRef}
+        className="min-w-[640px]"
+        style={{
+          height: `${Math.min(400, virtualizer.getTotalSize())}px`,
+          overflow: "auto",
+        }}
+      >
+        <div
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+            width: "100%",
+            position: "relative",
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualItem) => {
+            const item = lineItems[virtualItem.index];
+            return (
+              <div
+                key={virtualItem.index}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  height: `${virtualItem.size}px`,
+                  transform: `translateY(${virtualItem.start}px)`,
+                }}
+              >
+                <div
+                  className={`flex items-center justify-between p-3 rounded-lg text-sm m-1 ${item.status === "valid" ? "bg-slate-50" : item.status === "duplicate" ? "bg-red-50 border border-red-200" : "bg-amber-50 border border-amber-200"}`}
+                >
+                  <div className="flex-1">
+                    <div className="font-medium">{item.description}</div>
+                    <div className="hidden md:block text-xs text-slate-500">
+                      CPT: {item.cptCode}
+                    </div>
+                    <details className="md:hidden mt-1">
+                      <summary className="cursor-pointer text-xs text-slate-500">
+                        More details
+                      </summary>
+                      <div className="text-xs text-slate-500 mt-1">
+                        CPT: {item.cptCode || "N/A"}
+                      </div>
+                    </details>
+                    {item.errorDescription && (
+                      <div className="text-xs text-red-600 mt-1">
+                        {item.errorDescription}
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-right ml-4">
+                    <div
+                      className={
+                        item.status !== "valid"
+                          ? "line-through text-red-500"
+                          : ""
+                      }
+                    >
+                      ${item.chargedAmount}
+                    </div>
+                    {item.status !== "valid" && (
+                      <div className="text-green-600 font-medium">
+                        ${item.suggestedAmount}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
