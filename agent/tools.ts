@@ -21,7 +21,7 @@ const AGENT_SECRET_KEY = process.env.AGENT_SECRET_KEY;
 const PHARMACY_API = process.env.PHARMACY_API_URL || "http://localhost:3001";
 const BILL_AUDIT_API = process.env.BILL_AUDIT_API_URL || "http://localhost:3002";
 const DRUG_INTERACTION_API = process.env.DRUG_INTERACTION_API_URL || "http://localhost:3003";
-const PHARMACY_PAYMENT_API = process.env.PHARMACY_PAYMENT_URL || "http://localhost:3005";
+const PHARMACY_PAYMENT_API = process.env.PHARMACY_PAYMENT_API_URL || "http://localhost:3005";
 const USDC_ISSUER = process.env.USDC_ISSUER || "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 const HORIZON_URL = "https://horizon-testnet.stellar.org";
 
