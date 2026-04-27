@@ -1,0 +1,21 @@
+{
+  "policy": {
+    "dailyLimit": 100,
+    "monthlyLimit": 500,
+    "medicationMonthlyBudget": 300,
+    "billMonthlyBudget": 500,
+    "approvalThreshold": 75
+  },
+  "spending": {
+    "medications": 42.5,
+    "bills": 120,
+    "serviceFees": 0.021,
+    "total": 162.521
+  },
+  "budgetRemaining": {
+    "medications": 257.5,
+    "bills": 380
+  },
+  "transactionCount": 2,
+  "recentTransactions": []
+}

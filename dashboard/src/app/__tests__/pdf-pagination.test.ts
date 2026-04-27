@@ -20,6 +20,7 @@ const mockSetFontSize = vi.fn();
 const mockSetTextColor = vi.fn();
 const mockSetDrawColor = vi.fn();
 const mockLine = vi.fn();
+const mockSetProperties = vi.fn();
 const mockGetNumberOfPages = vi.fn(() => capturedPageCount);
 const mockSetPage = vi.fn();
 const mockAddPage = vi.fn(() => { capturedPageCount++; });
@@ -35,6 +36,7 @@ vi.mock('jspdf', () => ({
     setDrawColor: mockSetDrawColor,
     text: mockText,
     line: mockLine,
+    setProperties: mockSetProperties,
     save: mockSave,
     getNumberOfPages: mockGetNumberOfPages,
     setPage: mockSetPage,
@@ -142,5 +144,14 @@ describe('downloadBillAuditPDF — pagination (#225)', () => {
   it('saves the document', () => {
     downloadBillAuditPDF(makeAuditResult(5));
     expect(mockSave).toHaveBeenCalledWith('careguard-bill-audit-report.pdf');
+  });
+
+  it("uses provided recipient in PDF header and metadata", () => {
+    downloadBillAuditPDF(makeAuditResult(2), {
+      recipient: { name: "Ada Lovelace", age: 82, facility: "Memorial Clinic" },
+    });
+    const joinedTextArgs = mockText.mock.calls.map((call) => String(call[0])).join(" ");
+    expect(joinedTextArgs).toContain("Ada Lovelace");
+    expect(mockSetProperties).toHaveBeenCalled();
   });
 });

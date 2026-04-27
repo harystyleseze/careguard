@@ -1,0 +1,25 @@
+{
+  "transactions": [
+    {
+      "id": "tx-1",
+      "timestamp": "2026-04-27T10:00:00.000Z",
+      "type": "medication",
+      "description": "Lisinopril order",
+      "amount": 12.5,
+      "recipient": "Pharmacy",
+      "stellarTxHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "category": "medication"
+    },
+    {
+      "id": "tx-2",
+      "timestamp": "2026-04-27T11:00:00.000Z",
+      "type": "service_fee",
+      "description": "Price comparison API",
+      "amount": 0.002,
+      "recipient": "x402",
+      "status": "completed",
+      "category": "service"
+    }
+  ]
+}
