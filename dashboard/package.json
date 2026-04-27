@@ -11,6 +11,7 @@
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.13.24",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
     "next": "16.2.4",
@@ -20,12 +21,12 @@
   "devDependencies": {
     "@playwright/test": "^1.54.2",
     "@tailwindcss/postcss": "^4",
-    "pdf-parse": "^1.1.1",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "pdf-parse": "^1.1.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
