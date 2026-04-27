@@ -17,6 +17,7 @@ import { Mppx, Store } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { z } from "zod";
 
 // x402 middleware
 import { applyX402Middleware } from "./shared/x402-middleware.ts";
@@ -39,20 +40,42 @@ import {
 } from "./agent/tools.ts";
 
 // --- Environment ---
-const PORT = parseInt(process.env.PORT || "3004");
+const envSchema = z.object({
+  PORT: z.coerce.number().int().positive().default(3004),
+  STELLAR_NETWORK: z.enum(["testnet", "public"]).default("testnet"),
+  LLM_API_KEY: z.string().min(1, "LLM_API_KEY required"),
+  AGENT_SECRET_KEY: z.string().min(1, "AGENT_SECRET_KEY required"),
+  PHARMACY_1_PUBLIC_KEY: z.string().min(1, "PHARMACY_1_PUBLIC_KEY required"),
+  BILL_PROVIDER_PUBLIC_KEY: z.string().min(1, "BILL_PROVIDER_PUBLIC_KEY required"),
+  MPP_SECRET_KEY: z.string().min(1, "MPP_SECRET_KEY required"),
+  LLM_BASE_URL: z.string().min(1).optional(),
+  LLM_MODEL: z.string().min(1).optional(),
+  OZ_FACILITATOR_API_KEY: z.string().min(1).optional(),
+  X402_FACILITATOR_URL: z.string().min(1).optional(),
+});
 
-if (!process.env.LLM_API_KEY) throw new Error("LLM_API_KEY required");
-if (!process.env.AGENT_SECRET_KEY) throw new Error("AGENT_SECRET_KEY required");
-if (!process.env.PHARMACY_1_PUBLIC_KEY) throw new Error("PHARMACY_1_PUBLIC_KEY required");
-if (!process.env.BILL_PROVIDER_PUBLIC_KEY) throw new Error("BILL_PROVIDER_PUBLIC_KEY required");
-if (!process.env.MPP_SECRET_KEY) throw new Error("MPP_SECRET_KEY required");
+const env = envSchema.safeParse(process.env);
+if (!env.success) {
+  console.error(env.error.issues.map((i) => `Missing/invalid env: ${i.path.join(".")} — ${i.message}`).join("\n"));
+  process.exit(1);
+}
 
-const LLM_BASE_URL = process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1";
-const LLM_MODEL = process.env.LLM_MODEL || "llama-3.3-70b-versatile";
-const NETWORK = "stellar:testnet";
+if (env.data.STELLAR_NETWORK === "public" && !env.data.OZ_FACILITATOR_API_KEY) {
+  console.error("Missing/invalid env: OZ_FACILITATOR_API_KEY — required when STELLAR_NETWORK=public");
+  process.exit(1);
+}
 
-const llm = new OpenAI({ apiKey: process.env.LLM_API_KEY, baseURL: LLM_BASE_URL });
-const agentKeypair = Keypair.fromSecret(process.env.AGENT_SECRET_KEY);
+if (env.data.STELLAR_NETWORK !== "public" && !env.data.OZ_FACILITATOR_API_KEY) {
+  console.warn("  ⚠ OZ_FACILITATOR_API_KEY not set — x402 routes will fail until configured");
+}
+
+const PORT = env.data.PORT;
+const LLM_BASE_URL = env.data.LLM_BASE_URL || "https://api.groq.com/openai/v1";
+const LLM_MODEL = env.data.LLM_MODEL || "llama-3.3-70b-versatile";
+const NETWORK = (env.data.STELLAR_NETWORK === "public" ? "stellar:public" : "stellar:testnet") as `${string}:${string}`;
+
+const llm = new OpenAI({ apiKey: env.data.LLM_API_KEY, baseURL: LLM_BASE_URL });
+const agentKeypair = Keypair.fromSecret(env.data.AGENT_SECRET_KEY);
 
 // --- Express App ---
 const app = express();
@@ -123,10 +146,10 @@ app.get("/pharmacy/drugs", (_req, res) => {
 // x402 for pharmacy compare
 applyX402Middleware(app, {
   "GET /pharmacy/compare": {
-    accepts: { scheme: "exact", network: NETWORK, payTo: process.env.PHARMACY_1_PUBLIC_KEY!, price: "$0.002" },
+    accepts: { scheme: "exact", network: NETWORK, payTo: env.data.PHARMACY_1_PUBLIC_KEY, price: "$0.002" },
     description: "Pharmacy price comparison — $0.002 USDC",
   },
-});
+}, { network: NETWORK, apiKey: env.data.OZ_FACILITATOR_API_KEY, facilitatorUrl: env.data.X402_FACILITATOR_URL });
 
 app.get("/pharmacy/compare", (req, res) => {
   const drug = (req.query.drug as string || "").toLowerCase().trim();

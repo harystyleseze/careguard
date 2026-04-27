@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { downloadBillAuditPDF, downloadMedicationPDF, downloadTransactionPDF } from "./pdf";
+import { LiveRegion } from "../components/primitives/live-region";
 import {
   BillAuditResultSchema,
   DrugInteractionResultSchema,
@@ -57,6 +58,10 @@ export default function Dashboard() {
   const [billShowErrorsOnly, setBillShowErrorsOnly] = useState(false);
   const [walletXlm, setWalletXlm] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [liveMessage, setLiveMessage] = useState("");
+  const [debouncedAriaLog, setDebouncedAriaLog] = useState<string[]>([]);
+  const logDebounceRef = useRef<number | null>(null);
+  const lastConnectionStateRef = useRef<string | null>(null);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -76,6 +81,26 @@ export default function Dashboard() {
   const policyDirtyRef = useRef(policyDirty);
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
   useEffect(() => { policyDirtyRef.current = policyDirty; }, [policyDirty]);
+
+  useEffect(() => {
+    if (logDebounceRef.current) window.clearTimeout(logDebounceRef.current);
+    logDebounceRef.current = window.setTimeout(() => {
+      setDebouncedAriaLog(agentLog.slice(-20));
+    }, 800);
+    return () => {
+      if (logDebounceRef.current) window.clearTimeout(logDebounceRef.current);
+    };
+  }, [agentLog]);
+
+  useEffect(() => {
+    const connectionState = !agentConnected ? "disconnected" : agentPaused ? "paused" : "active";
+    const prev = lastConnectionStateRef.current;
+    if (prev === connectionState) return;
+    lastConnectionStateRef.current = connectionState;
+    if (connectionState === "active") setLiveMessage("Agent connected");
+    if (connectionState === "paused") setLiveMessage("Agent paused");
+    if (connectionState === "disconnected") setLiveMessage("Agent disconnected");
+  }, [agentConnected, agentPaused]);
 
   const fetchAgentInfo = useCallback(async () => {
     try {
@@ -159,6 +184,7 @@ export default function Dashboard() {
       }
       const data: AgentResult = await res.json();
       setAgentResult(data); setSpending(data.spending);
+      setLiveMessage(`Task complete — ${data.toolCalls.length} tool calls`);
       for (const tc of data.toolCalls) {
         const resultPreview = tc.result?.error ? `ERROR: ${tc.result.error.slice(0, 60)}` : "OK";
         setAgentLog(p => [...p, `  -> ${tc.tool} ${resultPreview}`]);
@@ -186,6 +212,7 @@ export default function Dashboard() {
           setPolicyDirty(false);
         }
         setAgentLog(p => [...p, `[${new Date().toLocaleTimeString()}] Policy updated: daily=$${policyForm.dailyLimit}, monthly=$${policyForm.monthlyLimit}, meds=$${policyForm.medicationMonthlyBudget}, bills=$${policyForm.billMonthlyBudget}, approval=$${policyForm.approvalThreshold}`]);
+        setLiveMessage("Policy updated");
         setPolicySaved(true);
         setTimeout(() => setPolicySaved(false), 3000);
       }
@@ -213,6 +240,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen">
+      <LiveRegion message={liveMessage} />
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -301,7 +329,7 @@ export default function Dashboard() {
             </div>
 
             {agentResult && (
-              <div className="bg-white rounded-xl border border-slate-200 p-6">
+              <div className="bg-white rounded-xl border border-slate-200 p-6" aria-live="polite" aria-atomic="true">
                 <h2 className="text-sm font-semibold text-slate-700 mb-3">Agent Response</h2>
                 <p className="text-sm text-slate-600 whitespace-pre-wrap">{agentResult.response}</p>
                 <div className="mt-4 text-xs text-slate-400">{agentResult.toolCalls.length} tool calls | API cost: ${agentResult.spending.spending.serviceFees.toFixed(4)}</div>
@@ -373,7 +401,7 @@ export default function Dashboard() {
                     <h2 className="text-sm font-semibold text-slate-700">Bill Audit Results</h2>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => downloadBillAuditPDF(BillAuditResultSchema.parse(t.result))}
+                        onClick={() => downloadBillAuditPDF(BillAuditResultSchema.parse(t.result), { errorsOnly: billShowErrorsOnly })}
                         className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
                       >
                         Download PDF
@@ -461,8 +489,11 @@ export default function Dashboard() {
                 <button onClick={resetAgent} className="text-xs text-red-500 hover:text-red-700 hover:underline active:text-red-800 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 rounded px-1">Reset All</button>
               </div>
             </div>
-            <div className="bg-slate-900 rounded-xl p-4 font-mono text-xs text-green-400 max-h-48 overflow-y-auto">
-              {agentLog.length === 0 ? <span className="text-slate-500">No agent activity yet...</span> : agentLog.map((l, i) => <div key={i}>{l}</div>)}
+            <div className="bg-slate-900 rounded-xl p-4 font-mono text-xs text-green-400 max-h-48 overflow-y-auto" aria-live="polite">
+              <div aria-hidden="true">
+                {agentLog.length === 0 ? <span className="text-slate-500">No agent activity yet...</span> : agentLog.map((l, i) => <div key={i}>{l}</div>)}
+              </div>
+              <div className="sr-only">{debouncedAriaLog.join("\n")}</div>
             </div>
             <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
               {allTransactions.length === 0 ? <div className="p-8 text-center text-sm text-slate-400">No transactions yet</div> : (

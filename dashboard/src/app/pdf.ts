@@ -1,8 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { BillAuditResult, DrugInteractionResult, PharmacyCompareResult, SpendingData, Transaction } from "../lib/types";
-
-const HEADER_COLOR: [number, number, number] = [14, 165, 233]; // sky-500
+import { DEFAULT_PDF_THEME, type PdfTheme } from "../lib/pdf-theme";
 
 type AutoTableDoc = jsPDF & { lastAutoTable?: { finalY: number } };
 
@@ -30,19 +29,19 @@ function formatTxHashDisplay(hash?: string): { display: string; decodeFailed: bo
   return { display: `${hash.slice(0, 16)}... ?`, decodeFailed: true };
 }
 
-function addHeader(doc: jsPDF, title: string, subtitle: string) {
+function addHeader(doc: jsPDF, title: string, subtitle: string, theme: PdfTheme) {
   doc.setFontSize(20);
   doc.setTextColor(15, 23, 42); // slate-900
   doc.text("CareGuard", 14, 20);
   doc.setFontSize(10);
-  doc.setTextColor(100, 116, 139); // slate-500
+  doc.setTextColor(...theme.mutedColor);
   doc.text("AI Healthcare Agent on Stellar", 14, 26);
 
   doc.setFontSize(14);
   doc.setTextColor(15, 23, 42);
   doc.text(title, 14, 38);
   doc.setFontSize(9);
-  doc.setTextColor(100, 116, 139);
+  doc.setTextColor(...theme.mutedColor);
   doc.text(subtitle, 14, 44);
   doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 49);
 
@@ -61,9 +60,21 @@ function addFooter(doc: jsPDF) {
   }
 }
 
-export function downloadBillAuditPDF(auditResult: BillAuditResult) {
+export function downloadBillAuditPDF(
+  auditResult: BillAuditResult,
+  options?: { errorsOnly?: boolean; theme?: PdfTheme }
+) {
+  const theme = options?.theme ?? DEFAULT_PDF_THEME;
+  const errorsOnly = Boolean(options?.errorsOnly);
+
+  const allItems = auditResult.lineItems;
+  const filteredItems = errorsOnly ? allItems.filter((item) => item.status !== "valid") : allItems;
+  const subtitle = errorsOnly
+    ? `Patient: Rosa Garcia | Facility: General Hospital | ${filteredItems.length} of ${allItems.length} items shown — errors only`
+    : "Patient: Rosa Garcia | Facility: General Hospital";
+
   const doc: AutoTableDoc = new jsPDF();
-  addHeader(doc, "Medical Bill Audit Report", "Patient: Rosa Garcia | Facility: General Hospital");
+  addHeader(doc, "Medical Bill Audit Report", subtitle, theme);
 
   // Summary boxes
   let y = 58;
@@ -87,7 +98,7 @@ export function downloadBillAuditPDF(auditResult: BillAuditResult) {
   autoTable(doc, {
     startY: y + 10,
     head: [["Description", "CPT Code", "Qty", "Charged", "Status", "Suggested"]],
-    body: auditResult.lineItems.map((item) => [
+    body: filteredItems.map((item) => [
       item.description,
       item.cptCode || "-",
       item.quantity,
@@ -95,7 +106,7 @@ export function downloadBillAuditPDF(auditResult: BillAuditResult) {
       item.status === "valid" ? "OK" : item.status.toUpperCase(),
       item.status !== "valid" ? `$${item.suggestedAmount}` : "-",
     ]),
-    headStyles: { fillColor: HEADER_COLOR, fontSize: 8 },
+    headStyles: { fillColor: theme.headerColor, fontSize: 8 },
     bodyStyles: { fontSize: 8 },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     didParseCell: (data) => {
@@ -117,9 +128,13 @@ export function downloadBillAuditPDF(auditResult: BillAuditResult) {
   doc.save("careguard-bill-audit-report.pdf");
 }
 
-export function downloadMedicationPDF(params: { priceResults: PharmacyCompareResult[]; interactionResult?: DrugInteractionResult }) {
+export function downloadMedicationPDF(
+  params: { priceResults: PharmacyCompareResult[]; interactionResult?: DrugInteractionResult },
+  options?: { theme?: PdfTheme }
+) {
+  const theme = options?.theme ?? DEFAULT_PDF_THEME;
   const doc: AutoTableDoc = new jsPDF();
-  addHeader(doc, "Medication Price Comparison Report", "Patient: Rosa Garcia | 4 Medications Compared");
+  addHeader(doc, "Medication Price Comparison Report", "Patient: Rosa Garcia | 4 Medications Compared", theme);
 
   let y = 58;
   const priceResults = params.priceResults.filter(r => r.cheapest);
@@ -128,7 +143,7 @@ export function downloadMedicationPDF(params: { priceResults: PharmacyCompareRes
   // Total savings summary
   const totalSavings = priceResults.reduce((sum, r) => sum + (r.potentialSavings || 0), 0);
   doc.setFontSize(11);
-  doc.setTextColor(34, 197, 94);
+  doc.setTextColor(...theme.accentColor);
   doc.text(`Total Potential Savings: $${totalSavings.toFixed(2)}/month ($${(totalSavings * 12).toFixed(2)}/year)`, 14, y);
   y += 8;
 
@@ -138,7 +153,7 @@ export function downloadMedicationPDF(params: { priceResults: PharmacyCompareRes
     doc.setTextColor(15, 23, 42);
     doc.text(`${r.drug}`, 14, y);
     doc.setFontSize(8);
-    doc.setTextColor(34, 197, 94);
+    doc.setTextColor(...theme.accentColor);
     doc.text(`Save $${r.potentialSavings || 0}/mo (${r.savingsPercent || 0}%)`, 60, y);
     y += 2;
 
@@ -146,14 +161,14 @@ export function downloadMedicationPDF(params: { priceResults: PharmacyCompareRes
       startY: y,
       head: [["Pharmacy", "Price", "Distance", "In Stock"]],
       body: r.prices.map((p) => [p.pharmacyName, `$${p.price}`, p.distance || "-", p.inStock ? "Yes" : "No"]),
-      headStyles: { fillColor: HEADER_COLOR, fontSize: 7 },
+      headStyles: { fillColor: theme.headerColor, fontSize: 7 },
       bodyStyles: { fontSize: 7 },
       alternateRowStyles: { fillColor: [248, 250, 252] },
       margin: { left: 14, right: 14 },
       didParseCell: (data) => {
         if (data.section === "body" && data.row.index === 0) {
           data.cell.styles.fontStyle = "bold";
-          data.cell.styles.textColor = [34, 197, 94];
+          data.cell.styles.textColor = theme.accentColor;
         }
       },
     });
@@ -184,9 +199,14 @@ export function downloadMedicationPDF(params: { priceResults: PharmacyCompareRes
   doc.save("careguard-medication-report.pdf");
 }
 
-export function downloadTransactionPDF(transactions: Transaction[], spending: SpendingData | null) {
+export function downloadTransactionPDF(
+  transactions: Transaction[],
+  spending: SpendingData | null,
+  options?: { theme?: PdfTheme }
+) {
+  const theme = options?.theme ?? DEFAULT_PDF_THEME;
   const doc: AutoTableDoc = new jsPDF();
-  addHeader(doc, "Transaction Report", `Patient: Rosa Garcia | ${transactions.length} Transactions`);
+  addHeader(doc, "Transaction Report", `Patient: Rosa Garcia | ${transactions.length} Transactions`, theme);
 
   let y = 58;
 
@@ -218,7 +238,7 @@ export function downloadTransactionPDF(transactions: Transaction[], spending: Sp
         display,
       ];
     }),
-    headStyles: { fillColor: HEADER_COLOR, fontSize: 7 },
+    headStyles: { fillColor: theme.headerColor, fontSize: 7 },
     bodyStyles: { fontSize: 7 },
     columnStyles: { 2: { cellWidth: 45 }, 5: { cellWidth: 25, fontStyle: "italic" } },
   });
