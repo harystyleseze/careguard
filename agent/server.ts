@@ -235,6 +235,24 @@ app.get("/agent/transactions", (_req, res) => { res.json(getSpendingTracker()); 
 app.post("/agent/policy", (req, res) => { setSpendingPolicy(req.body); res.json({ success: true, policy: req.body }); });
 app.post("/agent/reset", (_req, res) => { resetSpendingTracker(); res.json({ success: true }); });
 
+const DEFAULT_PROFILE = {
+  recipient: {
+    name: "Rosa Garcia",
+    age: 78,
+    medications: ["Lisinopril", "Metformin", "Atorvastatin", "Amlodipine"],
+    doctor: "Dr. Chen, General Hospital",
+    insurance: "Medicare Part D",
+  },
+  caregiver: {
+    name: "Maria Garcia",
+    relationship: "Daughter",
+    location: "Phoenix, AZ (800 miles from Rosa)",
+    notifications: "Email + SMS",
+  },
+};
+
+app.get("/agent/profile", (_req, res) => { res.json(DEFAULT_PROFILE); });
+
 // Startup: verify agent wallet has USDC balance
 async function verifyWallet() {
   try {

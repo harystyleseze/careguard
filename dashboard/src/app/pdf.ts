@@ -78,12 +78,19 @@ export function downloadBillAuditPDF(
     facility: "General Hospital",
   };
   const recipientLabel = formatRecipient(recipient);
+  options?: { errorsOnly?: boolean; theme?: PdfTheme; recipientName?: string }
+) {
+  const theme = options?.theme ?? DEFAULT_PDF_THEME;
+  const errorsOnly = Boolean(options?.errorsOnly);
+  const recipientName = options?.recipientName ?? "Rosa Garcia";
 
   const allItems = auditResult.lineItems;
   const filteredItems = errorsOnly ? allItems.filter((item) => item.status !== "valid") : allItems;
   const subtitle = errorsOnly
     ? `Patient: ${recipientLabel} | Facility: ${recipient.facility || "N/A"} | ${filteredItems.length} of ${allItems.length} items shown — errors only`
     : `Patient: ${recipientLabel} | Facility: ${recipient.facility || "N/A"}`;
+    ? `Patient: ${recipientName} | Facility: General Hospital | ${filteredItems.length} of ${allItems.length} items shown — errors only`
+    : `Patient: ${recipientName} | Facility: General Hospital`;
 
   const doc: AutoTableDoc = new jsPDF();
   doc.setProperties({
@@ -184,6 +191,12 @@ export function downloadMedicationPDF(
     `Patient: ${formatRecipient(recipient)} | ${params.priceResults.length} Medications Compared`,
     theme
   );
+  options?: { theme?: PdfTheme; recipientName?: string }
+) {
+  const theme = options?.theme ?? DEFAULT_PDF_THEME;
+  const recipientName = options?.recipientName ?? "Rosa Garcia";
+  const doc: AutoTableDoc = new jsPDF();
+  addHeader(doc, "Medication Price Comparison Report", `Patient: ${recipientName} | 4 Medications Compared`, theme);
 
   let y = 58;
   const priceResults = params.priceResults.filter(r => r.cheapest);
@@ -273,6 +286,12 @@ export function downloadTransactionPDF(
     `Patient: ${formatRecipient(recipient)} | ${transactions.length} Transactions`,
     theme
   );
+  options?: { theme?: PdfTheme; recipientName?: string }
+) {
+  const theme = options?.theme ?? DEFAULT_PDF_THEME;
+  const recipientName = options?.recipientName ?? "Rosa Garcia";
+  const doc: AutoTableDoc = new jsPDF();
+  addHeader(doc, "Transaction Report", `Patient: ${recipientName} | ${transactions.length} Transactions`, theme);
 
   let y = 58;
 

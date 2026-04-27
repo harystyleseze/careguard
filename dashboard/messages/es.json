@@ -1,0 +1,143 @@
+{
+  "app": {
+    "title": "CareGuard",
+    "subtitle": "Agente de Salud con IA en Stellar"
+  },
+  "status": {
+    "disconnected": "Desconectado",
+    "paused": "Pausado",
+    "active": "Activo"
+  },
+  "actions": {
+    "pause": "Pausar",
+    "resume": "Reanudar"
+  },
+  "wallet": {
+    "agentWallet": "Billetera del Agente (USDC)",
+    "careRecipient": "Paciente"
+  },
+  "tabs": {
+    "overview": "Resumen",
+    "medications": "Medicamentos",
+    "bills": "Facturas",
+    "policy": "Politica",
+    "wallet": "Billetera",
+    "activity": "Actividad",
+    "settings": "Ajustes"
+  },
+  "overview": {
+    "monthlySpending": "Gasto Mensual",
+    "savingsFound": "Ahorros Encontrados",
+    "billingErrors": "Errores de Facturacion",
+    "agentApiCosts": "Costos de API del Agente",
+    "budgetStatus": "Estado del Presupuesto",
+    "agentActions": "Acciones del Agente",
+    "agentResponse": "Respuesta del Agente",
+    "limit": "limite",
+    "bySwitching": "cambiando de farmacia",
+    "inOvercharges": "en sobrecargos identificados",
+    "queries": "consultas via x402"
+  },
+  "budget": {
+    "medications": "Medicamentos",
+    "medicalBills": "Facturas Medicas"
+  },
+  "tasks": {
+    "comparePrices": "Comparar Precios de Medicamentos",
+    "findCheapest": "Encontrarfarmacias mas economicas para los 4 medicamentos de Rosa",
+    "auditBill": "Auditar Factura Hospitalaria",
+    "scanBill": "Escanear factura de Rosa buscar errores",
+    "overBudget": "Intentar Pago Excedente",
+    "demoPayment": "Demo: agente intenta $600 (sobre limite de $500)",
+    "agentPaused": "Agente pausado",
+    "working": "Agente trabajando..."
+  },
+  "medications": {
+    "title": "Medicamentos de Rosa",
+    "downloadPdf": "Descargar PDF",
+    "best": "Mejor",
+    "notYetCompared": "Aun no comparado",
+    "save": "Ahorrar",
+    "savings": "ahorro",
+    "drugInteractions": "Interacciones Medicamentosas"
+  },
+  "bills": {
+    "title": "Resultados de Auditoria",
+    "downloadPdf": "Descargar PDF",
+    "errorsFound": "errores encontrados",
+    "totalCharged": "Total Cargado",
+    "overcharges": "Sobrecargos",
+    "correctAmount": "Monto Correcto",
+    "lineItems": "lineas",
+    "showErrors": "Mostrar solo errores",
+    "showAll": "Mostrar todo",
+    "notAudited": "No hay facturas auditadas. Ejecute \"Auditar Factura\" desde Resumen."
+  },
+  "policy": {
+    "title": "Politica de Gastos para Rosa",
+    "description": "Estos limites son implementados por contratos inteligente en Stellar. El agente no puede excederlos.",
+    "dailyLimit": "Limite Diario ($)",
+    "monthlyLimit": "Limite Mensual ($)",
+    "medicationBudget": "Presupuesto Mensual Medicamentos ($)",
+    "billBudget": "Presupuesto Mensual Facturas ($)",
+    "approvalThreshold": "Umbral de Aprobacion del Cuidador ($)",
+    "refresh": "Actualizar del servidor",
+    "discard": "Descartar cambios",
+    "updatePolicy": "Actualizar Politica",
+    "policySaved": "Politica Guardada"
+  },
+  "activity": {
+    "title": "Registro de Transacciones",
+    "downloadReport": "Descargar Informe",
+    "reset": "Reiniciar Todo",
+    "noActivity": "Sin actividad del agente...",
+    "noTransactions": "Sin transacciones",
+    "time": "Hora",
+    "type": "Tipo",
+    "description": "Descripcion",
+    "amount": "Monto",
+    "status": "Estado",
+    "stellarTx": "Tx Stellar"
+  },
+  "wallet": {
+    "title": "Billetera del Agente",
+    "description": "Esta es la billetera Stellar del agente IA. Contiene USDC para pagar farmacias, facturas medicas y consultas de API. Todos los saldos estan en Stellar testnet.",
+    "usdcBalance": "Saldo USDC",
+    "xlmBalance": "Saldo XLM",
+    "walletAddress": "Direccion de Billetera",
+    "network": "Red",
+    "llmProvider": "Proveedor LLM",
+    "networkStellar": "Stellar Testnet",
+    "viewExplorer": "Ver en Stellar Explorer",
+    "fund": "Recargar con USDC",
+    "howPayments": "Como Funcionan los Pagos"
+  },
+  "settings": {
+    "recipient": "Paciente",
+    "name": "Nombre",
+    "age": "Edad",
+    "medications": "Medicamentos",
+    "doctor": "Medico Principal",
+    "insurance": "Seguro",
+    "caregiver": "Cuidador",
+    "relationship": "Parentesco",
+    "location": "Ubicacion",
+    "notifications": "Notificaciones",
+    "agentConfig": "Configuracion del Agente",
+    "agentStatus": "Estado del Agente",
+    "notConnected": "No conectado"
+  },
+  "pdf": {
+    "careguard": "CareGuard",
+    "subtitle": "Agente de Salud con IA en Stellar",
+    "billAudit": "Informe de Auditoria de Factura Medica",
+    "medication": "Informe de Comparacion de Precios",
+    "transaction": "Informe de Transacciones",
+    "generated": "Generado"
+  },
+  "common": {
+    "loading": "Cargando...",
+    "error": "Error",
+    "retry": "Intentar de Nuevo"
+  }
+}
