@@ -1,36 +1,72 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CareGuard Dashboard
 
-## Getting Started
+CareGuard's dashboard is the caregiver control plane for the AI agent. It lets you run autonomous tasks, inspect spending, adjust policy guardrails, and export human-readable PDF reports.
 
-First, run the development server:
+## This Is NOT the Next.js You Know
+
+This project uses Next.js 16. Before contributing, read the Next.js docs shipped in `node_modules/next/dist/docs/` and follow breaking-change guidance.
+
+## Prerequisites
+
+- Node.js 22+
+- pnpm
+- CareGuard backend running (`npm run dev` from the repo root)
+
+## Local Setup
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Create `dashboard/.env.local`:
+
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:3004
+```
+
+3. Start the dashboard:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+4. Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Tab to Endpoint Map (7 Tabs)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Tab | What it does | Primary endpoints |
+| --- | --- | --- |
+| `overview` | Run agent workflows and track totals | `POST /agent/run`, `GET /agent/spending` |
+| `medications` | View medication compare/interaction results | Reads from `POST /agent/run` result payload (tool outputs) |
+| `bills` | View bill audit results and download bill PDF | Reads from `POST /agent/run` result payload, exports via `src/app/pdf.ts` |
+| `policy` | Update spending limits and approval threshold | `POST /agent/policy`, `GET /agent/spending` |
+| `wallet` | Show agent wallet and balances | `GET /`, `GET https://horizon-testnet.stellar.org/accounts/:wallet` |
+| `activity` | Browse transaction log, reset state, download report | `GET /agent/transactions`, `POST /agent/reset`, exports via `src/app/pdf.ts` |
+| `settings` | Pause/resume autonomous actions | `POST /agent/pause`, `POST /agent/resume` |
 
-## Learn More
+Note: background refresh uses `GET /`, `GET /agent/spending`, and `GET /agent/transactions`.
 
-To learn more about Next.js, take a look at the following resources:
+## PDF Reports
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Generated client-side from `dashboard/src/app/pdf.ts`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `careguard-medication-report.pdf`
+  - Sample output: monthly medication savings summary, per-pharmacy price tables, drug interaction section.
+- `careguard-bill-audit-report.pdf`
+  - Sample output: total charged vs corrected amount, overcharge totals, line-item status table.
+- `careguard-transaction-report.pdf`
+  - Sample output: medications/bills/service-fees summary and transaction ledger with Stellar Tx references.
 
-## Deploy on Vercel
+## Deployment
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Production deployment runbook: [docs/deploy.md](../docs/deploy.md)
+- One-click dashboard deploy:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/harystyleseze/careguard&project-name=careguard-dashboard&root-directory=dashboard)
+
+## Related Docs
+
+- Root quick start: [../QUICKSTART.md](../QUICKSTART.md)
+- Architecture details: [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)
