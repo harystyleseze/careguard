@@ -43,6 +43,9 @@ Every payment is a real Stellar testnet transaction verifiable on [stellar.exper
 
 ## Architecture
 
+For a full runtime flow diagram, module map, and integration details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                   CAREGIVER DASHBOARD (Next.js)              │
