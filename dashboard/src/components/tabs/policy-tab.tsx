@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { RecipientProfile } from "../../lib/types";
 import {
   validatePolicy,
@@ -8,6 +8,7 @@ import {
   type SpendingPolicyInput,
 } from "../../lib/schemas";
 import type { SpendingData } from "../types";
+import { Toast } from "../primitives/toast";
 
 const FIELDS: Array<[keyof SpendingPolicyInput, string]> = [
   ["dailyLimit", "Daily Spending Limit ($)"],
@@ -28,7 +29,7 @@ export interface PolicyTabProps {
   setPolicyDirty: (dirty: boolean) => void;
   spending: SpendingData | null;
   policySaved: boolean;
-  onUpdatePolicy: () => void;
+  onUpdatePolicy: () => Promise<{ ok: boolean; error?: string }>;
   onForceSync: () => void;
 }
 
@@ -47,6 +48,8 @@ export function PolicyTab({
   onForceSync,
 }: PolicyTabProps) {
   const validation = useMemo(() => validatePolicy(policyForm), [policyForm]);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [toastFallback, setToastFallback] = useState<string | undefined>(undefined);
 
   return (
     <div
@@ -65,9 +68,14 @@ export function PolicyTab({
       </p>
       <form
         noValidate
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
-          if (validation.isValid) onUpdatePolicy();
+          if (!validation.isValid) return;
+          const result = await onUpdatePolicy();
+          if (!result.ok) {
+            setToastFallback(result.error || "Failed to update policy");
+            setToastMsg("Policy update failed");
+          }
         }}
         className="space-y-4"
       >
@@ -89,6 +97,7 @@ export function PolicyTab({
                 type="number"
                 inputMode="decimal"
                 min="0"
+                max="10000"
                 step="0.01"
                 value={Number.isFinite(policyForm[key]) ? policyForm[key] : ""}
                 aria-invalid={Boolean(errMsg)}
@@ -149,6 +158,14 @@ export function PolicyTab({
           {policySaved ? "Policy Saved" : "Update Policy"}
         </button>
       </form>
+      <Toast
+        message={toastMsg}
+        fallbackText={toastFallback}
+        onClose={() => {
+          setToastMsg(null);
+          setToastFallback(undefined);
+        }}
+      />
     </div>
   );
 }

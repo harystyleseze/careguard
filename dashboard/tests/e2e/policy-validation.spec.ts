@@ -19,7 +19,7 @@ test("Policy form blocks negative values and disables Update Policy", async ({ p
   await dailyLimit.fill("-1");
   await dailyLimit.blur();
 
-  await expect(page.getByText(/must be greater than 0/i)).toBeVisible();
+  await expect(page.getByText(/cannot be negative/i)).toBeVisible();
 
   const updateButton = page.getByRole("button", { name: "Update Policy" });
   await expect(updateButton).toBeDisabled();
@@ -47,13 +47,13 @@ test("Policy form rejects dailyLimit greater than monthlyLimit", async ({ page }
   await expect(page.getByRole("button", { name: "Update Policy" })).toBeDisabled();
 });
 
-test("Policy form rejects approvalThreshold greater than dailyLimit", async ({ page }) => {
+test("Policy form rejects approvalThreshold greater than smallest cap", async ({ page }) => {
   await mockDashboardApis(page);
   await page.goto("/?tab=policy");
 
   await page.locator("#policy-approvalThreshold").fill("9999");
   await page.locator("#policy-approvalThreshold").blur();
 
-  await expect(page.getByText(/cannot exceed daily limit/i)).toBeVisible();
+  await expect(page.getByText(/cannot exceed the smallest budget cap/i)).toBeVisible();
   await expect(page.getByRole("button", { name: "Update Policy" })).toBeDisabled();
 });
