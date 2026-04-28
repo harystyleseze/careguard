@@ -38,8 +38,15 @@ export function OverviewTab({
         .filter(
           (t) => t.tool === "audit_medical_bill" || t.tool === "fetch_and_audit_bill",
         )
-        .reduce((s, t) => s + (t.result?.totalOvercharge || 0), 0)
+        .reduce((s, t) => s + (t.result?.totalOvercharge || 0),0)
     : 0;
+
+  const llmTokens = agentResult?.llmUsage
+    ? agentResult.llmUsage.promptTokens + agentResult.llmUsage.completionTokens
+    : 0;
+  const llmCost = agentResult?.llmUsage
+    ? ((agentResult.llmUsage.promptTokens * 0.00000059) + (agentResult.llmUsage.completionTokens * 0.00000139)).toFixed(4)
+    : "0.0000";
 
   return (
     <div
@@ -73,6 +80,12 @@ export function OverviewTab({
           value={`$${spending?.spending.serviceFees.toFixed(4) || "0.0000"}`}
           sub={`${spending?.transactionCount || 0} queries via x402`}
           color="slate"
+        />
+        <Card
+          label="LLM Tokens"
+          value={agentResult ? `${llmTokens} tokens` : "0 tokens"}
+          sub={`≈ $${llmCost} this run`}
+          color="purple"
         />
       </div>
 

@@ -1,0 +1,99 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Agent Runs",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "agent_runs_total", "legendFormat": "Total Runs" }],
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 }
+    },
+    {
+      "title": "LLM Tokens (24h)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "agent_llm_tokens_24h{kind=\"prompt\"}", "legendFormat": "Prompt" },
+        { "expr": "agent_llm_tokens_24h{kind=\"completion\"}", "legendFormat": "Completion" }
+      ],
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 }
+    },
+    {
+      "title": "LLM Cost (USD)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "agent_llm_cost_usd", "legendFormat": "Estimated Cost" }],
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 }
+    },
+    {
+      "title": "Spending by Category",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "agent_spending_usd{category=\"medications\"}", "legendFormat": "Medications" },
+        { "expr": "agent_spending_usd{category=\"bills\"}", "legendFormat": "Bills" },
+        { "expr": "agent_spending_usd{category=\"service_fees\"}", "legendFormat": "Service Fees" }
+      ],
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 }
+    },
+    {
+      "title": "Agent Runs Success/Fail",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(agent_runs_total[5m])", "legendFormat": "Runs/sec" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 }
+    },
+    {
+      "title": "LLM Tokens per Day",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(agent_llm_tokens_total{kind=\"prompt\"}[5m])", "legendFormat": "Prompt tokens/sec" },
+        { "expr": "rate(agent_llm_tokens_total{kind=\"completion\"}[5m])", "legendFormat": "Completion tokens/sec" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 }
+    },
+    {
+      "title": "Transaction Status",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(agent_transactions_total{status=\"completed\"}[5m])", "legendFormat": "Completed/sec" },
+        { "expr": "rate(agent_transactions_total{status=\"pending\"}[5m])", "legendFormat": "Pending/sec" },
+        { "expr": "rate(agent_transactions_total{status=\"rejected\"}[5m])", "legendFormat": "Rejected/sec" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 }
+    },
+    {
+      "title": "Stellar Transaction Success Rate",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(agent_stellar_tx_success_total[5m])", "legendFormat": "Success/sec" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 }
+    },
+    {
+      "title": "Policy Blocks Over Time",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "increase(agent_transactions_total{status=\"rejected\"}[1h])", "legendFormat": "Blocks/hour" }
+      ],
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["careguard"],
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "CareGuard Overview",
+  "uid": "careguard-overview",
+  "version": 1
+}

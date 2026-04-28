@@ -96,17 +96,14 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       setAgentInfo(data);
       setAgentConnected(true);
       setAgentPaused(Boolean(data.paused));
+      // Fetch wallet balance from server (Issue #134 - server-side cache)
       if (data.agentWallet) {
         try {
-          const hres = await fetch(
-            `https://horizon-testnet.stellar.org/accounts/${data.agentWallet}`,
-          );
-          if (hres.ok) {
-            const acc = await hres.json();
-            const usdc = acc.balances?.find((b: any) => b.asset_code === "USDC");
-            const xlm = acc.balances?.find((b: any) => b.asset_type === "native");
-            setWalletBalance(usdc ? parseFloat(usdc.balance).toFixed(2) : "0.00");
-            setWalletXlm(xlm ? parseFloat(xlm.balance).toFixed(2) : "0.00");
+          const wres = await fetch(`${AGENT_URL}/agent/wallet`);
+          if (wres.ok) {
+            const wdata = await wres.json();
+            setWalletBalance(wdata.usdc || "0.00");
+            setWalletXlm(wdata.xlm || "0.00");
           }
         } catch {}
       }

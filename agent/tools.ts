@@ -340,13 +340,13 @@ export function checkSpendingPolicy(amount: number, category: "medications" | "b
 }
 
 // --- Tool: Pay for medication via MPP Charge (real Stellar payment) ---
-export async function payForMedication(pharmacyId: string, pharmacyName: string, drugName: string, amount: number) {
+export async function payForMedication(pharmacyId: string, pharmacyName: string, drugName: string, amount: number, skipApproval: boolean = false) {
   if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_PAYMENT) {
     return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive finite number <= $${MAX_PAYMENT}.` };
   }
   const policyCheck = checkSpendingPolicy(amount, "medications");
   if (!policyCheck.allowed) return { success: false, error: `BLOCKED BY SPENDING POLICY: ${policyCheck.reason}` };
-  if (policyCheck.requiresApproval) {
+  if (policyCheck.requiresApproval && !skipApproval) {
     const tx: Transaction = {
       id: `tx-${Date.now()}`, timestamp: new Date().toISOString(), type: "medication",
       description: `${drugName} from ${pharmacyName}`, amount, recipient: pharmacyId,
@@ -407,13 +407,13 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
 }
 
 // --- Tool: Pay a medical bill via real Stellar USDC transfer ---
-export async function payBill(providerId: string, providerName: string, description: string, amount: number) {
+export async function payBill(providerId: string, providerName: string, description: string, amount: number, skipApproval: boolean = false) {
   if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_PAYMENT) {
     return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive finite number <= $${MAX_PAYMENT}.` };
   }
   const policyCheck = checkSpendingPolicy(amount, "bills");
   if (!policyCheck.allowed) return { success: false, error: `BLOCKED BY SPENDING POLICY: ${policyCheck.reason}` };
-  if (policyCheck.requiresApproval) {
+  if (policyCheck.requiresApproval && !skipApproval) {
     const tx: Transaction = {
       id: `tx-${Date.now()}`, timestamp: new Date().toISOString(), type: "bill",
       description: `${description} — ${providerName}`, amount, recipient: providerId,
