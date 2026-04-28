@@ -6,6 +6,10 @@ export interface AgentResult {
   response: string;
   toolCalls: Array<{ tool: string; input: unknown; result: any }>;
   spending: SpendingData;
+  llmUsage?: {
+    promptTokens: number;
+    completionTokens: number;
+  };
 }
 
 export interface AgentInfo {
@@ -34,6 +38,7 @@ export const DASHBOARD_TABS = [
   "overview",
   "medications",
   "bills",
+  "approvals",
   "policy",
   "wallet",
   "activity",

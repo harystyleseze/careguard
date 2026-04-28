@@ -113,6 +113,17 @@ async function executeTool(name: string, input: any): Promise<any> {
   }
 }
 
+// LLM token tracking
+interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  model: string;
+  timestamp: number;
+}
+const llmTokenHistory: TokenUsage[] = [];
+let totalPromptTokens = 0;
+let totalCompletionTokens = 0;
+
 // Run the agent with a task — full agentic loop
 async function runAgent(task: string) {
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -121,6 +132,7 @@ async function runAgent(task: string) {
   ];
   const toolCalls: Array<{ tool: string; input: any; result: any }> = [];
   let finalResponse = "";
+  let llmUsage: { promptTokens: number; completionTokens: number } = { promptTokens: 0, completionTokens: 0 };
 
   for (let iteration = 0; iteration < 15; iteration++) {
     let response;
@@ -148,6 +160,17 @@ async function runAgent(task: string) {
         finalResponse = `LLM error: ${llmErr.message}`;
       }
       break;
+    }
+
+    // Capture token usage
+    if (response.usage) {
+      const promptTokens = response.usage.prompt_tokens || 0;
+      const completionTokens = response.usage.completion_tokens || 0;
+      llmUsage.promptTokens += promptTokens;
+      llmUsage.completionTokens += completionTokens;
+      totalPromptTokens += promptTokens;
+      totalCompletionTokens += completionTokens;
+      llmTokenHistory.push({ promptTokens, completionTokens, model: LLM_MODEL, timestamp: Date.now() });
     }
 
     const choice = response.choices[0];
@@ -196,8 +219,61 @@ async function runAgent(task: string) {
     if (choice.finish_reason === "stop") break;
   }
 
-  return { response: finalResponse, toolCalls, spending: getSpendingSummary() };
+  return { response: finalResponse, toolCalls, spending: getSpendingSummary(), llmUsage };
 }
+
+// Metrics endpoint for Prometheus/Grafana
+app.get("/metrics", (_req, res) => {
+  const tracker = getSpendingTracker();
+  const pendingCount = tracker.transactions.filter((t: any) => t.status === "pending").length;
+  const completedCount = tracker.transactions.filter((t: any) => t.status === "completed").length;
+  const failedCount = tracker.transactions.filter((t: any) => t.status === "rejected").length;
+
+  const now = Date.now();
+  const last24h = llmTokenHistory.filter((t) => now - t.timestamp < 86400000);
+  const tokens24h = last24h.reduce((acc, t) => ({ prompt: acc.prompt + t.promptTokens, completion: acc.completion + t.completionTokens }), { prompt: 0, completion: 0 });
+
+  const groqPricing = { prompt: 0.00000059, completion: 0.00000139 }; // Groq llama-3.3-70b pricing per token
+  const estimatedCost = (totalPromptTokens * groqPricing.prompt) + (totalCompletionTokens * groqPricing.completion);
+
+  res.set("Content-Type", "text/plain");
+  res.send(`# HELP agent_runs_total Total agent runs
+# TYPE agent_runs_total counter
+agent_runs_total ${agentRuns}
+
+# HELP agent_llm_tokens_total Total LLM tokens used
+# TYPE agent_llm_tokens_total counter
+agent_llm_tokens_total{pind="prompt"} ${totalPromptTokens}
+agent_llm_tokens_total{kind="completion"} ${totalCompletionTokens}
+
+# HELP agent_llm_tokens_24h LLM tokens used in last 24h
+# TYPE agent_llm_tokens_24h gauge
+agent_llm_tokens_24h{pind="prompt"} ${tokens24h.prompt}
+agent_llm_tokens_24h{kind="completion"} ${tokens24h.completion}
+
+# HELP agent_llm_cost_usd Estimated LLM cost in USD
+# TYPE agent_llm_cost_usd gauge
+agent_llm_cost_usd ${estimatedCost.toFixed(4)}
+
+# HELP agent_transactions_total Total transactions by status
+# TYPE agent_transactions_total counter
+agent_transactions_total{status="completed"} ${completedCount}
+agent_transactions_total{status="pending"} ${pendingCount}
+agent_transactions_total{status="rejected"} ${failedCount}
+
+# HELP agent_spending_usd Spending by category
+# TYPE agent_spending_usd gauge
+agent_spending_usd{category="medications"} ${tracker.medications}
+agent_spending_usd{category="bills"} ${tracker.bills}
+agent_spending_usd{category="service_fees"} ${tracker.serviceFees}
+
+# HELP agent_stellar_tx_success_total Successful Stellar transactions
+# TYPE agent_stellar_tx_success_total counter
+agent_stellar_tx_success_total ${completedCount}
+`);
+});
+
+let agentRuns = 0;
 
 // Express API
 const app = express();
@@ -205,6 +281,97 @@ app.use(cors());
 app.use(express.json());
 
 let agentPaused = false;
+
+// In-memory cache for wallet balances (5s TTL)
+interface WalletCacheEntry {
+  data: { usdc: string; xlm: string; address: string };
+  expiresAt: number;
+}
+const walletCache = new Map<string, WalletCacheEntry>();
+const WALLET_CACHE_TTL_MS = 5000;
+
+app.get("/agent/wallet", async (req, res) => {
+  const address = agentKeypair.publicKey();
+  const now = Date.now();
+  const cached = walletCache.get(address);
+  if (cached && cached.expiresAt > now) {
+    return res.json(cached.data);
+  }
+  try {
+    const account = await horizonServer.loadAccount(address);
+    const usdc = account.balances.find((b: any) => b.asset_code === "USDC" && b.asset_issuer === process.env.USDC_ISSUER);
+    const xlm = account.balances.find((b: any) => b.asset_type === "native");
+    const data = {
+      usdc: usdc ? parseFloat((usdc as any).balance).toFixed(2) : "0.00",
+      xlm: xlm ? parseFloat((xlm as any).balance).toFixed(2) : "0.00",
+      address,
+    };
+    walletCache.set(address, { data, expiresAt: now + WALLET_CACHE_TTL_MS });
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: `Failed to load wallet: ${err.message}` });
+  }
+});
+
+// Pending approvals
+app.get("/agent/pending-approvals", (_req, res) => {
+  const tracker = getSpendingTracker();
+  const pending = tracker.transactions.filter((t: any) => t.status === "pending");
+  res.json({ approvals: pending });
+});
+
+// Approve or reject a pending transaction
+app.post("/agent/approvals/:txId", async (req, res) => {
+  const { txId } = req.params;
+  const { approve } = req.body;
+  const tracker = getSpendingTracker();
+  const txIndex = tracker.transactions.findIndex((t: any) => t.id === txId);
+  if (txIndex === -1) return res.status(404).json({ error: "Transaction not found" });
+  const tx = tracker.transactions[txIndex];
+  if (tx.status !== "pending") return res.status(400).json({ error: "Transaction is not pending" });
+
+  if (!approve) {
+    tx.status = "rejected";
+    saveSpending(tracker);
+    return res.json({ success: true, status: "rejected" });
+  }
+
+  // Approve: re-execute the payment bypassing approval gate
+  try {
+    let result;
+    if (tx.category === "medications") {
+      // Extract details from description: "Drug from Pharmacy"
+      const match = tx.description.match(/(.+) from (.+)/);
+      if (!match) throw new Error("Cannot parse transaction description");
+      const [, drugName, pharmacyName] = match;
+      // Find pharmacy ID from description or use a default
+      const pharmacyId = tx.recipient;
+      result = await payForMedication(pharmacyId, pharmacyName, drugName, tx.amount, true);
+    } else if (tx.category === "bills") {
+      const match = tx.description.match(/(.+) — (.+)/);
+      if (!match) throw new Error("Cannot parse transaction description");
+      const [, description, providerName] = match;
+      const providerId = tx.recipient;
+      result = await payBill(providerId, providerName, description, tx.amount, true);
+    } else {
+      throw new Error("Unknown transaction category");
+    }
+
+    if (result.success) {
+      tx.status = "completed";
+      tx.stellarTxHash = result.transaction?.stellarTxHash;
+      tracker.transactions[txIndex] = tx;
+      saveSpending(tracker);
+      return res.json({ success: true, status: "completed", transaction: result.transaction });
+    } else {
+      tx.status = "rejected";
+      saveSpending(tracker);
+      return res.status(400).json({ success: false, error: result.error, status: "rejected" });
+    }
+  } catch (err: any) {
+    return res.status(500).json({ error: `Approval failed: ${err.message}` });
+  }
+});
 
 app.get("/", (_req, res) => {
   res.json({
@@ -229,10 +396,11 @@ app.post("/agent/run", async (req, res) => {
   if (agentPaused) { res.status(409).json({ error: "Agent is paused. Resume from the dashboard to continue.", paused: true }); return; }
 
   console.log(`\n🤖 Agent task: "${task.slice(0, 100)}..."`);
+  agentRuns++;
 
   try {
     const result = await runAgent(task);
-    console.log(`  ✅ Done. ${result.toolCalls.length} tool calls.`);
+    console.log(`  ✅ Done. ${result.toolCalls.length} tool calls. LLM tokens: ${result.llmUsage.promptTokens}p/${result.llmUsage.completionTokens}c`);
     res.json(result);
   } catch (err: any) {
     console.error(`  ❌ Agent error: ${err.message}`);

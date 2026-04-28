@@ -10,6 +10,7 @@ import { ActivityTab } from "../components/tabs/activity-tab";
 import { BillsTab } from "../components/tabs/bills-tab";
 import { MedicationsTab } from "../components/tabs/medications-tab";
 import { OverviewTab } from "../components/tabs/overview-tab";
+import { ApprovalsTab } from "../components/tabs/approvals-tab";
 import { PolicyTab } from "../components/tabs/policy-tab";
 import { SettingsTab } from "../components/tabs/settings-tab";
 import { WalletTab } from "../components/tabs/wallet-tab";
@@ -79,6 +80,9 @@ export default function Dashboard() {
         )}
         {activeTab === "bills" && (
           <BillsTab agentResult={state.agentResult} recipient={recipient} />
+        )}
+        {activeTab === "approvals" && (
+          <ApprovalsTab agentConnected={state.agentConnected} />
         )}
         {activeTab === "policy" && (
           <PolicyTab
