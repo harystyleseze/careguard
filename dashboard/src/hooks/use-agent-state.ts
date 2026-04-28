@@ -219,7 +219,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     [agentConnected, addLogEntry, fetchAgentInfo, fetchTransactions, pageSize],
   );
 
-  const updatePolicy = useCallback(async () => {
+  const updatePolicy = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
     try {
       const res = await fetch(`${AGENT_URL}/agent/policy`, {
         method: "POST",
@@ -231,7 +231,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         addLogEntry(
           `[${new Date().toLocaleTimeString()}] Failed to update policy: ${errText.slice(0, 120)}`,
         );
-        return;
+        return { ok: false, error: errText || "Failed to update policy" };
       }
       const spendingRes = await fetch(`${AGENT_URL}/agent/spending`);
       if (spendingRes.ok) {
@@ -246,10 +246,12 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       setLiveMessage("Policy updated");
       setPolicySaved(true);
       setTimeout(() => setPolicySaved(false), 3000);
+      return { ok: true };
     } catch (err: any) {
       addLogEntry(
         `[${new Date().toLocaleTimeString()}] Failed to update policy: ${err.message}`,
       );
+      return { ok: false, error: err.message };
     }
   }, [addLogEntry, policyForm]);
 

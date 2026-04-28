@@ -55,8 +55,10 @@ export function validatePolicy(input: unknown): PolicyValidation {
   for (const f of fields) {
     if (!Number.isFinite(v[f])) {
       errors.push({ field: f, message: `${FIELD_LABEL[f]} must be a finite number` });
-    } else if (v[f] <= 0) {
-      errors.push({ field: f, message: `${FIELD_LABEL[f]} must be greater than 0` });
+    } else if (v[f] < 0) {
+      errors.push({ field: f, message: `${FIELD_LABEL[f]} cannot be negative` });
+    } else if (v[f] > 10000) {
+      errors.push({ field: f, message: `${FIELD_LABEL[f]} cannot exceed 10000` });
     }
   }
 
@@ -67,14 +69,15 @@ export function validatePolicy(input: unknown): PolicyValidation {
     });
   }
 
-  if (
-    Number.isFinite(v.approvalThreshold) &&
-    Number.isFinite(v.dailyLimit) &&
-    v.approvalThreshold > v.dailyLimit
-  ) {
+  const approvalCap = Math.min(
+    v.dailyLimit,
+    v.medicationMonthlyBudget,
+    v.billMonthlyBudget,
+  );
+  if (Number.isFinite(v.approvalThreshold) && Number.isFinite(approvalCap) && v.approvalThreshold > approvalCap) {
     errors.push({
       field: "approvalThreshold",
-      message: "Approval threshold cannot exceed daily limit",
+      message: "Approval threshold cannot exceed the smallest budget cap (daily, medication, bill)",
     });
   }
 
