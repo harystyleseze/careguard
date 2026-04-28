@@ -242,7 +242,32 @@ app.post("/agent/run", async (req, res) => {
 
 app.get("/agent/spending", (_req, res) => { res.json(getSpendingSummary()); });
 app.get("/agent/transactions", (_req, res) => { res.json(getSpendingTracker()); });
-app.post("/agent/policy", (req, res) => { setSpendingPolicy(req.body); res.json({ success: true, policy: req.body }); });
+function validatePolicyPayload(body: any): { ok: true; policy: any } | { ok: false; errors: string[] } {
+  const errors: string[] = [];
+  if (!body || typeof body !== "object") return { ok: false, errors: ["body must be a JSON object"] };
+  const fields = ["dailyLimit", "monthlyLimit", "medicationMonthlyBudget", "billMonthlyBudget", "approvalThreshold"] as const;
+  for (const f of fields) {
+    const v = body[f];
+    if (typeof v !== "number" || !Number.isFinite(v)) errors.push(`${f} must be a finite number`);
+    else if (v <= 0) errors.push(`${f} must be greater than 0`);
+  }
+  if (typeof body.dailyLimit === "number" && typeof body.monthlyLimit === "number" && body.dailyLimit > body.monthlyLimit) {
+    errors.push("dailyLimit cannot exceed monthlyLimit");
+  }
+  if (typeof body.approvalThreshold === "number" && typeof body.dailyLimit === "number" && body.approvalThreshold > body.dailyLimit) {
+    errors.push("approvalThreshold cannot exceed dailyLimit");
+  }
+  if (errors.length > 0) return { ok: false, errors };
+  const policy = Object.fromEntries(fields.map((f) => [f, body[f]]));
+  return { ok: true, policy };
+}
+
+app.post("/agent/policy", (req, res) => {
+  const result = validatePolicyPayload(req.body);
+  if (!result.ok) return res.status(400).json({ error: "Invalid policy", details: result.errors });
+  setSpendingPolicy(result.policy);
+  res.json({ success: true, policy: result.policy });
+});
 app.post("/agent/reset", (_req, res) => { resetSpendingTracker(); res.json({ success: true }); });
 
 const DEFAULT_PROFILE = {
