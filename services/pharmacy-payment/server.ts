@@ -14,10 +14,10 @@ if (!process.stdout.isTTY) {
 
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
 import { Mppx, Store } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
+import { createCorsMiddleware } from "../../shared/cors.ts";
 
 const PORT = parseInt(process.env.PHARMACY_PAYMENT_PORT || "3005");
 const RECIPIENT = process.env.PHARMACY_1_PUBLIC_KEY;
@@ -47,7 +47,7 @@ function saveOrder(order: any) {
 }
 
 const app = express();
-app.use(cors());
+app.use(createCorsMiddleware());
 app.use(express.json());
 
 app.get("/", (_req, res) => {

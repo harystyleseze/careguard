@@ -10,7 +10,6 @@
 
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
 import { Keypair, Horizon } from "@stellar/stellar-sdk";
 import OpenAI from "openai";
 import { Mppx, Store } from "mppx/server";
@@ -21,6 +20,7 @@ import { z } from "zod";
 
 // x402 middleware
 import { applyX402Middleware } from "./shared/x402-middleware.ts";
+import { createCorsMiddleware } from "./shared/cors.ts";
 
 // Sentry (gated by SENTRY_DSN)
 import { initSentry } from "./shared/sentry.ts";
@@ -108,6 +108,7 @@ const app = express();
 const sentry = await initSentry({ service: "careguard-server" });
 app.use(sentry.requestHandler());
 app.use(cors());
+app.use(createCorsMiddleware());
 app.use(express.json());
 
 // --- Root info ---

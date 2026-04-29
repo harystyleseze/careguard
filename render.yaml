@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     buildCommand: npm ci
-    startCommand: node --experimental-strip-types --experimental-transform-types --no-warnings server.ts
+    startCommand: node --import tsx server.ts
     envVars:
       - key: NODE_VERSION
         value: "22"
@@ -50,6 +50,12 @@ services:
         value: https://api.groq.com/openai/v1
       - key: LLM_MODEL
         value: llama-3.3-70b-versatile
+      - key: NODE_ENV
+        value: production
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: REDIS_URL
+        sync: false
       - key: USDC_ISSUER
         value: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
       - key: USDC_SAC
