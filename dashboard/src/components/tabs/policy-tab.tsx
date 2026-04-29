@@ -161,7 +161,7 @@ export function PolicyTab({
       <Toast
         message={toastMsg}
         fallbackText={toastFallback}
-        onClose={() => {
+        onDismiss={() => {
           setToastMsg(null);
           setToastFallback(undefined);
         }}

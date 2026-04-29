@@ -15,6 +15,7 @@ import { createEd25519Signer, ExactStellarScheme } from "@x402/stellar";
 import { Mppx } from "mppx/client";
 import { stellar as stellarCharge } from "@stellar/mpp/charge/client";
 import type { SpendingPolicy, Transaction } from "../shared/types.ts";
+export { SPENDING_TIMEZONE, getLocalDateStr } from "./tz.ts";
 
 // Environment
 const AGENT_SECRET_KEY = process.env.AGENT_SECRET_KEY;
@@ -324,8 +325,9 @@ export function checkSpendingPolicy(amount: number, category: "medications" | "b
     };
   }
 
+  const today = getLocalDateStr(SPENDING_TIMEZONE);
   const totalToday = spendingTracker.transactions
-    .filter(t => t.timestamp.startsWith(new Date().toISOString().split("T")[0]) && t.category === category)
+    .filter(t => getLocalDateStr(SPENDING_TIMEZONE, new Date(t.timestamp)) === today && t.category === category)
     .reduce((sum, t) => sum + t.amount, 0);
 
   if (totalToday + amount > currentPolicy.dailyLimit) {
@@ -361,6 +363,7 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
   console.log(`  [MPP] Paying ${pharmacyName} $${amount} for ${drugName}`);
 
   let stellarTxHash: string | undefined;
+  let mppOrderId: string | undefined;
   lastMppTxHash = undefined; // reset before this payment
 
   try {
@@ -372,7 +375,7 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
 
     const data = await response.json();
     if (data.success) {
-      // Try to get tx hash from: 1) MPP progress event, 2) Payment-Receipt header, 3) order response
+      // Try to get tx hash from: 1) MPP progress event, 2) Payment-Receipt header
       stellarTxHash = lastMppTxHash;
       if (!stellarTxHash) {
         const receiptHeader = response.headers.get("Payment-Receipt") || response.headers.get("payment-receipt");
@@ -385,7 +388,8 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
           }
         }
       }
-      if (!stellarTxHash) stellarTxHash = data.order?.id;
+      // data.order.id is an MPP order identifier — kept separate from stellarTxHash
+      mppOrderId = data.order?.id;
     } else {
       throw new Error(data.error || "MPP payment failed");
     }
@@ -396,7 +400,7 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
   const tx: Transaction = {
     id: `tx-${Date.now()}`, timestamp: new Date().toISOString(), type: "medication",
     description: `${drugName} from ${pharmacyName} [MPP Charge]`, amount, recipient: pharmacyId,
-    stellarTxHash, status: "completed", category: "medications",
+    stellarTxHash, mppOrderId, status: "completed", category: "medications",
   };
 
   spendingTracker.medications += amount;
