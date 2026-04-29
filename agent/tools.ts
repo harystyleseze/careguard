@@ -15,6 +15,12 @@ import { createEd25519Signer, ExactStellarScheme } from "@x402/stellar";
 import { Mppx } from "mppx/client";
 import { stellar as stellarCharge } from "@stellar/mpp/charge/client";
 import type { SpendingPolicy, Transaction } from "../shared/types.ts";
+import {
+  recordStellarSubmit,
+  recordStellarResult,
+  recordStellarLatency,
+  recordToolCall,
+} from "../shared/metrics.ts";
 
 // Environment
 const AGENT_SECRET_KEY = process.env.AGENT_SECRET_KEY;
@@ -49,8 +55,9 @@ const x402ClientInstance = new x402Client().register("stellar:testnet", new Exac
 const x402Fetch = wrapFetchWithPayment(fetch, x402ClientInstance);
 
 // --- MPP Client: Auto-handles 402 for medication order payments ---
-// Track the latest MPP tx hash from progress events
+// Track the latest MPP tx hash + submit start time from progress events
 let lastMppTxHash: string | undefined;
+let mppChargeStart = 0;
 
 const mppClient = Mppx.create({
   methods: [
@@ -61,6 +68,8 @@ const mppClient = Mppx.create({
         console.log(`  [MPP] ${event.type}${("hash" in event) ? `: ${(event as any).hash}` : ""}`);
         if (event.type === "paid" && "hash" in event) {
           lastMppTxHash = (event as any).hash;
+          recordStellarResult("mpp_charge", "success");
+          if (mppChargeStart > 0) recordStellarLatency("mpp_charge", Date.now() - mppChargeStart);
         }
       },
     }),
@@ -133,6 +142,7 @@ export function resetSpendingTracker() {
 
 // --- Tool: Compare pharmacy prices (pays via x402) ---
 export async function comparePharmacyPrices(drugName: string, zipCode: string = "90210") {
+  const _start = Date.now();
   const url = `${PHARMACY_API}/pharmacy/compare?drug=${encodeURIComponent(drugName)}&zip=${encodeURIComponent(zipCode)}`;
   console.log(`  [x402] Paying for pharmacy price query: ${drugName}`);
 
@@ -140,6 +150,7 @@ export async function comparePharmacyPrices(drugName: string, zipCode: string = 
 
   if (!response.ok) {
     const error = await response.text();
+    recordToolCall("compare_pharmacy_prices", Date.now() - _start, 0);
     throw new Error(`Pharmacy API error (${response.status}): ${truncateError(error)}`);
   }
 
@@ -162,6 +173,7 @@ export async function comparePharmacyPrices(drugName: string, zipCode: string = 
   });
   saveSpending(spendingTracker);
 
+  recordToolCall("compare_pharmacy_prices", Date.now() - _start, 0.002);
   return data;
 }
 
@@ -180,6 +192,7 @@ export async function fetchRosaBill() {
 
 // --- Tool: Fetch Rosa's bill AND audit it in one step (pays via x402) ---
 export async function fetchAndAuditBill() {
+  const _start = Date.now();
   console.log(`  [fetch+audit] Getting Rosa's bill and auditing it`);
 
   // Step 1: Fetch the bill (free)
@@ -189,12 +202,15 @@ export async function fetchAndAuditBill() {
   }
   const bill = await billResponse.json();
 
-  // Step 2: Audit it (pays via x402)
-  return await auditBill(bill.lineItems);
+  // Step 2: Audit it (pays via x402). auditBill records its own cost metric.
+  const result = await auditBill(bill.lineItems);
+  recordToolCall("fetch_and_audit_bill", Date.now() - _start, 0);
+  return result;
 }
 
 // --- Tool: Audit a medical bill (pays via x402) ---
 export async function auditBill(lineItems: Array<{ description: string; cptCode: string; quantity: number; chargedAmount: number }>) {
+  const _start = Date.now();
   console.log(`  [x402] Paying for bill audit (${lineItems.length} line items)`);
 
   let response: Response;
@@ -205,6 +221,7 @@ export async function auditBill(lineItems: Array<{ description: string; cptCode:
       body: JSON.stringify({ lineItems }),
     });
   } catch (err: any) {
+    recordToolCall("audit_medical_bill", Date.now() - _start, 0);
     const baseUrl = BILL_AUDIT_API;
     const docsHint = "See docs/setup/services.md for local service setup.";
     const message = typeof err?.message === "string" ? err.message : "Unknown network error";
@@ -274,11 +291,13 @@ export async function auditBill(lineItems: Array<{ description: string; cptCode:
   });
   saveSpending(spendingTracker);
 
+  recordToolCall("audit_medical_bill", Date.now() - _start, 0.01);
   return data;
 }
 
 // --- Tool: Check drug interactions (pays via x402) ---
 export async function checkDrugInteractions(medications: string[]) {
+  const _start = Date.now();
   const medsParam = medications.join(",");
   console.log(`  [x402] Paying for drug interaction check: ${medsParam}`);
 
@@ -286,6 +305,7 @@ export async function checkDrugInteractions(medications: string[]) {
 
   if (!response.ok) {
     const error = await response.text();
+    recordToolCall("check_drug_interactions", Date.now() - _start, 0);
     throw new Error(`Drug Interaction API error (${response.status}): ${truncateError(error)}`);
   }
 
@@ -307,6 +327,7 @@ export async function checkDrugInteractions(medications: string[]) {
   });
   saveSpending(spendingTracker);
 
+  recordToolCall("check_drug_interactions", Date.now() - _start, 0.001);
   return data;
 }
 
@@ -362,6 +383,8 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
 
   let stellarTxHash: string | undefined;
   lastMppTxHash = undefined; // reset before this payment
+  recordStellarSubmit("mpp_charge");
+  mppChargeStart = Date.now();
 
   try {
     const response = await mppClient.fetch(`${PHARMACY_PAYMENT_API}/pharmacy/order`, {
@@ -390,6 +413,8 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
       throw new Error(data.error || "MPP payment failed");
     }
   } catch (err: any) {
+    recordStellarResult("mpp_charge", "failed");
+    recordStellarLatency("mpp_charge", Date.now() - mppChargeStart);
     return { success: false, error: `MPP payment failed: ${err.message}` };
   }
 
@@ -403,6 +428,7 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
   spendingTracker.transactions.push(tx);
   saveSpending(spendingTracker);
 
+  recordToolCall("pay_for_medication", Date.now() - mppChargeStart, 0);
   return { success: true, transaction: tx };
 }
 
@@ -431,6 +457,8 @@ export async function payBill(providerId: string, providerName: string, descript
   console.log(`  [Stellar] Transferring $${amount} USDC to ${providerName} (${recipientKey.slice(0, 8)}...)`);
 
   let stellarTxHash: string | undefined;
+  recordStellarSubmit("usdc_transfer");
+  const _stellarStart = Date.now();
 
   try {
     const account = await horizonServer.loadAccount(agentKeypair.publicKey());
@@ -452,9 +480,14 @@ export async function payBill(providerId: string, providerName: string, descript
 
     stellarTx.sign(agentKeypair);
     const result = await horizonServer.submitTransaction(stellarTx);
+    recordStellarResult("usdc_transfer", "success");
+    recordStellarLatency("usdc_transfer", Date.now() - _stellarStart);
     stellarTxHash = (result as any).hash;
     console.log(`  [Stellar] TX confirmed: ${stellarTxHash}`);
   } catch (err: any) {
+    const resultCode = err?.response?.data?.extras?.result_codes?.transaction ?? "unknown";
+    recordStellarResult("usdc_transfer", resultCode);
+    recordStellarLatency("usdc_transfer", Date.now() - _stellarStart);
     const errorDetail = err?.response?.data?.extras?.result_codes || err.message;
     return { success: false, error: `Stellar USDC transfer failed: ${JSON.stringify(errorDetail)}` };
   }
@@ -469,6 +502,7 @@ export async function payBill(providerId: string, providerName: string, descript
   spendingTracker.transactions.push(tx);
   saveSpending(spendingTracker);
 
+  recordToolCall("pay_bill", Date.now() - _stellarStart, 0);
   return { success: true, transaction: tx };
 }
 

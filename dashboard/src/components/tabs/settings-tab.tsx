@@ -1,10 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { copyText } from "../../lib/clipboard";
 import type { RecipientProfile } from "../../lib/types";
 import { Toast } from "../primitives/toast";
 import type { AgentInfo } from "../types";
+
+const AGENT_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3004";
+
+interface MetricsSummary {
+  summary: { totalToolCalls: number; totalCostUsdc: number };
+}
 
 export interface SettingsTabProps {
   recipient: RecipientProfile;
@@ -22,6 +28,15 @@ export function SettingsTab({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [toastFallback, setToastFallback] = useState<string | undefined>(undefined);
+  const [metricsSummary, setMetricsSummary] = useState<MetricsSummary | null>(null);
+
+  useEffect(() => {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    fetch(`${AGENT_URL}/agent/metrics/summary?since=${encodeURIComponent(since)}`)
+      .then((r) => r.json())
+      .then((data) => setMetricsSummary(data))
+      .catch(() => {});
+  }, []);
 
   const handleCopy = async (text: string, id: string) => {
     const result = await copyText(text);
@@ -196,6 +211,22 @@ export function SettingsTab({
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <h2 className="text-sm font-semibold text-slate-700 mb-4">Agent Cost Summary</h2>
+        {metricsSummary ? (
+          <p className="text-sm text-slate-700">
+            Last 7 days:{" "}
+            <strong>{metricsSummary.summary.totalToolCalls}</strong> tool calls,{" "}
+            <strong className="text-sky-600">
+              ${metricsSummary.summary.totalCostUsdc.toFixed(4)}
+            </strong>{" "}
+            USDC spent on x402
+          </p>
+        ) : (
+          <p className="text-sm text-slate-400">Connecting to agent…</p>
+        )}
       </div>
     </div>
   );

@@ -21,6 +21,8 @@ import { z } from "zod";
 
 // x402 middleware
 import { applyX402Middleware } from "./shared/x402-middleware.ts";
+import { validateStellarSeed, validateStellarSeedIfPresent } from "./shared/env-validate.ts";
+import { renderMetrics, getToolSummary } from "./shared/metrics.ts";
 
 // Agent tools
 import {
@@ -77,6 +79,18 @@ if (env.data.STELLAR_NETWORK !== "public" && !env.data.OZ_FACILITATOR_API_KEY) {
   console.warn(
     "  ⚠ OZ_FACILITATOR_API_KEY not set — x402 routes will fail until configured",
   );
+}
+
+validateStellarSeed("AGENT_SECRET_KEY", env.data.AGENT_SECRET_KEY);
+// Validate other Stellar seed keys if present in environment
+for (const key of [
+  "CAREGIVER_SECRET_KEY",
+  "PHARMACY_1_SECRET_KEY",
+  "PHARMACY_2_SECRET_KEY",
+  "PHARMACY_3_SECRET_KEY",
+  "BILL_PROVIDER_SECRET_KEY",
+] as const) {
+  validateStellarSeedIfPresent(key, process.env[key]);
 }
 
 const PORT = env.data.PORT;
@@ -939,6 +953,24 @@ app.get("/agent/transactions", (req, res) => {
       hasMore: offset + limit < totalTransactions,
       hasPrevious: offset > 0,
     },
+  });
+});
+app.get("/agent/metrics/summary", (req, res) => {
+  const sinceParam = req.query.since as string | undefined;
+  const sinceMs = sinceParam ? new Date(sinceParam).getTime() : 0;
+  const toolMetrics = getToolSummary(isNaN(sinceMs) ? 0 : sinceMs);
+  const tracker = getSpendingTracker();
+  const filtered = sinceMs > 0
+    ? tracker.transactions.filter((t: any) => new Date(t.timestamp).getTime() >= sinceMs)
+    : tracker.transactions;
+  const totalCostUsdc = filtered
+    .filter((t: any) => t.type === "service_fee")
+    .reduce((s: number, t: any) => s + t.amount, 0);
+  const totalToolCalls = Object.values(toolMetrics).reduce((s, m) => s + m.calls, 0);
+  res.json({
+    since: sinceMs > 0 && !isNaN(sinceMs) ? new Date(sinceMs).toISOString() : null,
+    toolMetrics,
+    summary: { totalToolCalls, totalCostUsdc: +totalCostUsdc.toFixed(6) },
   });
 });
 app.post("/agent/policy", (req, res) => {

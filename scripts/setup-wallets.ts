@@ -6,6 +6,7 @@
  */
 
 import { Keypair, Networks, TransactionBuilder, Operation, Asset, Horizon } from "@stellar/stellar-sdk";
+import { recordStellarSubmit, recordStellarResult, recordStellarLatency } from "../shared/metrics.ts";
 
 const HORIZON_URL = "https://horizon-testnet.stellar.org";
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
@@ -53,7 +54,18 @@ async function addUsdcTrustline(keypair: Keypair): Promise<void> {
     .build();
 
   tx.sign(keypair);
-  await server.submitTransaction(tx);
+  recordStellarSubmit("change_trust");
+  const _start = Date.now();
+  try {
+    await server.submitTransaction(tx);
+    recordStellarResult("change_trust", "success");
+    recordStellarLatency("change_trust", Date.now() - _start);
+  } catch (err: any) {
+    const resultCode = err?.response?.data?.extras?.result_codes?.transaction ?? "unknown";
+    recordStellarResult("change_trust", resultCode);
+    recordStellarLatency("change_trust", Date.now() - _start);
+    throw err;
+  }
   console.log(`  ✓ USDC trustline added for ${keypair.publicKey().slice(0, 8)}...`);
 }
 

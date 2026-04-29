@@ -13,6 +13,8 @@ import express from "express";
 import cors from "cors";
 import OpenAI from "openai";
 import { Keypair, Horizon } from "@stellar/stellar-sdk";
+import { validateStellarSeed } from "../shared/env-validate.ts";
+import { renderMetrics, getToolSummary } from "../shared/metrics.ts";
 import {
   comparePharmacyPrices,
   auditBill,
@@ -33,6 +35,7 @@ const PORT = parseInt(process.env.AGENT_PORT || "3004");
 
 if (!process.env.LLM_API_KEY) throw new Error("LLM_API_KEY required in .env");
 if (!process.env.AGENT_SECRET_KEY) throw new Error("AGENT_SECRET_KEY required in .env");
+validateStellarSeed("AGENT_SECRET_KEY", process.env.AGENT_SECRET_KEY);
 
 const LLM_BASE_URL = process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1";
 const LLM_MODEL = process.env.LLM_MODEL || "llama-3.3-70b-versatile";
@@ -240,6 +243,7 @@ app.get("/metrics", (_req, res) => {
   res.send(`# HELP agent_runs_total Total agent runs
 # TYPE agent_runs_total counter
 agent_runs_total ${agentRuns}
+${renderMetrics()}
 
 # HELP agent_llm_tokens_total Total LLM tokens used
 # TYPE agent_llm_tokens_total counter
@@ -410,6 +414,25 @@ app.post("/agent/run", async (req, res) => {
 
 app.get("/agent/spending", (_req, res) => { res.json(getSpendingSummary()); });
 app.get("/agent/transactions", (_req, res) => { res.json(getSpendingTracker()); });
+
+app.get("/agent/metrics/summary", (req, res) => {
+  const sinceParam = req.query.since as string | undefined;
+  const sinceMs = sinceParam ? new Date(sinceParam).getTime() : 0;
+  const toolMetrics = getToolSummary(isNaN(sinceMs) ? 0 : sinceMs);
+  const tracker = getSpendingTracker();
+  const filtered = sinceMs > 0
+    ? tracker.transactions.filter((t: any) => new Date(t.timestamp).getTime() >= sinceMs)
+    : tracker.transactions;
+  const totalCostUsdc = filtered
+    .filter((t: any) => t.type === "service_fee")
+    .reduce((s: number, t: any) => s + t.amount, 0);
+  const totalToolCalls = Object.values(toolMetrics).reduce((s, m) => s + m.calls, 0);
+  res.json({
+    since: sinceMs > 0 && !isNaN(sinceMs) ? new Date(sinceMs).toISOString() : null,
+    toolMetrics,
+    summary: { totalToolCalls, totalCostUsdc: +totalCostUsdc.toFixed(6) },
+  });
+});
 function validatePolicyPayload(body: any): { ok: true; policy: any } | { ok: false; errors: string[] } {
   const errors: string[] = [];
   if (!body || typeof body !== "object") return { ok: false, errors: ["body must be a JSON object"] };
