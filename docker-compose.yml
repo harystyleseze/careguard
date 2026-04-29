@@ -1,0 +1,135 @@
+# CareGuard local-dev stack (issue #111).
+#
+# Single-command boot for the full stack: server + dashboard + redis + the
+# Prometheus/Grafana monitoring pair. Services share a bridge network and
+# pick up secrets from a single .env file at the repo root.
+#
+# Quick start:
+#   cp .env.example .env   # fill in secrets
+#   docker compose up      # starts everything
+#   docker compose down -v # clean tear-down (drops volumes)
+#
+# See README.md "Docker dev" for full details and troubleshooting.
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: careguard/server:dev
+    env_file: .env
+    environment:
+      PORT: "3004"
+      # Agent's HTTP clients call themselves over the shared network.
+      PHARMACY_API_URL: "http://server:3004"
+      BILL_AUDIT_API_URL: "http://server:3004"
+      DRUG_INTERACTION_API_URL: "http://server:3004"
+      PHARMACY_PAYMENT_API_URL: "http://server:3004"
+      WALLET_BALANCE_CHECK_ENABLED: "${WALLET_BALANCE_CHECK_ENABLED:-1}"
+    ports:
+      - "3004:3004"
+    volumes:
+      # Persist data/ across rebuilds so spending history & audit log survive.
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3004/', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    networks: [careguard]
+    depends_on:
+      redis:
+        condition: service_started
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    image: careguard/dashboard:dev
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-http://localhost:3004}"
+      NEXT_PUBLIC_SENTRY_DSN: "${NEXT_PUBLIC_SENTRY_DSN:-}"
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    networks: [careguard]
+    depends_on:
+      server:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks: [careguard]
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [careguard]
+    depends_on:
+      server:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3030:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [careguard]
+    depends_on:
+      prometheus:
+        condition: service_healthy
+
+networks:
+  careguard:
+    driver: bridge
+
+volumes:
+  redis-data:
+  prometheus-data:
+  grafana-data:

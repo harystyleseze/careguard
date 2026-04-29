@@ -44,6 +44,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null);
   const [agentConnected, setAgentConnected] = useState(false);
   const [agentPaused, setAgentPaused] = useState(false);
+  const [agentPausedReason, setAgentPausedReason] = useState<string | null>(null);
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletXlm, setWalletXlm] = useState<string | null>(null);
   const [liveMessage, setLiveMessage] = useState("");
@@ -96,6 +97,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       setAgentInfo(data);
       setAgentConnected(true);
       setAgentPaused(Boolean(data.paused));
+      setAgentPausedReason(typeof data.pausedReason === "string" ? data.pausedReason : null);
       // Fetch wallet balance from server (Issue #134 - server-side cache)
       if (data.agentWallet) {
         try {
@@ -276,6 +278,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       if (res.ok) {
         const data = await res.json();
         setAgentPaused(data.paused);
+        setAgentPausedReason(typeof data.pausedReason === "string" ? data.pausedReason : null);
         addLogEntry(
           `[${new Date().toLocaleTimeString()}] Agent ${data.paused ? "paused" : "resumed"}`,
         );
@@ -300,6 +303,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     agentInfo,
     agentConnected,
     agentPaused,
+    agentPausedReason,
     walletBalance,
     walletXlm,
     liveMessage,

@@ -1,38 +1,42 @@
+# Dev-only overrides — picked up automatically by `docker compose up`.
+# Rename or delete this file to run the production-style stack from
+# docker-compose.yml only.
+#
+# What this gives you on top of docker-compose.yml:
+#   - Hot reload for the Express server (mounts the source tree).
+#   - Hot reload for the Next.js dashboard (uses `next dev`).
+#   - Verbose logging (NODE_ENV=development).
+#
+# Trade-offs: dev mode is slower to start and uses more memory than the
+# multi-stage build images. Use only `docker compose -f docker-compose.yml up`
+# (passing -f explicitly disables override pickup) for prod-shape testing.
+
 services:
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: careguard-prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-    networks:
-      - careguard-net
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: careguard-grafana
-    ports:
-      - "3001:3000"
-    volumes:
-      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards
-      - ./docker/grafana/provisioning:/etc/grafana/provisioning
-      - grafana-data:/var/lib/grafana
+  server:
+    image: node:22-alpine
+    build: !reset null
+    working_dir: /app
+    command: sh -c "npm ci --legacy-peer-deps && npm run dev"
     environment:
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-      - GF_AUTH_DISABLE_LOGIN_FORM=true
-    networks:
-      - careguard-net
-    depends_on:
-      - prometheus
+      NODE_ENV: development
+    volumes:
+      - .:/app
+      - server-node-modules:/app/node_modules
 
-networks:
-  careguard-net:
-    driver: bridge
+  dashboard:
+    image: node:22-alpine
+    build: !reset null
+    working_dir: /app/dashboard
+    command: sh -c "npm ci --legacy-peer-deps && npm run dev -- -H 0.0.0.0 -p 3000"
+    environment:
+      NODE_ENV: development
+      NEXT_TELEMETRY_DISABLED: "1"
+    volumes:
+      - .:/app
+      - dashboard-node-modules:/app/dashboard/node_modules
+      - dashboard-next-cache:/app/dashboard/.next
 
 volumes:
-  grafana-data:
+  server-node-modules:
+  dashboard-node-modules:
+  dashboard-next-cache:

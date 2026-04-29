@@ -22,6 +22,20 @@ import { z } from "zod";
 // x402 middleware
 import { applyX402Middleware } from "./shared/x402-middleware.ts";
 
+// Sentry (gated by SENTRY_DSN)
+import { initSentry } from "./shared/sentry.ts";
+
+// Shared agent pause state + wallet low-balance scheduler
+import {
+  getAgentState,
+  pauseAgent,
+  resumeAgent,
+  isPaused,
+  type PauseReason,
+} from "./shared/agent-state.ts";
+import { checkWalletBalance, formatResult } from "./shared/wallet-balance.ts";
+import { appendAuditEntry } from "./shared/audit-log.ts";
+
 // Agent tools
 import {
   comparePharmacyPrices,
@@ -91,11 +105,14 @@ const agentKeypair = Keypair.fromSecret(env.data.AGENT_SECRET_KEY);
 
 // --- Express App ---
 const app = express();
+const sentry = await initSentry({ service: "careguard-server" });
+app.use(sentry.requestHandler());
 app.use(cors());
 app.use(express.json());
 
 // --- Root info ---
 app.get("/", (_req, res) => {
+  const state = getAgentState();
   res.json({
     service: "CareGuard AI Agent",
     version: "1.0.0",
@@ -104,7 +121,9 @@ app.get("/", (_req, res) => {
     agentWallet: agentKeypair.publicKey(),
     careRecipient: "Rosa Garcia",
     caregiver: "Maria Garcia",
-    paused: agentPaused,
+    paused: state.paused,
+    pausedReason: state.pausedReason,
+    pausedAt: state.pausedAt,
     mode: "unified",
   });
 });
@@ -762,8 +781,6 @@ app.post("/pharmacy/order", async (req, res) => {
 // AI AGENT
 // ============================================================
 
-let agentPaused = false;
-
 const SYSTEM_PROMPT = `You are CareGuard, an AI agent that manages healthcare spending for elderly care recipients on Stellar.
 
 Your responsibilities:
@@ -907,15 +924,25 @@ async function runAgent(task: string) {
 
 // Agent endpoints
 app.get("/agent/status", (_req, res) => {
-  res.json({ paused: agentPaused });
+  res.json(getAgentState());
 });
-app.post("/agent/pause", (_req, res) => {
-  agentPaused = true;
-  res.json({ paused: true });
+app.post("/agent/pause", (req, res) => {
+  const raw = req.body?.reason;
+  const reason: PauseReason =
+    raw === "low-balance-usdc" || raw === "low-balance-xlm" ? raw : "manual";
+  const state = pauseAgent(reason);
+  appendAuditEntry({ event: "agent.paused", actor: "api", details: { reason } });
+  res.json(state);
 });
 app.post("/agent/resume", (_req, res) => {
-  agentPaused = false;
-  res.json({ paused: false });
+  const prev = getAgentState();
+  const state = resumeAgent();
+  appendAuditEntry({
+    event: "agent.resumed",
+    actor: "api",
+    details: { previousReason: prev.pausedReason },
+  });
+  res.json(state);
 });
 app.get("/agent/spending", (_req, res) => {
   res.json(getSpendingSummary());
@@ -955,8 +982,9 @@ app.post("/agent/run", async (req, res) => {
     res.status(400).json({ error: "Missing task" });
     return;
   }
-  if (agentPaused) {
-    res.status(409).json({ error: "Agent is paused", paused: true });
+  if (isPaused()) {
+    const state = getAgentState();
+    res.status(409).json({ error: "Agent is paused", ...state });
     return;
   }
   console.log(`\n🤖 Task: "${req.body.task.slice(0, 80)}..."`);
@@ -975,8 +1003,41 @@ app.post("/agent/run", async (req, res) => {
 
 const horizonServer = new Horizon.Server("https://horizon-testnet.stellar.org");
 
+// Sentry error handler must be registered AFTER all routes
+app.use(sentry.errorHandler());
+
 // Export app for testing
 export { app };
+
+async function startWalletBalanceScheduler(): Promise<void> {
+  if (process.env.WALLET_BALANCE_CHECK_ENABLED !== "1") return;
+  const cronExpr = process.env.WALLET_BALANCE_CHECK_CRON || "*/15 * * * *";
+
+  let cron: any;
+  try {
+    cron = await import("node-cron");
+  } catch {
+    console.warn("  ⚠ wallet scheduler enabled but node-cron not installed — falling back to setInterval(15m)");
+    setInterval(() => {
+      checkWalletBalance().then((r) => console.log(`  [wallet-check] ${formatResult(r)}`));
+    }, 15 * 60_000);
+    return;
+  }
+
+  if (!cron.validate?.(cronExpr)) {
+    console.warn(`  ⚠ invalid WALLET_BALANCE_CHECK_CRON='${cronExpr}', falling back to */15 * * * *`);
+  }
+  const expr = cron.validate?.(cronExpr) ? cronExpr : "*/15 * * * *";
+
+  cron.schedule(expr, async () => {
+    const r = await checkWalletBalance();
+    console.log(`  [wallet-check] ${formatResult(r)}`);
+  });
+
+  // Also run once on startup so the dashboard reflects current state immediately.
+  checkWalletBalance().then((r) => console.log(`  [wallet-check] startup: ${formatResult(r)}`));
+  console.log(`  ✓ wallet balance scheduler armed (${expr})`);
+}
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   app.listen(PORT, async () => {
@@ -991,6 +1052,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     } catch {
       console.log("   USDC: unable to check");
     }
+    await startWalletBalanceScheduler();
     console.log(`   Ready.\n`);
   });
 }
