@@ -101,7 +101,9 @@ app.get("/pharmacy/compare", async (req, res) => {
   }
 });
 
-app.listen(PORT, async () => {
+export { app, pricingProvider };
+
+export const server = app.listen(PORT, async () => {
   const drugCount = await pricingProvider.getDrugCount();
   console.log(`\n💊 Pharmacy Price API running on http://localhost:${PORT}`);
   console.log(`   x402 payment: REQUIRED (${NETWORK})`);
@@ -110,3 +112,4 @@ app.listen(PORT, async () => {
   console.log(`   Pricing Provider: ${pricingProvider.name}`);
   console.log(`   Available drugs: ${drugCount}\n`);
 });
+server.unref();
