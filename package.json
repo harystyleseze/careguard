@@ -14,7 +14,8 @@
     "start": "node --experimental-strip-types --experimental-transform-types --no-warnings server.ts",
     "dev": "node --experimental-strip-types --experimental-transform-types --no-warnings server.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "load": "k6 run load/agent-run.js"
   },
   "keywords": [],
   "author": "",
