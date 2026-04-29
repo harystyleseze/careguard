@@ -4,7 +4,8 @@ services:
     runtime: node
     plan: free
     buildCommand: npm ci
-    startCommand: node --import tsx server.ts
+    startCommand: node --experimental-strip-types --experimental-transform-types --no-warnings server.ts
+    healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: "22"

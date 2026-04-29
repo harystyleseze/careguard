@@ -129,6 +129,46 @@ app.get("/", (_req, res) => {
   });
 });
 
+// --- Liveness probe — no I/O, always fast ---
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
+// Cached flag set by x402 middleware on each successful facilitator interaction
+let ozFacilitatorReachable = false;
+export function setOzFacilitatorReachable(reachable: boolean) {
+  ozFacilitatorReachable = reachable;
+}
+
+// --- Readiness probe — checks Horizon + OZ facilitator flag + required env ---
+app.get("/ready", async (_req, res) => {
+  const checks: Record<string, boolean | string> = {};
+
+  // 1. Required env vars
+  const requiredEnv = ["LLM_API_KEY", "AGENT_SECRET_KEY", "MPP_SECRET_KEY"];
+  const missingEnv = requiredEnv.filter((k) => !process.env[k]);
+  checks.env = missingEnv.length === 0 ? true : `missing: ${missingEnv.join(", ")}`;
+
+  // 2. Horizon ping
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1500);
+    const resp = await fetch("https://horizon-testnet.stellar.org", { signal: controller.signal });
+    clearTimeout(timeout);
+    checks.horizon = resp.ok || resp.status < 500;
+  } catch {
+    checks.horizon = false;
+  }
+
+  // 3. OZ facilitator reachability (set by middleware on successful payment verification)
+  checks.ozFacilitator = ozFacilitatorReachable || !env.data.OZ_FACILITATOR_API_KEY
+    ? true
+    : "not yet verified";
+
+  const allOk = Object.values(checks).every((v) => v === true);
+  res.status(allOk ? 200 : 503).json({ status: allOk ? "ok" : "degraded", checks });
+});
+
 // ============================================================
 // PHARMACY PRICE API (was port 3001)
 // ============================================================
