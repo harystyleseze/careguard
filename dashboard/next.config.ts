@@ -14,6 +14,9 @@ const cspDirectives = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
+  // Self-contained output for Docker (issue #111). `next build` produces
+  // .next/standalone/ with a minimal server.js. The dev server is unaffected.
+  output: "standalone",
   async headers() {
     return [
       {

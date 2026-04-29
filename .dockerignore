@@ -1,0 +1,37 @@
+.git
+.github
+.vscode
+.idea
+
+# Build artifacts
+node_modules
+dashboard/node_modules
+dashboard/.next
+dashboard/playwright-report
+dashboard/test-results
+
+# Logs and local data
+*.log
+data/spending.json
+data/orders.json
+data/audit.log.jsonl
+
+# Local env (compose mounts .env explicitly via env_file)
+# Keep .env in the build context so the agent's own env stays out of the image,
+# but allow .env.example as a reference.
+.env.local
+.env.development.local
+.env.production.local
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor swap
+*.swp
+
+# Tests / docs irrelevant to runtime
+**/__tests__
+**/*.test.ts
+**/*.test.tsx
+docs/
