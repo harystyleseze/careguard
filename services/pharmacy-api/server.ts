@@ -14,9 +14,9 @@ if (!process.stdout.isTTY) {
 
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
 import { applyX402Middleware, NETWORK, OZ_FACILITATOR_URL } from "../../shared/x402-middleware.ts";
 import { createPricingProvider } from "../../shared/pricing-sources.ts";
+import { createCorsMiddleware } from "../../shared/cors.ts";
 
 const PORT = parseInt(process.env.PHARMACY_API_PORT || "3001");
 const PAY_TO = process.env.PHARMACY_1_PUBLIC_KEY;
@@ -27,7 +27,7 @@ if (!PAY_TO) throw new Error("PHARMACY_1_PUBLIC_KEY required in .env");
 const pricingProvider = createPricingProvider();
 
 const app = express();
-app.use(cors());
+app.use(createCorsMiddleware());
 app.use(express.json());
 
 // Unprotected endpoints

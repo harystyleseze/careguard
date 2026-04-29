@@ -14,8 +14,8 @@ if (!process.stdout.isTTY) {
 
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
 import { applyX402Middleware, NETWORK, OZ_FACILITATOR_URL } from "../../shared/x402-middleware.ts";
+import { createCorsMiddleware } from "../../shared/cors.ts";
 
 const PORT = parseInt(process.env.DRUG_INTERACTION_API_PORT || "3003");
 const PAY_TO = process.env.PHARMACY_2_PUBLIC_KEY;
@@ -65,7 +65,7 @@ function checkInteractions(medications: string[]) {
 }
 
 const app = express();
-app.use(cors());
+app.use(createCorsMiddleware());
 app.use(express.json());
 
 app.get("/", (_req, res) => {
