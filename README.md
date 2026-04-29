@@ -112,6 +112,51 @@ cd dashboard && npm run dev
 # 6. Open http://localhost:3000
 ```
 
+### Docker dev (one command)
+
+For a single-command boot of the full stack — server, dashboard, redis, prometheus, grafana — use Docker Compose. See [issue #111](https://github.com/harystyleseze/careguard/issues/111).
+
+```bash
+# 1. Configure .env (same as above)
+cp .env.example .env
+
+# 2. Start everything
+docker compose up
+
+# 3. Open the apps
+#   Dashboard:  http://localhost:3000
+#   Server:     http://localhost:3004
+#   Prometheus: http://localhost:9090
+#   Grafana:    http://localhost:3030  (admin / admin by default)
+#   Redis:      localhost:6379
+```
+
+The default `docker-compose.yml` builds the production-shape multi-stage images. The auto-loaded `docker-compose.override.yml` swaps the `server` and `dashboard` services for hot-reload dev mode (mounts the source tree, runs `npm run dev`).
+
+To run the prod-shape stack without the dev overrides:
+
+```bash
+docker compose -f docker-compose.yml up
+```
+
+To tear everything down (including volumes — drops the spending log, redis data, grafana dashboards):
+
+```bash
+docker compose down -v
+```
+
+Health checks are enabled on every service. Targets:
+
+| Service     | Health probe                                  |
+|-------------|-----------------------------------------------|
+| `server`    | `GET /` returns 200                           |
+| `dashboard` | `GET /` returns 200                           |
+| `redis`     | `redis-cli ping` returns PONG                 |
+| `prometheus`| `GET /-/ready`                                |
+| `grafana`   | `GET /api/health`                             |
+
+Boot time on a warm Docker is ~30s (cold first build is much longer due to npm install). If the dashboard waits forever for `server: healthy`, check `docker compose logs server` — the most common cause is missing/invalid `OZ_FACILITATOR_API_KEY` or `AGENT_SECRET_KEY` in `.env`.
+
 ---
 
 ## Tech Stack

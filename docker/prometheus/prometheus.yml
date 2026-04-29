@@ -3,7 +3,18 @@ global:
   evaluation_interval: 5s
 
 scrape_configs:
+  # When running via docker compose, the server is reachable as `server` on
+  # the shared bridge network. For host-only Prometheus (no compose), uncomment
+  # the host.docker.internal target instead.
   - job_name: "careguard-agent"
     static_configs:
-      - targets: ["host.docker.internal:3004"]
+      - targets: ["server:3004"]
+        labels:
+          deploy: "compose"
     metrics_path: /metrics
+
+  # Uncomment for non-compose runs (Prometheus on host, server on host).
+  # - job_name: "careguard-agent-host"
+  #   static_configs:
+  #     - targets: ["host.docker.internal:3004"]
+  #   metrics_path: /metrics

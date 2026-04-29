@@ -4,4 +4,5 @@ dist/
 .env.prod
 .env.local
 *.log
+data/audit.log.jsonl
 .DS_Store
