@@ -62,6 +62,7 @@ export interface Transaction {
   amount: number;
   recipient: string;
   stellarTxHash?: string;
+  mppOrderId?: string;
   status: "pending" | "approved" | "completed" | "blocked" | "disputed";
   category: string;
 }

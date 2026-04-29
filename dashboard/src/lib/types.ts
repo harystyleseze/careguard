@@ -63,6 +63,7 @@ export const TransactionSchema = z.object({
   amount: z.number(),
   recipient: z.string(),
   stellarTxHash: z.string().optional(),
+  mppOrderId: z.string().optional(),
   status: z.string(),
   category: z.string(),
 });
