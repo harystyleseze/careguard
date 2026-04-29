@@ -7,6 +7,11 @@
  * Clinical interaction reference database based on FDA drug interaction data.
  */
 
+if (!process.stdout.isTTY) {
+  process.env.NO_COLOR ??= "1";
+  process.env.FORCE_COLOR = "0";
+}
+
 import "dotenv/config";
 import express from "express";
 import cors from "cors";

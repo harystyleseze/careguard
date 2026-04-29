@@ -15,13 +15,19 @@ import { createEd25519Signer, ExactStellarScheme } from "@x402/stellar";
 import { Mppx } from "mppx/client";
 import { stellar as stellarCharge } from "@stellar/mpp/charge/client";
 import type { SpendingPolicy, Transaction } from "../shared/types.ts";
+import {
+  recordStellarSubmit,
+  recordStellarResult,
+  recordStellarLatency,
+  recordToolCall,
+} from "../shared/metrics.ts";
 
 // Environment
 const AGENT_SECRET_KEY = process.env.AGENT_SECRET_KEY;
 const PHARMACY_API = process.env.PHARMACY_API_URL || "http://localhost:3001";
 const BILL_AUDIT_API = process.env.BILL_AUDIT_API_URL || "http://localhost:3002";
 const DRUG_INTERACTION_API = process.env.DRUG_INTERACTION_API_URL || "http://localhost:3003";
-const PHARMACY_PAYMENT_API = process.env.PHARMACY_PAYMENT_URL || "http://localhost:3005";
+const PHARMACY_PAYMENT_API = process.env.PHARMACY_PAYMENT_API_URL || "http://localhost:3005";
 const USDC_ISSUER = process.env.USDC_ISSUER || "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 const HORIZON_URL = "https://horizon-testnet.stellar.org";
 
@@ -49,8 +55,9 @@ const x402ClientInstance = new x402Client().register("stellar:testnet", new Exac
 const x402Fetch = wrapFetchWithPayment(fetch, x402ClientInstance);
 
 // --- MPP Client: Auto-handles 402 for medication order payments ---
-// Track the latest MPP tx hash from progress events
+// Track the latest MPP tx hash + submit start time from progress events
 let lastMppTxHash: string | undefined;
+let mppChargeStart = 0;
 
 const mppClient = Mppx.create({
   methods: [
@@ -61,6 +68,8 @@ const mppClient = Mppx.create({
         console.log(`  [MPP] ${event.type}${("hash" in event) ? `: ${(event as any).hash}` : ""}`);
         if (event.type === "paid" && "hash" in event) {
           lastMppTxHash = (event as any).hash;
+          recordStellarResult("mpp_charge", "success");
+          if (mppChargeStart > 0) recordStellarLatency("mpp_charge", Date.now() - mppChargeStart);
         }
       },
     }),
@@ -94,6 +103,13 @@ let spendingTracker = loadSpending();
 
 const POLICY_FILE = `${DATA_DIR}/policy.json`;
 
+const MAX_PAYMENT = 1000;
+const MAX_ERROR_LENGTH = 500;
+
+function truncateError(message: string): string {
+  return message.replace(/<[^>]*>/g, "").slice(0, MAX_ERROR_LENGTH);
+}
+
 const DEFAULT_POLICY: SpendingPolicy = {
   dailyLimit: 100,
   monthlyLimit: 500,
@@ -126,6 +142,7 @@ export function resetSpendingTracker() {
 
 // --- Tool: Compare pharmacy prices (pays via x402) ---
 export async function comparePharmacyPrices(drugName: string, zipCode: string = "90210") {
+  const _start = Date.now();
   const url = `${PHARMACY_API}/pharmacy/compare?drug=${encodeURIComponent(drugName)}&zip=${encodeURIComponent(zipCode)}`;
   console.log(`  [x402] Paying for pharmacy price query: ${drugName}`);
 
@@ -133,7 +150,8 @@ export async function comparePharmacyPrices(drugName: string, zipCode: string = 
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Pharmacy API error (${response.status}): ${error.slice(0, 200)}`);
+    recordToolCall("compare_pharmacy_prices", Date.now() - _start, 0);
+    throw new Error(`Pharmacy API error (${response.status}): ${truncateError(error)}`);
   }
 
   const data = await response.json();
@@ -155,6 +173,7 @@ export async function comparePharmacyPrices(drugName: string, zipCode: string = 
   });
   saveSpending(spendingTracker);
 
+  recordToolCall("compare_pharmacy_prices", Date.now() - _start, 0.002);
   return data;
 }
 
@@ -173,6 +192,7 @@ export async function fetchRosaBill() {
 
 // --- Tool: Fetch Rosa's bill AND audit it in one step (pays via x402) ---
 export async function fetchAndAuditBill() {
+  const _start = Date.now();
   console.log(`  [fetch+audit] Getting Rosa's bill and auditing it`);
 
   // Step 1: Fetch the bill (free)
@@ -182,12 +202,15 @@ export async function fetchAndAuditBill() {
   }
   const bill = await billResponse.json();
 
-  // Step 2: Audit it (pays via x402)
-  return await auditBill(bill.lineItems);
+  // Step 2: Audit it (pays via x402). auditBill records its own cost metric.
+  const result = await auditBill(bill.lineItems);
+  recordToolCall("fetch_and_audit_bill", Date.now() - _start, 0);
+  return result;
 }
 
 // --- Tool: Audit a medical bill (pays via x402) ---
 export async function auditBill(lineItems: Array<{ description: string; cptCode: string; quantity: number; chargedAmount: number }>) {
+  const _start = Date.now();
   console.log(`  [x402] Paying for bill audit (${lineItems.length} line items)`);
 
   let response: Response;
@@ -198,12 +221,56 @@ export async function auditBill(lineItems: Array<{ description: string; cptCode:
       body: JSON.stringify({ lineItems }),
     });
   } catch (err: any) {
-    throw new Error(`Bill Audit API unreachable: ${err.message}. Ensure the service is running on ${BILL_AUDIT_API}`);
+    recordToolCall("audit_medical_bill", Date.now() - _start, 0);
+    const baseUrl = BILL_AUDIT_API;
+    const docsHint = "See docs/setup/services.md for local service setup.";
+    const message = typeof err?.message === "string" ? err.message : "Unknown network error";
+    const code = err?.cause?.code || err?.code;
+
+    if (code === "ECONNREFUSED") {
+      throw new Error(
+        `Bill Audit API connection refused (ECONNREFUSED). This is usually a config or startup issue. ` +
+        `Ensure BILL_AUDIT_API_URL points to a running service (currently ${baseUrl}). ${docsHint}`
+      );
+    }
+
+    if (code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT" || code === "UND_ERR_SOCKET") {
+      throw new Error(
+        `Bill Audit API request timed out. This is often transient (network hiccup or cold start). ` +
+        `Try again; if it persists, verify the service at ${baseUrl} is reachable. ${docsHint}`
+      );
+    }
+
+    if (code === "ENOTFOUND") {
+      throw new Error(
+        `Bill Audit API hostname not found (ENOTFOUND). Check BILL_AUDIT_API_URL (currently ${baseUrl}). ${docsHint}`
+      );
+    }
+
+    throw new Error(
+      `Bill Audit API unreachable. ${message}. Verify the service is reachable at ${baseUrl}. ${docsHint}`
+    );
   }
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Bill Audit API error (${response.status}): ${error.slice(0, 200)}`);
+    const bodyPreview = truncateError(error);
+
+    if (response.status >= 500) {
+      throw new Error(
+        `Bill Audit API is up but failing (${response.status}). This indicates a downstream/service bug or outage. ` +
+        `Try again later or check the Bill Audit service logs. Details: ${bodyPreview}`
+      );
+    }
+
+    if (response.status >= 400 && response.status < 500) {
+      throw new Error(
+        `Bill Audit API rejected the request (${response.status}). This is likely a caller/input issue. ` +
+        `Verify the payload schema and required env vars. Details: ${bodyPreview}`
+      );
+    }
+
+    throw new Error(`Bill Audit API error (${response.status}): ${bodyPreview}`);
   }
 
   const data = await response.json();
@@ -224,11 +291,13 @@ export async function auditBill(lineItems: Array<{ description: string; cptCode:
   });
   saveSpending(spendingTracker);
 
+  recordToolCall("audit_medical_bill", Date.now() - _start, 0.01);
   return data;
 }
 
 // --- Tool: Check drug interactions (pays via x402) ---
 export async function checkDrugInteractions(medications: string[]) {
+  const _start = Date.now();
   const medsParam = medications.join(",");
   console.log(`  [x402] Paying for drug interaction check: ${medsParam}`);
 
@@ -236,7 +305,8 @@ export async function checkDrugInteractions(medications: string[]) {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Drug Interaction API error (${response.status}): ${error.slice(0, 200)}`);
+    recordToolCall("check_drug_interactions", Date.now() - _start, 0);
+    throw new Error(`Drug Interaction API error (${response.status}): ${truncateError(error)}`);
   }
 
   const data = await response.json();
@@ -257,6 +327,7 @@ export async function checkDrugInteractions(medications: string[]) {
   });
   saveSpending(spendingTracker);
 
+  recordToolCall("check_drug_interactions", Date.now() - _start, 0.001);
   return data;
 }
 
@@ -290,13 +361,13 @@ export function checkSpendingPolicy(amount: number, category: "medications" | "b
 }
 
 // --- Tool: Pay for medication via MPP Charge (real Stellar payment) ---
-export async function payForMedication(pharmacyId: string, pharmacyName: string, drugName: string, amount: number) {
-  if (!amount || amount <= 0 || isNaN(amount)) {
-    return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive number.` };
+export async function payForMedication(pharmacyId: string, pharmacyName: string, drugName: string, amount: number, skipApproval: boolean = false) {
+  if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_PAYMENT) {
+    return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive finite number <= $${MAX_PAYMENT}.` };
   }
   const policyCheck = checkSpendingPolicy(amount, "medications");
   if (!policyCheck.allowed) return { success: false, error: `BLOCKED BY SPENDING POLICY: ${policyCheck.reason}` };
-  if (policyCheck.requiresApproval) {
+  if (policyCheck.requiresApproval && !skipApproval) {
     const tx: Transaction = {
       id: `tx-${Date.now()}`, timestamp: new Date().toISOString(), type: "medication",
       description: `${drugName} from ${pharmacyName}`, amount, recipient: pharmacyId,
@@ -312,6 +383,8 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
 
   let stellarTxHash: string | undefined;
   lastMppTxHash = undefined; // reset before this payment
+  recordStellarSubmit("mpp_charge");
+  mppChargeStart = Date.now();
 
   try {
     const response = await mppClient.fetch(`${PHARMACY_PAYMENT_API}/pharmacy/order`, {
@@ -340,6 +413,8 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
       throw new Error(data.error || "MPP payment failed");
     }
   } catch (err: any) {
+    recordStellarResult("mpp_charge", "failed");
+    recordStellarLatency("mpp_charge", Date.now() - mppChargeStart);
     return { success: false, error: `MPP payment failed: ${err.message}` };
   }
 
@@ -353,17 +428,18 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
   spendingTracker.transactions.push(tx);
   saveSpending(spendingTracker);
 
+  recordToolCall("pay_for_medication", Date.now() - mppChargeStart, 0);
   return { success: true, transaction: tx };
 }
 
 // --- Tool: Pay a medical bill via real Stellar USDC transfer ---
-export async function payBill(providerId: string, providerName: string, description: string, amount: number) {
-  if (!amount || amount <= 0 || isNaN(amount)) {
-    return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive number.` };
+export async function payBill(providerId: string, providerName: string, description: string, amount: number, skipApproval: boolean = false) {
+  if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_PAYMENT) {
+    return { success: false, error: `Invalid payment amount: $${amount}. Amount must be a positive finite number <= $${MAX_PAYMENT}.` };
   }
   const policyCheck = checkSpendingPolicy(amount, "bills");
   if (!policyCheck.allowed) return { success: false, error: `BLOCKED BY SPENDING POLICY: ${policyCheck.reason}` };
-  if (policyCheck.requiresApproval) {
+  if (policyCheck.requiresApproval && !skipApproval) {
     const tx: Transaction = {
       id: `tx-${Date.now()}`, timestamp: new Date().toISOString(), type: "bill",
       description: `${description} — ${providerName}`, amount, recipient: providerId,
@@ -381,6 +457,8 @@ export async function payBill(providerId: string, providerName: string, descript
   console.log(`  [Stellar] Transferring $${amount} USDC to ${providerName} (${recipientKey.slice(0, 8)}...)`);
 
   let stellarTxHash: string | undefined;
+  recordStellarSubmit("usdc_transfer");
+  const _stellarStart = Date.now();
 
   try {
     const account = await horizonServer.loadAccount(agentKeypair.publicKey());
@@ -402,9 +480,14 @@ export async function payBill(providerId: string, providerName: string, descript
 
     stellarTx.sign(agentKeypair);
     const result = await horizonServer.submitTransaction(stellarTx);
+    recordStellarResult("usdc_transfer", "success");
+    recordStellarLatency("usdc_transfer", Date.now() - _stellarStart);
     stellarTxHash = (result as any).hash;
     console.log(`  [Stellar] TX confirmed: ${stellarTxHash}`);
   } catch (err: any) {
+    const resultCode = err?.response?.data?.extras?.result_codes?.transaction ?? "unknown";
+    recordStellarResult("usdc_transfer", resultCode);
+    recordStellarLatency("usdc_transfer", Date.now() - _stellarStart);
     const errorDetail = err?.response?.data?.extras?.result_codes || err.message;
     return { success: false, error: `Stellar USDC transfer failed: ${JSON.stringify(errorDetail)}` };
   }
@@ -419,6 +502,7 @@ export async function payBill(providerId: string, providerName: string, descript
   spendingTracker.transactions.push(tx);
   saveSpending(spendingTracker);
 
+  recordToolCall("pay_bill", Date.now() - _stellarStart, 0);
   return { success: true, transaction: tx };
 }
 

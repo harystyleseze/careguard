@@ -7,6 +7,11 @@
  * Flow: Client POST → 402 challenge → Client signs Soroban auth entry → Server broadcasts → Order confirmed
  */
 
+if (!process.stdout.isTTY) {
+  process.env.NO_COLOR ??= "1";
+  process.env.FORCE_COLOR = "0";
+}
+
 import "dotenv/config";
 import express from "express";
 import cors from "cors";

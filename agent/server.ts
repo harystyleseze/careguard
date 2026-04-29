@@ -13,6 +13,8 @@ import express from "express";
 import cors from "cors";
 import OpenAI from "openai";
 import { Keypair, Horizon } from "@stellar/stellar-sdk";
+import { validateStellarSeed } from "../shared/env-validate.ts";
+import { renderMetrics, getToolSummary } from "../shared/metrics.ts";
 import {
   comparePharmacyPrices,
   auditBill,
@@ -33,6 +35,7 @@ const PORT = parseInt(process.env.AGENT_PORT || "3004");
 
 if (!process.env.LLM_API_KEY) throw new Error("LLM_API_KEY required in .env");
 if (!process.env.AGENT_SECRET_KEY) throw new Error("AGENT_SECRET_KEY required in .env");
+validateStellarSeed("AGENT_SECRET_KEY", process.env.AGENT_SECRET_KEY);
 
 const LLM_BASE_URL = process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1";
 const LLM_MODEL = process.env.LLM_MODEL || "llama-3.3-70b-versatile";
@@ -89,7 +92,17 @@ async function executeTool(name: string, input: any): Promise<any> {
   switch (name) {
     case "compare_pharmacy_prices": return await comparePharmacyPrices(input.drug_name, input.zip_code);
     case "audit_medical_bill": {
-      const items = typeof input.line_items_json === "string" ? JSON.parse(input.line_items_json) : (input.line_items || input.line_items_json);
+      let items;
+      if (typeof input.line_items_json === "string") {
+        try {
+          items = JSON.parse(input.line_items_json);
+        } catch (e: any) {
+          const sample = input.line_items_json.slice(0, 200);
+          return { ok: false, reason: "INVALID_LINE_ITEMS_JSON", sample, error: e.message };
+        }
+      } else {
+        items = input.line_items || input.line_items_json;
+      }
       return await auditBill(items);
     }
     case "fetch_rosa_bill": return await fetchRosaBill();
@@ -103,6 +116,17 @@ async function executeTool(name: string, input: any): Promise<any> {
   }
 }
 
+// LLM token tracking
+interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  model: string;
+  timestamp: number;
+}
+const llmTokenHistory: TokenUsage[] = [];
+let totalPromptTokens = 0;
+let totalCompletionTokens = 0;
+
 // Run the agent with a task — full agentic loop
 async function runAgent(task: string) {
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -111,6 +135,7 @@ async function runAgent(task: string) {
   ];
   const toolCalls: Array<{ tool: string; input: any; result: any }> = [];
   let finalResponse = "";
+  let llmUsage: { promptTokens: number; completionTokens: number } = { promptTokens: 0, completionTokens: 0 };
 
   for (let iteration = 0; iteration < 15; iteration++) {
     let response;
@@ -138,6 +163,17 @@ async function runAgent(task: string) {
         finalResponse = `LLM error: ${llmErr.message}`;
       }
       break;
+    }
+
+    // Capture token usage
+    if (response.usage) {
+      const promptTokens = response.usage.prompt_tokens || 0;
+      const completionTokens = response.usage.completion_tokens || 0;
+      llmUsage.promptTokens += promptTokens;
+      llmUsage.completionTokens += completionTokens;
+      totalPromptTokens += promptTokens;
+      totalCompletionTokens += completionTokens;
+      llmTokenHistory.push({ promptTokens, completionTokens, model: LLM_MODEL, timestamp: Date.now() });
     }
 
     const choice = response.choices[0];
@@ -186,8 +222,62 @@ async function runAgent(task: string) {
     if (choice.finish_reason === "stop") break;
   }
 
-  return { response: finalResponse, toolCalls, spending: getSpendingSummary() };
+  return { response: finalResponse, toolCalls, spending: getSpendingSummary(), llmUsage };
 }
+
+// Metrics endpoint for Prometheus/Grafana
+app.get("/metrics", (_req, res) => {
+  const tracker = getSpendingTracker();
+  const pendingCount = tracker.transactions.filter((t: any) => t.status === "pending").length;
+  const completedCount = tracker.transactions.filter((t: any) => t.status === "completed").length;
+  const failedCount = tracker.transactions.filter((t: any) => t.status === "rejected").length;
+
+  const now = Date.now();
+  const last24h = llmTokenHistory.filter((t) => now - t.timestamp < 86400000);
+  const tokens24h = last24h.reduce((acc, t) => ({ prompt: acc.prompt + t.promptTokens, completion: acc.completion + t.completionTokens }), { prompt: 0, completion: 0 });
+
+  const groqPricing = { prompt: 0.00000059, completion: 0.00000139 }; // Groq llama-3.3-70b pricing per token
+  const estimatedCost = (totalPromptTokens * groqPricing.prompt) + (totalCompletionTokens * groqPricing.completion);
+
+  res.set("Content-Type", "text/plain");
+  res.send(`# HELP agent_runs_total Total agent runs
+# TYPE agent_runs_total counter
+agent_runs_total ${agentRuns}
+${renderMetrics()}
+
+# HELP agent_llm_tokens_total Total LLM tokens used
+# TYPE agent_llm_tokens_total counter
+agent_llm_tokens_total{pind="prompt"} ${totalPromptTokens}
+agent_llm_tokens_total{kind="completion"} ${totalCompletionTokens}
+
+# HELP agent_llm_tokens_24h LLM tokens used in last 24h
+# TYPE agent_llm_tokens_24h gauge
+agent_llm_tokens_24h{pind="prompt"} ${tokens24h.prompt}
+agent_llm_tokens_24h{kind="completion"} ${tokens24h.completion}
+
+# HELP agent_llm_cost_usd Estimated LLM cost in USD
+# TYPE agent_llm_cost_usd gauge
+agent_llm_cost_usd ${estimatedCost.toFixed(4)}
+
+# HELP agent_transactions_total Total transactions by status
+# TYPE agent_transactions_total counter
+agent_transactions_total{status="completed"} ${completedCount}
+agent_transactions_total{status="pending"} ${pendingCount}
+agent_transactions_total{status="rejected"} ${failedCount}
+
+# HELP agent_spending_usd Spending by category
+# TYPE agent_spending_usd gauge
+agent_spending_usd{category="medications"} ${tracker.medications}
+agent_spending_usd{category="bills"} ${tracker.bills}
+agent_spending_usd{category="service_fees"} ${tracker.serviceFees}
+
+# HELP agent_stellar_tx_success_total Successful Stellar transactions
+# TYPE agent_stellar_tx_success_total counter
+agent_stellar_tx_success_total ${completedCount}
+`);
+});
+
+let agentRuns = 0;
 
 // Express API
 const app = express();
@@ -195,6 +285,97 @@ app.use(cors());
 app.use(express.json());
 
 let agentPaused = false;
+
+// In-memory cache for wallet balances (5s TTL)
+interface WalletCacheEntry {
+  data: { usdc: string; xlm: string; address: string };
+  expiresAt: number;
+}
+const walletCache = new Map<string, WalletCacheEntry>();
+const WALLET_CACHE_TTL_MS = 5000;
+
+app.get("/agent/wallet", async (req, res) => {
+  const address = agentKeypair.publicKey();
+  const now = Date.now();
+  const cached = walletCache.get(address);
+  if (cached && cached.expiresAt > now) {
+    return res.json(cached.data);
+  }
+  try {
+    const account = await horizonServer.loadAccount(address);
+    const usdc = account.balances.find((b: any) => b.asset_code === "USDC" && b.asset_issuer === process.env.USDC_ISSUER);
+    const xlm = account.balances.find((b: any) => b.asset_type === "native");
+    const data = {
+      usdc: usdc ? parseFloat((usdc as any).balance).toFixed(2) : "0.00",
+      xlm: xlm ? parseFloat((xlm as any).balance).toFixed(2) : "0.00",
+      address,
+    };
+    walletCache.set(address, { data, expiresAt: now + WALLET_CACHE_TTL_MS });
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: `Failed to load wallet: ${err.message}` });
+  }
+});
+
+// Pending approvals
+app.get("/agent/pending-approvals", (_req, res) => {
+  const tracker = getSpendingTracker();
+  const pending = tracker.transactions.filter((t: any) => t.status === "pending");
+  res.json({ approvals: pending });
+});
+
+// Approve or reject a pending transaction
+app.post("/agent/approvals/:txId", async (req, res) => {
+  const { txId } = req.params;
+  const { approve } = req.body;
+  const tracker = getSpendingTracker();
+  const txIndex = tracker.transactions.findIndex((t: any) => t.id === txId);
+  if (txIndex === -1) return res.status(404).json({ error: "Transaction not found" });
+  const tx = tracker.transactions[txIndex];
+  if (tx.status !== "pending") return res.status(400).json({ error: "Transaction is not pending" });
+
+  if (!approve) {
+    tx.status = "rejected";
+    saveSpending(tracker);
+    return res.json({ success: true, status: "rejected" });
+  }
+
+  // Approve: re-execute the payment bypassing approval gate
+  try {
+    let result;
+    if (tx.category === "medications") {
+      // Extract details from description: "Drug from Pharmacy"
+      const match = tx.description.match(/(.+) from (.+)/);
+      if (!match) throw new Error("Cannot parse transaction description");
+      const [, drugName, pharmacyName] = match;
+      // Find pharmacy ID from description or use a default
+      const pharmacyId = tx.recipient;
+      result = await payForMedication(pharmacyId, pharmacyName, drugName, tx.amount, true);
+    } else if (tx.category === "bills") {
+      const match = tx.description.match(/(.+) — (.+)/);
+      if (!match) throw new Error("Cannot parse transaction description");
+      const [, description, providerName] = match;
+      const providerId = tx.recipient;
+      result = await payBill(providerId, providerName, description, tx.amount, true);
+    } else {
+      throw new Error("Unknown transaction category");
+    }
+
+    if (result.success) {
+      tx.status = "completed";
+      tx.stellarTxHash = result.transaction?.stellarTxHash;
+      tracker.transactions[txIndex] = tx;
+      saveSpending(tracker);
+      return res.json({ success: true, status: "completed", transaction: result.transaction });
+    } else {
+      tx.status = "rejected";
+      saveSpending(tracker);
+      return res.status(400).json({ success: false, error: result.error, status: "rejected" });
+    }
+  } catch (err: any) {
+    return res.status(500).json({ error: `Approval failed: ${err.message}` });
+  }
+});
 
 app.get("/", (_req, res) => {
   res.json({
@@ -219,10 +400,11 @@ app.post("/agent/run", async (req, res) => {
   if (agentPaused) { res.status(409).json({ error: "Agent is paused. Resume from the dashboard to continue.", paused: true }); return; }
 
   console.log(`\n🤖 Agent task: "${task.slice(0, 100)}..."`);
+  agentRuns++;
 
   try {
     const result = await runAgent(task);
-    console.log(`  ✅ Done. ${result.toolCalls.length} tool calls.`);
+    console.log(`  ✅ Done. ${result.toolCalls.length} tool calls. LLM tokens: ${result.llmUsage.promptTokens}p/${result.llmUsage.completionTokens}c`);
     res.json(result);
   } catch (err: any) {
     console.error(`  ❌ Agent error: ${err.message}`);
@@ -232,8 +414,70 @@ app.post("/agent/run", async (req, res) => {
 
 app.get("/agent/spending", (_req, res) => { res.json(getSpendingSummary()); });
 app.get("/agent/transactions", (_req, res) => { res.json(getSpendingTracker()); });
-app.post("/agent/policy", (req, res) => { setSpendingPolicy(req.body); res.json({ success: true, policy: req.body }); });
+
+app.get("/agent/metrics/summary", (req, res) => {
+  const sinceParam = req.query.since as string | undefined;
+  const sinceMs = sinceParam ? new Date(sinceParam).getTime() : 0;
+  const toolMetrics = getToolSummary(isNaN(sinceMs) ? 0 : sinceMs);
+  const tracker = getSpendingTracker();
+  const filtered = sinceMs > 0
+    ? tracker.transactions.filter((t: any) => new Date(t.timestamp).getTime() >= sinceMs)
+    : tracker.transactions;
+  const totalCostUsdc = filtered
+    .filter((t: any) => t.type === "service_fee")
+    .reduce((s: number, t: any) => s + t.amount, 0);
+  const totalToolCalls = Object.values(toolMetrics).reduce((s, m) => s + m.calls, 0);
+  res.json({
+    since: sinceMs > 0 && !isNaN(sinceMs) ? new Date(sinceMs).toISOString() : null,
+    toolMetrics,
+    summary: { totalToolCalls, totalCostUsdc: +totalCostUsdc.toFixed(6) },
+  });
+});
+function validatePolicyPayload(body: any): { ok: true; policy: any } | { ok: false; errors: string[] } {
+  const errors: string[] = [];
+  if (!body || typeof body !== "object") return { ok: false, errors: ["body must be a JSON object"] };
+  const fields = ["dailyLimit", "monthlyLimit", "medicationMonthlyBudget", "billMonthlyBudget", "approvalThreshold"] as const;
+  for (const f of fields) {
+    const v = body[f];
+    if (typeof v !== "number" || !Number.isFinite(v)) errors.push(`${f} must be a finite number`);
+    else if (v <= 0) errors.push(`${f} must be greater than 0`);
+  }
+  if (typeof body.dailyLimit === "number" && typeof body.monthlyLimit === "number" && body.dailyLimit > body.monthlyLimit) {
+    errors.push("dailyLimit cannot exceed monthlyLimit");
+  }
+  if (typeof body.approvalThreshold === "number" && typeof body.dailyLimit === "number" && body.approvalThreshold > body.dailyLimit) {
+    errors.push("approvalThreshold cannot exceed dailyLimit");
+  }
+  if (errors.length > 0) return { ok: false, errors };
+  const policy = Object.fromEntries(fields.map((f) => [f, body[f]]));
+  return { ok: true, policy };
+}
+
+app.post("/agent/policy", (req, res) => {
+  const result = validatePolicyPayload(req.body);
+  if (!result.ok) return res.status(400).json({ error: "Invalid policy", details: result.errors });
+  setSpendingPolicy(result.policy);
+  res.json({ success: true, policy: result.policy });
+});
 app.post("/agent/reset", (_req, res) => { resetSpendingTracker(); res.json({ success: true }); });
+
+const DEFAULT_PROFILE = {
+  recipient: {
+    name: "Rosa Garcia",
+    age: 78,
+    medications: ["Lisinopril", "Metformin", "Atorvastatin", "Amlodipine"],
+    doctor: "Dr. Chen, General Hospital",
+    insurance: "Medicare Part D",
+  },
+  caregiver: {
+    name: "Maria Garcia",
+    relationship: "Daughter",
+    location: "Phoenix, AZ (800 miles from Rosa)",
+    notifications: "Email + SMS",
+  },
+};
+
+app.get("/agent/profile", (_req, res) => { res.json(DEFAULT_PROFILE); });
 
 // Startup: verify agent wallet has USDC balance
 async function verifyWallet() {

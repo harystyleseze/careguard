@@ -3,7 +3,7 @@ services:
     name: careguard-api
     runtime: node
     plan: free
-    buildCommand: npm install --legacy-peer-deps
+    buildCommand: npm ci
     startCommand: node --experimental-strip-types --experimental-transform-types --no-warnings server.ts
     envVars:
       - key: NODE_VERSION

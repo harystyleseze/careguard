@@ -13,37 +13,52 @@ import { paymentMiddlewareFromConfig } from "@x402/express";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 
-const OZ_API_KEY = process.env.OZ_FACILITATOR_API_KEY;
-const OZ_FACILITATOR_URL = process.env.X402_FACILITATOR_URL || "https://channels.openzeppelin.com/x402/testnet";
-const NETWORK = "stellar:testnet" as `${string}:${string}`;
-
-if (!OZ_API_KEY) throw new Error("OZ_FACILITATOR_API_KEY required in .env");
-
-const facilitator = new HTTPFacilitatorClient({
-  url: OZ_FACILITATOR_URL,
-  createAuthHeaders: async () => {
-    const h = { Authorization: `Bearer ${OZ_API_KEY}` };
-    return { verify: h, settle: h, supported: h };
-  },
-});
+const DEFAULT_FACILITATOR_URL = "https://channels.openzeppelin.com/x402/testnet";
+const OZ_FACILITATOR_URL = process.env.X402_FACILITATOR_URL || DEFAULT_FACILITATOR_URL;
 
 export function applyX402Middleware(
   app: Application,
-  routes: Record<string, { accepts: { scheme: string; network: string; payTo: string; price: string }; description: string }>
+  routes: Record<string, { accepts: { scheme: string; network: string; payTo: string; price: string }; description: string }>,
+  opts?: { network?: `${string}:${string}`; facilitatorUrl?: string; apiKey?: string }
 ) {
+  const network = opts?.network ?? ("stellar:testnet" as `${string}:${string}`);
+  const facilitatorUrl = opts?.facilitatorUrl ?? OZ_FACILITATOR_URL;
+  const apiKey = opts?.apiKey ?? process.env.OZ_FACILITATOR_API_KEY;
+
+  if (!apiKey) {
+    const protectedRoutes = Object.keys(routes).map((key) => {
+      const [method, path] = key.split(" ");
+      return { method: method?.toUpperCase() || "", path: path || "" };
+    });
+    app.use((req, res, next) => {
+      const isProtected = protectedRoutes.some((r) => r.method === req.method.toUpperCase() && r.path === req.path);
+      if (!isProtected) { next(); return; }
+      res.status(500).json({ error: "OZ_FACILITATOR_API_KEY missing — x402 payment middleware not configured" });
+    });
+    return;
+  }
+
+  const facilitator = new HTTPFacilitatorClient({
+    url: facilitatorUrl,
+    createAuthHeaders: async () => {
+      const h = { Authorization: `Bearer ${apiKey}` };
+      return { verify: h, settle: h, supported: h };
+    },
+  });
+
   // Cast route network types for x402
   const typedRoutes: Record<string, any> = {};
   for (const [key, value] of Object.entries(routes)) {
     typedRoutes[key] = {
       ...value,
-      accepts: { ...value.accepts, network: NETWORK },
+      accepts: { ...value.accepts, network },
     };
   }
 
   const middleware = paymentMiddlewareFromConfig(
     typedRoutes,
     facilitator,
-    [{ network: NETWORK, server: new ExactStellarScheme() }],
+    [{ network, server: new ExactStellarScheme() }],
     undefined, // paywallConfig
     undefined, // paywall
     true       // syncFacilitatorOnStart — but we catch the rejection below
@@ -73,4 +88,4 @@ process.on("unhandledRejection", (reason: any) => {
   console.error("Unhandled rejection:", msg);
 });
 
-export { NETWORK, OZ_FACILITATOR_URL };
+export { OZ_FACILITATOR_URL, DEFAULT_FACILITATOR_URL };
