@@ -10,7 +10,6 @@
 
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
 import { Keypair, Horizon } from "@stellar/stellar-sdk";
 import OpenAI from "openai";
 import { Mppx, Store } from "mppx/server";
@@ -21,6 +20,7 @@ import { z } from "zod";
 
 // x402 middleware
 import { applyX402Middleware } from "./shared/x402-middleware.ts";
+import { createCorsMiddleware } from "./shared/cors.ts";
 
 // Agent tools
 import {
@@ -91,7 +91,7 @@ const agentKeypair = Keypair.fromSecret(env.data.AGENT_SECRET_KEY);
 
 // --- Express App ---
 const app = express();
-app.use(cors());
+app.use(createCorsMiddleware());
 app.use(express.json());
 
 // --- Root info ---

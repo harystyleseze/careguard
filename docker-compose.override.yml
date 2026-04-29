@@ -1,4 +1,17 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: careguard-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - careguard-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   prometheus:
     image: prom/prometheus:latest
     container_name: careguard-prometheus
