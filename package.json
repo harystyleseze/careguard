@@ -11,8 +11,9 @@
     "agent": "node --import tsx agent/server.ts",
     "pharmacy-payment": "node --import tsx services/pharmacy-payment/server.ts",
     "services": "concurrently --kill-others-on-fail \"npm run pharmacy-api\" \"npm run bill-audit-api\" \"npm run drug-api\" \"npm run pharmacy-payment\"",
-    "start": "node --experimental-strip-types --experimental-transform-types --no-warnings server.ts",
-    "dev": "node --experimental-strip-types --experimental-transform-types --no-warnings server.ts",
+    "start": "node --import tsx server.ts",
+    "dev": "node --import tsx server.ts",
+    "build": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -30,8 +31,10 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "ioredis": "^5.6.0",
     "mppx": "^0.6.5",
     "openai": "^6.34.0",
+    "tsx": "^4.21.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -40,9 +43,9 @@
     "@types/node": "^25.6.0",
     "@types/supertest": "^7.2.0",
     "concurrently": "^9.2.1",
+    "ioredis-mock": "^8.9.0",
     "supertest": "^7.2.2",
-    "tsx": "^4.21.0",
-    "typescript": "^6.0.3",
+    "typescript": "5.8.3",
     "vitest": "^2.1.8"
   }
 }

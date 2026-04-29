@@ -10,9 +10,9 @@
 
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
 import OpenAI from "openai";
 import { Keypair, Horizon } from "@stellar/stellar-sdk";
+import { createCorsMiddleware } from "../shared/cors.ts";
 import {
   comparePharmacyPrices,
   auditBill,
@@ -277,7 +277,7 @@ let agentRuns = 0;
 
 // Express API
 const app = express();
-app.use(cors());
+app.use(createCorsMiddleware());
 app.use(express.json());
 
 let agentPaused = false;

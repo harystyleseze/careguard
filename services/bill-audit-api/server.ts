@@ -14,9 +14,9 @@ if (!process.stdout.isTTY) {
 
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
 import { z } from "zod";
 import { applyX402Middleware, NETWORK, OZ_FACILITATOR_URL } from "../../shared/x402-middleware.ts";
+import { createCorsMiddleware } from "../../shared/cors.ts";
 
 const PORT = parseInt(process.env.BILL_AUDIT_API_PORT || "3002");
 const PAY_TO = process.env.BILL_PROVIDER_PUBLIC_KEY;
@@ -99,7 +99,7 @@ function auditBill(lineItems: BillItem[]) {
 }
 
 const app = express();
-app.use(cors());
+app.use(createCorsMiddleware());
 app.use(express.json());
 
 app.get("/", (_req, res) => {

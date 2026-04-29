@@ -9,4 +9,4 @@ RUN npm ci --legacy-peer-deps
 COPY . .
 
 EXPOSE 3004
-CMD ["node", "--experimental-strip-types", "--experimental-transform-types", "--no-warnings", "server.ts"]
+CMD ["node", "--import", "tsx", "server.ts"]
