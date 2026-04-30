@@ -25,6 +25,7 @@ const DRUG_INTERACTION_API = process.env.DRUG_INTERACTION_API_URL || "http://loc
 const PHARMACY_PAYMENT_API = process.env.PHARMACY_PAYMENT_API_URL || "http://localhost:3005";
 const USDC_ISSUER = process.env.USDC_ISSUER || "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 const HORIZON_URL = "https://horizon-testnet.stellar.org";
+const X402_SETTLEMENT_GRACE_MS = 5 * 60 * 1000;
 
 if (!AGENT_SECRET_KEY) throw new Error("AGENT_SECRET_KEY required in .env");
 
@@ -79,15 +80,23 @@ interface SpendingTracker {
   medications: number;
   bills: number;
   serviceFees: number;
+  pendingServiceFees: number;
   transactions: Transaction[];
 }
 
 function loadSpending(): SpendingTracker {
-  if (!existsSync(SPENDING_FILE)) return { medications: 0, bills: 0, serviceFees: 0, transactions: [] };
-  return JSON.parse(readFileSync(SPENDING_FILE, "utf-8"));
+  if (!existsSync(SPENDING_FILE)) return { medications: 0, bills: 0, serviceFees: 0, pendingServiceFees: 0, transactions: [] };
+  const parsed = JSON.parse(readFileSync(SPENDING_FILE, "utf-8"));
+  return {
+    medications: parsed.medications || 0,
+    bills: parsed.bills || 0,
+    serviceFees: parsed.serviceFees || 0,
+    pendingServiceFees: parsed.pendingServiceFees || 0,
+    transactions: parsed.transactions || [],
+  };
 }
 
-function saveSpending(data: SpendingTracker) {
+export function saveSpending(data: SpendingTracker) {
   writeFileSync(SPENDING_FILE, JSON.stringify(data, null, 2));
 }
 
@@ -128,8 +137,62 @@ export function setSpendingPolicy(policy: SpendingPolicy) {
 }
 export function getSpendingTracker() { return { ...spendingTracker, policy: currentPolicy }; }
 export function resetSpendingTracker() {
-  spendingTracker = { medications: 0, bills: 0, serviceFees: 0, transactions: [] };
+  spendingTracker = { medications: 0, bills: 0, serviceFees: 0, pendingServiceFees: 0, transactions: [] };
   saveSpending(spendingTracker);
+}
+
+function reserveX402ServiceFee(amount: number, description: string, recipient: string, stellarTxHash?: string) {
+  const tx: Transaction = {
+    id: `tx-${Date.now()}`,
+    timestamp: new Date().toISOString(),
+    type: "service_fee",
+    description,
+    amount,
+    recipient,
+    stellarTxHash,
+    status: "pending_settlement",
+    category: "service_fees",
+  };
+
+  spendingTracker.pendingServiceFees += amount;
+  spendingTracker.transactions.push(tx);
+  saveSpending(spendingTracker);
+  return tx;
+}
+
+export async function reconcilePendingServiceFees(now = Date.now()) {
+  let updated = false;
+
+  for (const tx of spendingTracker.transactions) {
+    if (tx.type !== "service_fee" || tx.status !== "pending_settlement") continue;
+    if (!tx.stellarTxHash) continue;
+
+    try {
+      await horizonServer.transactions().transaction(tx.stellarTxHash).call();
+      tx.status = "completed";
+      spendingTracker.pendingServiceFees = Math.max(0, spendingTracker.pendingServiceFees - tx.amount);
+      spendingTracker.serviceFees += tx.amount;
+      updated = true;
+      continue;
+    } catch (err: any) {
+      const status = err?.response?.status || err?.status;
+      const isNotFound = status === 404;
+      const isPastGrace = now - new Date(tx.timestamp).getTime() >= X402_SETTLEMENT_GRACE_MS;
+
+      if (isNotFound && isPastGrace) {
+        tx.status = "failed";
+        spendingTracker.pendingServiceFees = Math.max(0, spendingTracker.pendingServiceFees - tx.amount);
+        updated = true;
+      }
+    }
+  }
+
+  if (updated) saveSpending(spendingTracker);
+  return {
+    pendingServiceFees: spendingTracker.pendingServiceFees,
+    settledServiceFees: spendingTracker.serviceFees,
+    transactionsUpdated: updated,
+  };
 }
 
 // --- Tool: Compare pharmacy prices (pays via x402) ---
@@ -146,22 +209,13 @@ export async function comparePharmacyPrices(drugName: string, zipCode: string = 
 
   const data = await response.json();
 
-  // Extract real Stellar tx hash from x402 payment response header
-  const txHash = extractX402TxHash(response);
-
-  spendingTracker.serviceFees += 0.002;
-  spendingTracker.transactions.push({
-    id: `tx-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    type: "service_fee",
-    description: `x402 query: pharmacy prices for ${drugName}`,
-    amount: 0.002,
-    recipient: data.protocol?.payTo || "pharmacy-price-api",
-    stellarTxHash: txHash,
-    status: "completed",
-    category: "service_fees",
-  });
-  saveSpending(spendingTracker);
+  // Reserve first; settlement is confirmed later by reconciliation against Horizon.
+  reserveX402ServiceFee(
+    0.002,
+    `x402 query: pharmacy prices for ${drugName}`,
+    data.protocol?.payTo || "pharmacy-price-api",
+    extractX402TxHash(response)
+  );
 
   return data;
 }
@@ -259,21 +313,12 @@ export async function auditBill(lineItems: Array<{ description: string; cptCode:
 
   const data = await response.json();
 
-  const txHash = extractX402TxHash(response);
-
-  spendingTracker.serviceFees += 0.01;
-  spendingTracker.transactions.push({
-    id: `tx-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    type: "service_fee",
-    description: "x402 query: medical bill audit",
-    amount: 0.01,
-    recipient: data.protocol?.payTo || "bill-audit-api",
-    stellarTxHash: txHash,
-    status: "completed",
-    category: "service_fees",
-  });
-  saveSpending(spendingTracker);
+  reserveX402ServiceFee(
+    0.01,
+    "x402 query: medical bill audit",
+    data.protocol?.payTo || "bill-audit-api",
+    extractX402TxHash(response)
+  );
 
   return data;
 }
@@ -292,21 +337,12 @@ export async function checkDrugInteractions(medications: string[]) {
 
   const data = await response.json();
 
-  const txHash = extractX402TxHash(response);
-
-  spendingTracker.serviceFees += 0.001;
-  spendingTracker.transactions.push({
-    id: `tx-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    type: "service_fee",
-    description: `x402 query: drug interactions for ${medications.join(", ")}`,
-    amount: 0.001,
-    recipient: data.protocol?.payTo || "drug-interaction-api",
-    stellarTxHash: txHash,
-    status: "completed",
-    category: "service_fees",
-  });
-  saveSpending(spendingTracker);
+  reserveX402ServiceFee(
+    0.001,
+    `x402 query: drug interactions for ${medications.join(", ")}`,
+    data.protocol?.payTo || "drug-interaction-api",
+    extractX402TxHash(response)
+  );
 
   return data;
 }
@@ -478,13 +514,14 @@ export async function payBill(providerId: string, providerName: string, descript
 
 // --- Tool: Get spending summary ---
 export function getSpendingSummary() {
-  const total = spendingTracker.medications + spendingTracker.bills + spendingTracker.serviceFees;
+  const total = spendingTracker.medications + spendingTracker.bills + spendingTracker.serviceFees + spendingTracker.pendingServiceFees;
   return {
     policy: currentPolicy,
     spending: {
       medications: +spendingTracker.medications.toFixed(2),
       bills: +spendingTracker.bills.toFixed(2),
       serviceFees: +spendingTracker.serviceFees.toFixed(4),
+      pendingServiceFees: +spendingTracker.pendingServiceFees.toFixed(4),
       total: +total.toFixed(2),
     },
     budgetRemaining: {
