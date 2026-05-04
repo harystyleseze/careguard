@@ -63,7 +63,7 @@ export interface Transaction {
   recipient: string;
   stellarTxHash?: string;
   mppOrderId?: string;
-  status: "pending" | "approved" | "completed" | "blocked" | "disputed";
+  status: "pending" | "approved" | "completed" | "blocked" | "disputed" | "pending_settlement" | "failed" | "rejected";
   category: string;
 }
 
@@ -86,6 +86,7 @@ export interface CareRecipient {
     medications: number;
     bills: number;
     serviceFees: number;
+    pendingServiceFees: number;
     total: number;
   };
   savingsAchieved: number;

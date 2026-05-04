@@ -17,8 +17,10 @@ vi.mock("../tools.ts", () => ({
   checkSpendingPolicy: vi.fn(),
   getSpendingSummary: vi.fn(() => ({ spending: {}, policy: {} })),
   setSpendingPolicy: vi.fn(),
-  getSpendingTracker: vi.fn(() => ({ transactions: [] })),
+  getSpendingTracker: vi.fn(() => ({ transactions: [], pendingServiceFees: 0 })),
   resetSpendingTracker: vi.fn(),
+  reconcilePendingServiceFees: vi.fn(),
+  saveSpending: vi.fn(),
   TOOL_DEFINITIONS: [],
 }));
 vi.mock("../../shared/x402-middleware.ts", () => ({

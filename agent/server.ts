@@ -26,6 +26,8 @@ import {
   setSpendingPolicy,
   getSpendingTracker,
   resetSpendingTracker,
+  reconcilePendingServiceFees,
+  saveSpending,
   TOOL_DEFINITIONS,
 } from "./tools.ts";
 
@@ -223,11 +225,13 @@ async function runAgent(task: string) {
 }
 
 // Metrics endpoint for Prometheus/Grafana
-app.get("/metrics", (_req, res) => {
+app.get("/metrics", async (_req, res) => {
+  await reconcilePendingServiceFees();
   const tracker = getSpendingTracker();
   const pendingCount = tracker.transactions.filter((t: any) => t.status === "pending").length;
+  const pendingSettlementCount = tracker.transactions.filter((t: any) => t.status === "pending_settlement").length;
   const completedCount = tracker.transactions.filter((t: any) => t.status === "completed").length;
-  const failedCount = tracker.transactions.filter((t: any) => t.status === "rejected").length;
+  const failedCount = tracker.transactions.filter((t: any) => t.status === "rejected" || t.status === "failed").length;
 
   const now = Date.now();
   const last24h = llmTokenHistory.filter((t) => now - t.timestamp < 86400000);
@@ -259,6 +263,7 @@ agent_llm_cost_usd ${estimatedCost.toFixed(4)}
 # TYPE agent_transactions_total counter
 agent_transactions_total{status="completed"} ${completedCount}
 agent_transactions_total{status="pending"} ${pendingCount}
+agent_transactions_total{status="pending_settlement"} ${pendingSettlementCount}
 agent_transactions_total{status="rejected"} ${failedCount}
 
 # HELP agent_spending_usd Spending by category
@@ -266,6 +271,10 @@ agent_transactions_total{status="rejected"} ${failedCount}
 agent_spending_usd{category="medications"} ${tracker.medications}
 agent_spending_usd{category="bills"} ${tracker.bills}
 agent_spending_usd{category="service_fees"} ${tracker.serviceFees}
+
+# HELP x402_unconfirmed_fees_usdc Unconfirmed x402 service fees awaiting on-chain settlement
+# TYPE x402_unconfirmed_fees_usdc gauge
+x402_unconfirmed_fees_usdc ${tracker.pendingServiceFees || 0}
 
 # HELP agent_stellar_tx_success_total Successful Stellar transactions
 # TYPE agent_stellar_tx_success_total counter
@@ -314,7 +323,8 @@ app.get("/agent/wallet", async (req, res) => {
 });
 
 // Pending approvals
-app.get("/agent/pending-approvals", (_req, res) => {
+app.get("/agent/pending-approvals", async (_req, res) => {
+  await reconcilePendingServiceFees();
   const tracker = getSpendingTracker();
   const pending = tracker.transactions.filter((t: any) => t.status === "pending");
   res.json({ approvals: pending });
@@ -408,8 +418,8 @@ app.post("/agent/run", async (req, res) => {
   }
 });
 
-app.get("/agent/spending", (_req, res) => { res.json(getSpendingSummary()); });
-app.get("/agent/transactions", (_req, res) => { res.json(getSpendingTracker()); });
+app.get("/agent/spending", async (_req, res) => { await reconcilePendingServiceFees(); res.json(getSpendingSummary()); });
+app.get("/agent/transactions", async (_req, res) => { await reconcilePendingServiceFees(); res.json(getSpendingTracker()); });
 function validatePolicyPayload(body: any): { ok: true; policy: any } | { ok: false; errors: string[] } {
   const errors: string[] = [];
   if (!body || typeof body !== "object") return { ok: false, errors: ["body must be a JSON object"] };
