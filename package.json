@@ -38,7 +38,7 @@
     "node-cron": "^3.0.3",
     "openai": "^6.34.0",
     "tsx": "^4.21.0",
-    "zod": "^3.25.76"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.4.0",
