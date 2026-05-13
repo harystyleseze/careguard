@@ -16,6 +16,27 @@ import { ExactStellarScheme } from "@x402/stellar/exact/server";
 const DEFAULT_FACILITATOR_URL = "https://channels.openzeppelin.com/x402/testnet";
 const OZ_FACILITATOR_URL = process.env.X402_FACILITATOR_URL || DEFAULT_FACILITATOR_URL;
 
+export function isRecoverableX402StartupError(reason: any) {
+  const name = reason?.name || reason?.constructor?.name || "";
+  const msg = reason?.message || String(reason);
+
+  if (name === "X402FacilitatorError" || name === "HTTPFacilitatorError") {
+    return true;
+  }
+
+  if (reason?.cause?.code === "UND_ERR_CONNECT_TIMEOUT") {
+    return true;
+  }
+
+  return (
+    msg.includes("no supported payment kinds") ||
+    msg.includes("Failed to initialize") ||
+    // TODO(#190): replace this fallback once @x402 exposes a stable error code
+    // for bazaar/facilitator startup failures across all supported clients.
+    /bazaar facilitator|facilitator.*bazaar/i.test(msg)
+  );
+}
+
 export function applyX402Middleware(
   app: Application,
   routes: Record<string, { accepts: { scheme: string; network: string; payTo: string; price: string }; description: string }>,
@@ -75,12 +96,7 @@ export function applyX402Middleware(
 // when the x402 facilitator is temporarily unreachable on startup.
 process.on("unhandledRejection", (reason: any) => {
   const msg = reason?.message || String(reason);
-  if (
-    msg.includes("no supported payment kinds") ||
-    msg.includes("Failed to initialize") ||
-    reason?.cause?.code === "UND_ERR_CONNECT_TIMEOUT" ||
-    msg.includes("bazaar")
-  ) {
+  if (isRecoverableX402StartupError(reason)) {
     console.warn(`  ⚠ x402 startup: ${msg.slice(0, 120)}`);
     return;
   }
