@@ -2,9 +2,25 @@ const EXPLORER_URL = "https://stellar.expert/explorer/testnet/tx";
 
 export interface TxLinkProps {
   hash?: string;
+  status?: "extracted" | "extraction_failed";
 }
 
-export function TxLink({ hash }: TxLinkProps) {
+export function TxLink({ hash, status }: TxLinkProps) {
+  if (status === "extraction_failed") {
+    return (
+      <span className="inline-flex items-center gap-1 justify-end">
+        <span className="text-xs text-amber-600 font-medium">pending</span>
+        <span
+          className="text-[10px] leading-none text-amber-700 bg-amber-100 border border-amber-300 rounded-full w-4 h-4 inline-flex items-center justify-center"
+          title="The x402 payment completed, but CareGuard could not extract a Stellar transaction hash from the payment response."
+          aria-label="Transaction hash extraction failed"
+        >
+          !
+        </span>
+      </span>
+    );
+  }
+
   if (!hash) return <span className="text-xs text-slate-300">-</span>;
 
   let displayHash = hash;

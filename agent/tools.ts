@@ -15,7 +15,8 @@ import { createEd25519Signer, ExactStellarScheme } from "@x402/stellar";
 import { Mppx } from "mppx/client";
 import { stellar as stellarCharge } from "@stellar/mpp/charge/client";
 import type { SpendingPolicy, Transaction } from "../shared/types.ts";
-export { SPENDING_TIMEZONE, getLocalDateStr } from "./tz.ts";
+import { SPENDING_TIMEZONE, getLocalDateStr } from "./tz.ts";
+export { SPENDING_TIMEZONE, getLocalDateStr };
 
 // Environment
 const AGENT_SECRET_KEY = process.env.AGENT_SECRET_KEY;
@@ -31,16 +32,43 @@ if (!AGENT_SECRET_KEY) throw new Error("AGENT_SECRET_KEY required in .env");
 const agentKeypair = Keypair.fromSecret(AGENT_SECRET_KEY);
 const horizonServer = new Horizon.Server(HORIZON_URL);
 
+type TxHashExtraction = {
+  stellarTxHash?: string;
+  txHashStatus: "extracted" | "extraction_failed";
+};
+
+let x402TxExtractionFailedTotal = 0;
+
+export function getX402TxExtractionFailedTotal() {
+  return x402TxExtractionFailedTotal;
+}
+
 // Helper: extract real Stellar tx hash from x402 PAYMENT-RESPONSE header
-function extractX402TxHash(response: Response): string | undefined {
+function extractX402TxHash(response: Response, responseBody?: unknown): TxHashExtraction {
   const header = response.headers.get("PAYMENT-RESPONSE") || response.headers.get("payment-response") || response.headers.get("X-PAYMENT-RESPONSE");
-  if (!header) return undefined;
+  const headers = Object.fromEntries(response.headers.entries());
+  const fail = (reason: string): TxHashExtraction => {
+    x402TxExtractionFailedTotal += 1;
+    console.warn("[x402] tx hash extraction failed", {
+      reason,
+      headers,
+      body: responseBody,
+      metric: "x402_tx_extraction_failed_total",
+      value: x402TxExtractionFailedTotal,
+    });
+    return { stellarTxHash: "extraction_failed", txHashStatus: "extraction_failed" };
+  };
+
+  if (!header) return fail("missing payment response header");
   try {
     const decoded = decodePaymentResponseHeader(header);
-    return decoded.transaction || undefined;
+    const txHash = decoded.transaction || undefined;
+    if (!txHash) return fail("decoded payment response did not include transaction");
+    return { stellarTxHash: txHash, txHashStatus: "extracted" };
   } catch {
     // If decode fails, the header itself might be a raw hash
-    return header.length === 64 ? header : undefined;
+    if (header.length === 64) return { stellarTxHash: header, txHashStatus: "extracted" };
+    return fail("payment response header could not be decoded");
   }
 }
 
@@ -147,7 +175,7 @@ export async function comparePharmacyPrices(drugName: string, zipCode: string = 
   const data = await response.json();
 
   // Extract real Stellar tx hash from x402 payment response header
-  const txHash = extractX402TxHash(response);
+  const txHash = extractX402TxHash(response, data);
 
   spendingTracker.serviceFees += 0.002;
   spendingTracker.transactions.push({
@@ -157,7 +185,8 @@ export async function comparePharmacyPrices(drugName: string, zipCode: string = 
     description: `x402 query: pharmacy prices for ${drugName}`,
     amount: 0.002,
     recipient: data.protocol?.payTo || "pharmacy-price-api",
-    stellarTxHash: txHash,
+    stellarTxHash: txHash.stellarTxHash,
+    txHashStatus: txHash.txHashStatus,
     status: "completed",
     category: "service_fees",
   });
@@ -259,7 +288,7 @@ export async function auditBill(lineItems: Array<{ description: string; cptCode:
 
   const data = await response.json();
 
-  const txHash = extractX402TxHash(response);
+  const txHash = extractX402TxHash(response, data);
 
   spendingTracker.serviceFees += 0.01;
   spendingTracker.transactions.push({
@@ -269,7 +298,8 @@ export async function auditBill(lineItems: Array<{ description: string; cptCode:
     description: "x402 query: medical bill audit",
     amount: 0.01,
     recipient: data.protocol?.payTo || "bill-audit-api",
-    stellarTxHash: txHash,
+    stellarTxHash: txHash.stellarTxHash,
+    txHashStatus: txHash.txHashStatus,
     status: "completed",
     category: "service_fees",
   });
@@ -292,7 +322,7 @@ export async function checkDrugInteractions(medications: string[]) {
 
   const data = await response.json();
 
-  const txHash = extractX402TxHash(response);
+  const txHash = extractX402TxHash(response, data);
 
   spendingTracker.serviceFees += 0.001;
   spendingTracker.transactions.push({
@@ -302,7 +332,8 @@ export async function checkDrugInteractions(medications: string[]) {
     description: `x402 query: drug interactions for ${medications.join(", ")}`,
     amount: 0.001,
     recipient: data.protocol?.payTo || "drug-interaction-api",
-    stellarTxHash: txHash,
+    stellarTxHash: txHash.stellarTxHash,
+    txHashStatus: txHash.txHashStatus,
     status: "completed",
     category: "service_fees",
   });
