@@ -1,0 +1,36 @@
+name: Sensitive Data Guard
+
+on:
+  pull_request:
+    paths:
+      - "data/**"
+      - ".github/workflows/sensitive-data-guard.yml"
+
+jobs:
+  prevent-generated-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Block generated sensitive data files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          changed="$(
+            git diff --name-only --diff-filter=ACMRT \
+              "${{ github.event.pull_request.base.sha }}" \
+              "${{ github.event.pull_request.head.sha }}" \
+              -- data/spending.json data/orders.json || true
+          )"
+
+          if [ -n "$changed" ]; then
+            echo "::error::Do not commit generated sensitive runtime data files:"
+            echo "$changed"
+            exit 1
+          fi
+
+          echo "No generated sensitive runtime data files were added or modified."
