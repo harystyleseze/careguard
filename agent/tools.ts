@@ -4,7 +4,9 @@
  * x402 client: Signs Soroban auth entries, pays USDC per API query via OZ facilitator
  * MPP client: Signs Soroban transfers, pays pharmacies via MPP charge mode
  * Stellar USDC: Direct USDC transfers for bill payments via Horizon
- * Spending policy: Persisted to file, enforced before every payment
+ * Spending policy: Persisted to data/spending.json and enforced before every payment
+ * DO NOT COMMIT generated data/*.json files: they can contain balances,
+ * transaction history, recipients, and other sensitive payment context.
  */
 
 import "dotenv/config";
