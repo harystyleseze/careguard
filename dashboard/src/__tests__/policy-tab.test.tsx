@@ -11,8 +11,8 @@
  *  5. Negative value rejected client-side (validatePolicy via form validation)
  */
 
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, act } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
 import { PolicyTab } from "../components/tabs/policy-tab";
 import type { PolicyTabProps } from "../components/tabs/policy-tab";
 
@@ -48,6 +48,16 @@ describe("PolicyTab — rendering (Issue #47)", () => {
     expect(screen.getByLabelText(/Medication Monthly Budget/i)).toBeTruthy();
     expect(screen.getByLabelText(/Bill Monthly Budget/i)).toBeTruthy();
     expect(screen.getByLabelText(/Caregiver Approval Threshold/i)).toBeTruthy();
+  });
+
+  it("renders policy inputs with the requested numeric constraints", () => {
+    render(<PolicyTab {...buildProps()} />);
+
+    for (const input of screen.getAllByRole("spinbutton") as HTMLInputElement[]) {
+      expect(input.min).toBe("1");
+      expect(input.max).toBe("50000");
+      expect(input.step).toBe("1");
+    }
   });
 
   it("populates fields with values from spending.policy (the policyForm prop)", () => {
@@ -196,11 +206,7 @@ describe("PolicyTab — negative value rejected client-side (Issue #47)", () => 
     const submitBtn = screen.getByRole("button", { name: /Update Policy/i }) as HTMLButtonElement;
     expect(submitBtn.disabled).toBe(true);
 
-    // An error message must be visible
-    await waitFor(() => {
-      const errorEl = document.querySelector("[aria-invalid='true']");
-      expect(errorEl).not.toBeNull();
-    });
+    expect(await screen.findByText(/must be greater than 0/i)).toBeTruthy();
   });
 
   it("'Update Policy' button is enabled for a fully valid policy", () => {
@@ -218,7 +224,7 @@ describe("PolicyTab — negative value rejected client-side (Issue #47)", () => 
 
 describe("PolicyTab — policySaved prop drives button appearance (Issue #47)", () => {
   it("shows 'Policy Saved' (green) when policySaved is true", () => {
-    const { container } = render(<PolicyTab {...buildProps({ policySaved: true })} />);
+    render(<PolicyTab {...buildProps({ policySaved: true })} />);
     const btn = screen.getByRole("button", { name: /Policy Saved/i });
     expect(btn).toBeTruthy();
     // The button should have the green background class
@@ -226,7 +232,7 @@ describe("PolicyTab — policySaved prop drives button appearance (Issue #47)", 
   });
 
   it("shows 'Update Policy' (blue) when policySaved is false", () => {
-    const { container } = render(<PolicyTab {...buildProps({ policySaved: false })} />);
+    render(<PolicyTab {...buildProps({ policySaved: false })} />);
     const btn = screen.getByRole("button", { name: /Update Policy/i });
     expect(btn).toBeTruthy();
     expect(btn.className).toContain("bg-sky-500");

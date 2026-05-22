@@ -3,6 +3,9 @@
 import { useMemo, useState } from "react";
 import type { RecipientProfile } from "../../lib/types";
 import {
+  POLICY_AMOUNT_MAX,
+  POLICY_AMOUNT_MIN,
+  POLICY_AMOUNT_STEP,
   validatePolicy,
   type PolicyFieldError,
   type SpendingPolicyInput,
@@ -96,9 +99,9 @@ export function PolicyTab({
                 id={inputId}
                 type="number"
                 inputMode="decimal"
-                min="0"
-                max="10000"
-                step="0.01"
+                min={POLICY_AMOUNT_MIN}
+                max={POLICY_AMOUNT_MAX}
+                step={POLICY_AMOUNT_STEP}
                 value={Number.isFinite(policyForm[key]) ? policyForm[key] : ""}
                 aria-invalid={Boolean(errMsg)}
                 aria-describedby={errMsg || warnMsg ? errorId : undefined}

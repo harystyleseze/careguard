@@ -22,17 +22,22 @@ describe("validatePolicy", () => {
     expect(r.errors.find((e) => e.field === "dailyLimit")).toBeDefined();
   });
 
-  it("accepts zero values", () => {
+  it("rejects zero values", () => {
     const r = validatePolicy({ ...valid, monthlyLimit: 0 });
-    expect(r.isValid).toBe(true);
-  });
-
-  it("rejects values over 10000", () => {
-    const r = validatePolicy({ ...valid, monthlyLimit: 10001 });
     expect(r.isValid).toBe(false);
     expect(
       r.errors.some(
-        (e) => e.field === "monthlyLimit" && /10000/.test(e.message),
+        (e) => e.field === "monthlyLimit" && /greater than 0/.test(e.message),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects values over 50000", () => {
+    const r = validatePolicy({ ...valid, monthlyLimit: 50001 });
+    expect(r.isValid).toBe(false);
+    expect(
+      r.errors.some(
+        (e) => e.field === "monthlyLimit" && /50000/.test(e.message),
       ),
     ).toBe(true);
   });
