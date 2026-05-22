@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { downloadTransactionPDF } from "../../app/pdf";
 import type { RecipientProfile } from "../../lib/types";
 import { ConfirmDialog } from "../primitives/confirm-dialog";
@@ -26,6 +26,71 @@ export interface ActivityTabProps {
   onResetAgent: () => void;
 }
 
+export interface TransactionRowsProps {
+  transactions: Transaction[];
+  onRender?: () => void;
+}
+
+export const TransactionRows = memo(function TransactionRows({
+  transactions,
+  onRender,
+}: TransactionRowsProps) {
+  useEffect(() => {
+    onRender?.();
+  });
+
+  return (
+    <>
+      {transactions.map((tx) => (
+        <tr
+          key={tx.id}
+          className="border-b border-slate-100 last:border-0"
+        >
+          <td className="hidden md:table-cell px-4 py-2 text-xs text-slate-400">
+            {new Date(tx.timestamp).toLocaleTimeString()}
+          </td>
+          <td className="px-4 py-2">
+            <span
+              className={`px-2 py-0.5 rounded text-xs font-medium ${
+                tx.type === "medication"
+                  ? "bg-blue-100 text-blue-700"
+                  : tx.type === "bill"
+                    ? "bg-purple-100 text-purple-700"
+                    : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              {tx.type}
+            </span>
+          </td>
+          <td className="px-4 py-2 text-xs">{tx.description}</td>
+          <td className="px-4 py-2 text-right text-xs font-mono">
+            $
+            {tx.amount < 0.01
+              ? tx.amount.toFixed(4)
+              : tx.amount.toFixed(2)}
+          </td>
+          <td className="px-4 py-2 text-right">
+            <span
+              className={`px-2 py-0.5 rounded text-xs ${
+                tx.status === "completed"
+                  ? "bg-green-100 text-green-700"
+                  : tx.status === "blocked"
+                    ? "bg-red-100 text-red-700"
+                    : "bg-amber-100 text-amber-700"
+              }`}
+            >
+              {tx.status}
+            </span>
+          </td>
+          <td className="px-4 py-2 text-right">
+            <TxLink hash={tx.stellarTxHash} />
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+});
+
 export function ActivityTab({
   recipient,
   agentLog,
@@ -41,6 +106,10 @@ export function ActivityTab({
 }: ActivityTabProps) {
   const [showAllLogEntries, setShowAllLogEntries] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const transactionRows = useMemo(
+    () => <TransactionRows transactions={allTransactions} />,
+    [allTransactions],
+  );
 
   return (
     <div
@@ -219,54 +288,7 @@ export function ActivityTab({
                     </th>
                   </tr>
                 </thead>
-                <tbody>
-                  {allTransactions.map((tx) => (
-                    <tr
-                      key={tx.id}
-                      className="border-b border-slate-100 last:border-0"
-                    >
-                      <td className="hidden md:table-cell px-4 py-2 text-xs text-slate-400">
-                        {new Date(tx.timestamp).toLocaleTimeString()}
-                      </td>
-                      <td className="px-4 py-2">
-                        <span
-                          className={`px-2 py-0.5 rounded text-xs font-medium ${
-                            tx.type === "medication"
-                              ? "bg-blue-100 text-blue-700"
-                              : tx.type === "bill"
-                                ? "bg-purple-100 text-purple-700"
-                                : "bg-slate-100 text-slate-600"
-                          }`}
-                        >
-                          {tx.type}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 text-xs">{tx.description}</td>
-                      <td className="px-4 py-2 text-right text-xs font-mono">
-                        $
-                        {tx.amount < 0.01
-                          ? tx.amount.toFixed(4)
-                          : tx.amount.toFixed(2)}
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        <span
-                          className={`px-2 py-0.5 rounded text-xs ${
-                            tx.status === "completed"
-                              ? "bg-green-100 text-green-700"
-                              : tx.status === "blocked"
-                                ? "bg-red-100 text-red-700"
-                                : "bg-amber-100 text-amber-700"
-                          }`}
-                        >
-                          {tx.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        <TxLink hash={tx.stellarTxHash} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
+                <tbody>{transactionRows}</tbody>
               </table>
             </div>
           </>
