@@ -1,11 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import { downloadMedicationPDF } from "../../app/pdf";
 import {
   DrugInteractionResultSchema,
   PharmacyCompareResultSchema,
   type RecipientProfile,
 } from "../../lib/types";
+import { reportPdfDownloadFailure } from "../../lib/pdf-download-error";
+import { Toast } from "../primitives/toast";
 import type { AgentResult } from "../types";
 
 const MEDS = ["Lisinopril", "Metformin", "Atorvastatin", "Amlodipine"] as const;
@@ -16,6 +19,7 @@ export interface MedicationsTabProps {
 }
 
 export function MedicationsTab({ agentResult, recipient }: MedicationsTabProps) {
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
   const hasPriceResults = agentResult?.toolCalls.some(
     (t) => t.tool === "compare_pharmacy_prices",
   );
@@ -31,6 +35,7 @@ export function MedicationsTab({ agentResult, recipient }: MedicationsTabProps) 
       tabIndex={0}
       className="space-y-6"
     >
+      <Toast message={toastMsg} onDismiss={() => setToastMsg(null)} />
       <div className="bg-white rounded-xl border border-slate-200 p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-slate-700">
@@ -39,21 +44,25 @@ export function MedicationsTab({ agentResult, recipient }: MedicationsTabProps) 
           {hasPriceResults && (
             <button
               onClick={() => {
-                const priceResults = agentResult!.toolCalls
-                  .filter((t) => t.tool === "compare_pharmacy_prices")
-                  .map((t) => PharmacyCompareResultSchema.parse(t.result));
-                const interactionResult = agentResult!.toolCalls.find(
-                  (t) => t.tool === "check_drug_interactions",
-                )?.result;
-                downloadMedicationPDF(
-                  {
-                    priceResults,
-                    interactionResult: interactionResult
-                      ? DrugInteractionResultSchema.parse(interactionResult)
-                      : undefined,
-                  },
-                  { recipient },
-                );
+                try {
+                  const priceResults = agentResult!.toolCalls
+                    .filter((t) => t.tool === "compare_pharmacy_prices")
+                    .map((t) => PharmacyCompareResultSchema.parse(t.result));
+                  const interactionResult = agentResult!.toolCalls.find(
+                    (t) => t.tool === "check_drug_interactions",
+                  )?.result;
+                  downloadMedicationPDF(
+                    {
+                      priceResults,
+                      interactionResult: interactionResult
+                        ? DrugInteractionResultSchema.parse(interactionResult)
+                        : undefined,
+                    },
+                    { recipient },
+                  );
+                } catch (error) {
+                  setToastMsg(reportPdfDownloadFailure(error));
+                }
               }}
               className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
             >
@@ -101,30 +110,36 @@ export function MedicationsTab({ agentResult, recipient }: MedicationsTabProps) 
           <h2 className="text-sm font-semibold text-slate-700 mb-4">
             Drug Interactions
           </h2>
-          {interactionCalls.map((t, i) => (
-            <div key={i} className="space-y-2">
-              <p className="text-sm text-slate-600">{t.result.summary}</p>
-              {t.result.interactions?.map((ix: any, j: number) => (
-                <div
-                  key={j}
-                  className={`p-3 rounded-lg text-sm ${
-                    ix.severity === "severe"
-                      ? "bg-red-50 border border-red-200"
-                      : ix.severity === "moderate"
-                        ? "bg-amber-50 border border-amber-200"
-                        : "bg-blue-50 border border-blue-200"
-                  }`}
-                >
-                  <div className="font-medium">
-                    {ix.drug1} + {ix.drug2} ({ix.severity})
+          {interactionCalls.map((t, i) => {
+            const interactionResult = DrugInteractionResultSchema.parse(t.result);
+
+            return (
+              <div key={i} className="space-y-2">
+                <p className="text-sm text-slate-600">
+                  {interactionResult.summary}
+                </p>
+                {interactionResult.interactions?.map((ix, j) => (
+                  <div
+                    key={j}
+                    className={`p-3 rounded-lg text-sm ${
+                      ix.severity === "severe"
+                        ? "bg-red-50 border border-red-200"
+                        : ix.severity === "moderate"
+                          ? "bg-amber-50 border border-amber-200"
+                          : "bg-blue-50 border border-blue-200"
+                    }`}
+                  >
+                    <div className="font-medium">
+                      {ix.drug1} + {ix.drug2} ({ix.severity})
+                    </div>
+                    <div className="text-xs mt-1 text-slate-600">
+                      {ix.recommendation}
+                    </div>
                   </div>
-                  <div className="text-xs mt-1 text-slate-600">
-                    {ix.recommendation}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ))}
+                ))}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

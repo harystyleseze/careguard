@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { downloadTransactionPDF } from "../../app/pdf";
+import { reportPdfDownloadFailure } from "../../lib/pdf-download-error";
 import type { RecipientProfile } from "../../lib/types";
 import { ConfirmDialog } from "../primitives/confirm-dialog";
+import { Toast } from "../primitives/toast";
 import { TxLink } from "../primitives/tx-link";
 import type {
   AgentLogEntry,
@@ -41,6 +43,7 @@ export function ActivityTab({
 }: ActivityTabProps) {
   const [showAllLogEntries, setShowAllLogEntries] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   return (
     <div
@@ -50,6 +53,7 @@ export function ActivityTab({
       tabIndex={0}
       className="space-y-4"
     >
+      <Toast message={toastMsg} onDismiss={() => setToastMsg(null)} />
       <ConfirmDialog
         open={confirmOpen}
         title="Reset all agent data?"
@@ -70,9 +74,13 @@ export function ActivityTab({
         <div className="flex items-center gap-3">
           {allTransactions.length > 0 && (
             <button
-              onClick={() =>
-                downloadTransactionPDF(allTransactions, spending, { recipient })
-              }
+              onClick={() => {
+                try {
+                  downloadTransactionPDF(allTransactions, spending, { recipient });
+                } catch (error) {
+                  setToastMsg(reportPdfDownloadFailure(error));
+                }
+              }}
               className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
             >
               Download Report
