@@ -21,6 +21,10 @@ export type PolicyValidation = {
   isValid: boolean;
 };
 
+export const POLICY_AMOUNT_MIN = 1;
+export const POLICY_AMOUNT_MAX = 50000;
+export const POLICY_AMOUNT_STEP = 1;
+
 const FIELD_LABEL: Record<keyof SpendingPolicyInput, string> = {
   dailyLimit: "Daily limit",
   monthlyLimit: "Monthly limit",
@@ -55,10 +59,10 @@ export function validatePolicy(input: unknown): PolicyValidation {
   for (const f of fields) {
     if (!Number.isFinite(v[f])) {
       errors.push({ field: f, message: `${FIELD_LABEL[f]} must be a finite number` });
-    } else if (v[f] < 0) {
-      errors.push({ field: f, message: `${FIELD_LABEL[f]} cannot be negative` });
-    } else if (v[f] > 10000) {
-      errors.push({ field: f, message: `${FIELD_LABEL[f]} cannot exceed 10000` });
+    } else if (v[f] < POLICY_AMOUNT_MIN) {
+      errors.push({ field: f, message: `${FIELD_LABEL[f]} must be greater than 0` });
+    } else if (v[f] > POLICY_AMOUNT_MAX) {
+      errors.push({ field: f, message: `${FIELD_LABEL[f]} cannot exceed ${POLICY_AMOUNT_MAX}` });
     }
   }
 

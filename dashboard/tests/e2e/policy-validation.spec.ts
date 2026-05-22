@@ -16,10 +16,10 @@ test("Policy form blocks negative values and disables Update Policy", async ({ p
   await page.goto("/?tab=policy");
 
   const dailyLimit = page.locator("#policy-dailyLimit");
-  await dailyLimit.fill("-1");
+  await dailyLimit.fill("-100");
   await dailyLimit.blur();
 
-  await expect(page.getByText(/cannot be negative/i)).toBeVisible();
+  await expect(page.getByText(/must be greater than 0/i)).toBeVisible();
 
   const updateButton = page.getByRole("button", { name: "Update Policy" });
   await expect(updateButton).toBeDisabled();
