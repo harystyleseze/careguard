@@ -7,6 +7,7 @@ import {
   type SpendingData,
   type Transaction,
 } from "../lib/types";
+import { sortTransactionsNewestFirst } from "../lib/transactions";
 import type {
   AgentInfo,
   AgentLogEntry,
@@ -29,6 +30,10 @@ export type PolicyForm = typeof DEFAULT_POLICY;
 
 export interface UseAgentStateOptions {
   activeTab: Tab;
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function useAgentState({ activeTab }: UseAgentStateOptions) {
@@ -72,9 +77,13 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     const prev = lastConnectionStateRef.current;
     if (prev === connectionState) return;
     lastConnectionStateRef.current = connectionState;
-    if (connectionState === "active") setLiveMessage("Agent connected");
-    if (connectionState === "paused") setLiveMessage("Agent paused");
-    if (connectionState === "disconnected") setLiveMessage("Agent disconnected");
+    const message =
+      connectionState === "active"
+        ? "Agent connected"
+        : connectionState === "paused"
+          ? "Agent paused"
+          : "Agent disconnected";
+    queueMicrotask(() => setLiveMessage(message));
   }, [agentConnected, agentPaused]);
 
   const addLogEntry = useCallback((message: string) => {
@@ -142,15 +151,17 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       const txs = Array.isArray(data.transactions)
         ? data.transactions.map((t: unknown) => TransactionSchema.parse(t))
         : [];
-      setAllTransactions(txs);
+      setAllTransactions(sortTransactionsNewestFirst(txs));
       if (data.pagination) setPagination(data.pagination);
     } catch {}
   }, []);
 
   useEffect(() => {
-    fetchAgentInfo();
-    fetchSpending();
-    fetchTransactions(pageSize, currentPage * pageSize);
+    queueMicrotask(() => {
+      fetchAgentInfo();
+      fetchSpending();
+      fetchTransactions(pageSize, currentPage * pageSize);
+    });
     const i = setInterval(() => {
       fetchSpending();
       fetchTransactions(pageSize, currentPage * pageSize);
@@ -208,9 +219,9 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         );
         fetchTransactions(pageSize, 0);
         fetchAgentInfo();
-      } catch (err: any) {
+      } catch (err: unknown) {
         addLogEntry(
-          `[${new Date().toLocaleTimeString()}] Connection error: ${err.message}`,
+          `[${new Date().toLocaleTimeString()}] Connection error: ${errorMessage(err)}`,
         );
         setAgentConnected(false);
       } finally {
@@ -249,11 +260,11 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       setPolicySaved(true);
       setTimeout(() => setPolicySaved(false), 3000);
       return { ok: true };
-    } catch (err: any) {
+    } catch (err: unknown) {
       addLogEntry(
-        `[${new Date().toLocaleTimeString()}] Failed to update policy: ${err.message}`,
+        `[${new Date().toLocaleTimeString()}] Failed to update policy: ${errorMessage(err)}`,
       );
-      return { ok: false, error: err.message };
+      return { ok: false, error: errorMessage(err) };
     }
   }, [addLogEntry, policyForm]);
 

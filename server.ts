@@ -35,6 +35,7 @@ import {
 } from "./shared/agent-state.ts";
 import { checkWalletBalance, formatResult } from "./shared/wallet-balance.ts";
 import { appendAuditEntry } from "./shared/audit-log.ts";
+import { paginateTransactionsNewestFirst } from "./shared/transaction-pagination.ts";
 
 // Agent tools
 import {
@@ -993,9 +994,11 @@ app.get("/agent/transactions", (req, res) => {
   const offset = parseInt(req.query.offset as string) || 0;
   const tracker = getSpendingTracker();
   const totalTransactions = tracker.transactions.length;
-  const paginatedTransactions = tracker.transactions
-    .slice(-offset - limit, -offset || undefined)
-    .reverse();
+  const paginatedTransactions = paginateTransactionsNewestFirst(
+    tracker.transactions,
+    limit,
+    offset,
+  );
 
   res.json({
     ...tracker,
