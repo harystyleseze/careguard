@@ -26,6 +26,8 @@ import {
   setSpendingPolicy,
   getSpendingTracker,
   resetSpendingTracker,
+  resolveUSDCIssuer,
+  selectUSDCBalance,
   TOOL_DEFINITIONS,
 } from "./tools.ts";
 
@@ -33,6 +35,11 @@ const PORT = parseInt(process.env.AGENT_PORT || "3004");
 
 if (!process.env.LLM_API_KEY) throw new Error("LLM_API_KEY required in .env");
 if (!process.env.AGENT_SECRET_KEY) throw new Error("AGENT_SECRET_KEY required in .env");
+if (process.env.STELLAR_NETWORK === "public" && !process.env.USDC_ISSUER) {
+  throw new Error("USDC_ISSUER required when STELLAR_NETWORK=public");
+}
+
+const USDC_ISSUER = resolveUSDCIssuer();
 
 const LLM_BASE_URL = process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1";
 const LLM_MODEL = process.env.LLM_MODEL || "llama-3.3-70b-versatile";
@@ -299,7 +306,7 @@ app.get("/agent/wallet", async (req, res) => {
   }
   try {
     const account = await horizonServer.loadAccount(address);
-    const usdc = account.balances.find((b: any) => b.asset_code === "USDC" && b.asset_issuer === process.env.USDC_ISSUER);
+    const usdc = selectUSDCBalance(account.balances as any[], USDC_ISSUER);
     const xlm = account.balances.find((b: any) => b.asset_type === "native");
     const data = {
       usdc: usdc ? parseFloat((usdc as any).balance).toFixed(2) : "0.00",
@@ -460,7 +467,7 @@ app.get("/agent/profile", (_req, res) => { res.json(DEFAULT_PROFILE); });
 async function verifyWallet() {
   try {
     const account = await horizonServer.loadAccount(agentKeypair.publicKey());
-    const usdcBalance = account.balances.find((b: any) => b.asset_code === "USDC" && b.asset_issuer === process.env.USDC_ISSUER);
+    const usdcBalance = selectUSDCBalance(account.balances as any[], USDC_ISSUER);
     if (!usdcBalance) {
       console.error(`\n❌ Agent wallet has no USDC trustline.`);
       console.error(`   Fund at https://faucet.circle.com (Stellar Testnet)`);

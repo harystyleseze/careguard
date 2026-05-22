@@ -50,6 +50,8 @@ import {
   setSpendingPolicy,
   getSpendingTracker,
   resetSpendingTracker,
+  resolveUSDCIssuer,
+  selectUSDCBalance,
   TOOL_DEFINITIONS,
 } from "./agent/tools.ts";
 
@@ -68,6 +70,7 @@ const envSchema = z.object({
   LLM_MODEL: z.string().min(1).optional(),
   OZ_FACILITATOR_API_KEY: z.string().min(1).optional(),
   X402_FACILITATOR_URL: z.string().min(1).optional(),
+  USDC_ISSUER: z.string().min(1).optional(),
 });
 
 const env = envSchema.safeParse(process.env);
@@ -87,6 +90,13 @@ if (env.data.STELLAR_NETWORK === "public" && !env.data.OZ_FACILITATOR_API_KEY) {
   process.exit(1);
 }
 
+if (env.data.STELLAR_NETWORK === "public" && !env.data.USDC_ISSUER) {
+  console.error(
+    "Missing/invalid env: USDC_ISSUER — required when STELLAR_NETWORK=public",
+  );
+  process.exit(1);
+}
+
 if (env.data.STELLAR_NETWORK !== "public" && !env.data.OZ_FACILITATOR_API_KEY) {
   console.warn(
     "  ⚠ OZ_FACILITATOR_API_KEY not set — x402 routes will fail until configured",
@@ -96,6 +106,7 @@ if (env.data.STELLAR_NETWORK !== "public" && !env.data.OZ_FACILITATOR_API_KEY) {
 const PORT = env.data.PORT;
 const LLM_BASE_URL = env.data.LLM_BASE_URL || "https://api.groq.com/openai/v1";
 const LLM_MODEL = env.data.LLM_MODEL || "llama-3.3-70b-versatile";
+const USDC_ISSUER = resolveUSDCIssuer(env.data as unknown as NodeJS.ProcessEnv);
 const NETWORK = (
   env.data.STELLAR_NETWORK === "public" ? "stellar:public" : "stellar:testnet"
 ) as `${string}:${string}`;
@@ -1088,7 +1099,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(`   Wallet: ${agentKeypair.publicKey()}`);
     try {
       const acc = await horizonServer.loadAccount(agentKeypair.publicKey());
-      const usdc = acc.balances.find((b: any) => b.asset_code === "USDC");
+      const usdc = selectUSDCBalance(acc.balances as any[], USDC_ISSUER);
       console.log(`   USDC: ${usdc?.balance || "0"}`);
     } catch {
       console.log("   USDC: unable to check");
