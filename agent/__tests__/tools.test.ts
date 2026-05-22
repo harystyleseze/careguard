@@ -44,7 +44,7 @@ vi.mock("mppx/client", () => ({
 }));
 
 import { describe, it, expect, vi } from "vitest";
-import { payForMedication, payBill, checkSpendingPolicy } from "../tools.ts";
+import { payForMedication, payBill, checkSpendingPolicy, resolveUSDCIssuer, selectUSDCBalance } from "../tools.ts";
 
 describe("Amount Validation (Issue #249)", () => {
   it("should reject Infinity as payment amount", async () => {
@@ -114,5 +114,23 @@ describe("Spending Policy", () => {
   it("should allow valid amounts within policy", () => {
     const policy = checkSpendingPolicy(50, "medications");
     expect(policy.allowed).toBe(true);
+  });
+});
+
+describe("Canonical USDC issuer selection", () => {
+  it("selects the USDC balance with the configured issuer when multiple USDC assets exist", () => {
+    const balances = [
+      { asset_code: "USDC", asset_issuer: "GPHISHINGISSUER", balance: "9999.0000000" },
+      { asset_code: "EURC", asset_issuer: "GCANONICALISSUER", balance: "25.0000000" },
+      { asset_code: "USDC", asset_issuer: "GCANONICALISSUER", balance: "12.5000000" },
+    ];
+
+    expect(selectUSDCBalance(balances, "GCANONICALISSUER")?.balance).toBe("12.5000000");
+  });
+
+  it("rejects public-network boot without an explicit USDC issuer", () => {
+    expect(() => resolveUSDCIssuer({ STELLAR_NETWORK: "public" })).toThrow(
+      "USDC_ISSUER required when STELLAR_NETWORK=public",
+    );
   });
 });

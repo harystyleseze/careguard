@@ -15,6 +15,7 @@ import { createEd25519Signer, ExactStellarScheme } from "@x402/stellar";
 import { Mppx } from "mppx/client";
 import { stellar as stellarCharge } from "@stellar/mpp/charge/client";
 import type { SpendingPolicy, Transaction } from "../shared/types.ts";
+import { SPENDING_TIMEZONE, getLocalDateStr } from "./tz.ts";
 export { SPENDING_TIMEZONE, getLocalDateStr } from "./tz.ts";
 
 // Environment
@@ -23,7 +24,31 @@ const PHARMACY_API = process.env.PHARMACY_API_URL || "http://localhost:3001";
 const BILL_AUDIT_API = process.env.BILL_AUDIT_API_URL || "http://localhost:3002";
 const DRUG_INTERACTION_API = process.env.DRUG_INTERACTION_API_URL || "http://localhost:3003";
 const PHARMACY_PAYMENT_API = process.env.PHARMACY_PAYMENT_API_URL || "http://localhost:3005";
-const USDC_ISSUER = process.env.USDC_ISSUER || "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+export const TESTNET_USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+
+export type StellarBalanceLine = {
+  asset_type?: string;
+  asset_code?: string;
+  asset_issuer?: string;
+  balance?: string;
+};
+
+export function resolveUSDCIssuer(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.STELLAR_NETWORK === "public" && !env.USDC_ISSUER) {
+    throw new Error("USDC_ISSUER required when STELLAR_NETWORK=public");
+  }
+  return env.USDC_ISSUER || TESTNET_USDC_ISSUER;
+}
+
+export function isCanonicalUSDCBalance(balance: StellarBalanceLine, issuer = resolveUSDCIssuer()): boolean {
+  return balance.asset_code === "USDC" && balance.asset_issuer === issuer;
+}
+
+export function selectUSDCBalance(balances: StellarBalanceLine[], issuer = resolveUSDCIssuer()): StellarBalanceLine | undefined {
+  return balances.find((balance) => isCanonicalUSDCBalance(balance, issuer));
+}
+
+const USDC_ISSUER = resolveUSDCIssuer();
 const HORIZON_URL = "https://horizon-testnet.stellar.org";
 
 if (!AGENT_SECRET_KEY) throw new Error("AGENT_SECRET_KEY required in .env");
