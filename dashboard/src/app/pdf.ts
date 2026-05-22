@@ -66,6 +66,33 @@ function addFooter(doc: jsPDF) {
   }
 }
 
+function drawWrappedRecommendation(
+  doc: jsPDF,
+  recommendation: string,
+  startY: number,
+  onPageBreak: () => void,
+) {
+  const maxWidth = 180;
+  const lineHeight = 5;
+  const bottomY = 276;
+  const topY = 58;
+  const wrapped = doc.splitTextToSize(recommendation, maxWidth);
+  const lines = Array.isArray(wrapped) ? wrapped : [wrapped];
+  let y = startY;
+
+  for (const line of lines) {
+    if (y + lineHeight > bottomY) {
+      doc.addPage();
+      onPageBreak();
+      y = topY;
+      doc.setFontSize(9);
+      doc.setTextColor(15, 23, 42);
+    }
+    doc.text(line, 14, y);
+    y += lineHeight;
+  }
+}
+
 export function downloadBillAuditPDF(
   auditResult: BillAuditResult,
   options?: { errorsOnly?: boolean; theme?: PdfTheme; recipient?: RecipientProfile }
@@ -154,7 +181,12 @@ export function downloadBillAuditPDF(
   const finalY = doc.lastAutoTable?.finalY || 200;
   doc.setFontSize(9);
   doc.setTextColor(15, 23, 42);
-  doc.text(auditResult.recommendation || "", 14, finalY + 8, { maxWidth: 180 });
+  drawWrappedRecommendation(
+    doc,
+    auditResult.recommendation || "",
+    finalY + 8,
+    () => addHeader(doc, "Medical Bill Audit Report (cont.)", subtitle, theme),
+  );
 
   addFooter(doc);
   doc.save("careguard-bill-audit-report.pdf");

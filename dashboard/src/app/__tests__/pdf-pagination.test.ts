@@ -24,10 +24,26 @@ const mockSetProperties = vi.fn();
 const mockGetNumberOfPages = vi.fn(() => capturedPageCount);
 const mockSetPage = vi.fn();
 const mockAddPage = vi.fn(() => { capturedPageCount++; });
+const mockSplitTextToSize = vi.fn((text: string, maxWidth: number) => {
+  const chunkSize = Math.max(1, Math.floor(maxWidth / 3));
+  const chunks: string[] = [];
+  for (let i = 0; i < text.length; i += chunkSize) {
+    chunks.push(text.slice(i, i + chunkSize));
+  }
+  return chunks.length > 0 ? chunks : [""];
+});
+
+type AutoTableOptions = {
+  body?: unknown[];
+  columnStyles?: Record<number, { cellWidth?: string }>;
+  didDrawPage?: (data: { pageNumber: number }) => void;
+  showHead?: string;
+};
 
 let capturedPageCount = 1;
-let capturedAutoTableCalls: any[] = [];
-let lastDidDrawPageCallback: ((data: any) => void) | undefined;
+let capturedAutoTableCalls: AutoTableOptions[] = [];
+let lastDidDrawPageCallback: ((data: { pageNumber: number }) => void) | undefined;
+let mockLastAutoTable = { finalY: 200 };
 
 vi.mock('jspdf', () => ({
   default: vi.fn().mockImplementation(() => ({
@@ -41,12 +57,13 @@ vi.mock('jspdf', () => ({
     getNumberOfPages: mockGetNumberOfPages,
     setPage: mockSetPage,
     addPage: mockAddPage,
-    lastAutoTable: { finalY: 200 },
+    splitTextToSize: mockSplitTextToSize,
+    lastAutoTable: mockLastAutoTable,
   })),
 }));
 
 vi.mock('jspdf-autotable', () => ({
-  default: vi.fn().mockImplementation((_doc: any, opts: any) => {
+  default: vi.fn().mockImplementation((_doc: unknown, opts: AutoTableOptions) => {
     capturedAutoTableCalls.push(opts);
     lastDidDrawPageCallback = opts.didDrawPage;
     // Simulate a multi-page table for large bodies.
@@ -92,6 +109,7 @@ describe('downloadBillAuditPDF — pagination (#225)', () => {
     capturedPageCount = 1;
     capturedAutoTableCalls = [];
     lastDidDrawPageCallback = undefined;
+    mockLastAutoTable = { finalY: 200 };
     vi.clearAllMocks();
     mockGetNumberOfPages.mockReturnValue(capturedPageCount);
   });
@@ -133,7 +151,7 @@ describe('downloadBillAuditPDF — pagination (#225)', () => {
     const result = makeAuditResult(200);
     // Mark half as errors.
     result.lineItems.forEach((item, i) => {
-      if (i % 2 === 0) { (item as any).status = 'overcharged'; }
+      if (i % 2 === 0) item.status = 'duplicate';
     });
     downloadBillAuditPDF(result, { errorsOnly: true });
     const tableOpts = capturedAutoTableCalls[0];
@@ -144,6 +162,27 @@ describe('downloadBillAuditPDF — pagination (#225)', () => {
   it('saves the document', () => {
     downloadBillAuditPDF(makeAuditResult(5));
     expect(mockSave).toHaveBeenCalledWith('careguard-bill-audit-report.pdf');
+  });
+
+  it('wraps long recommendation text before rendering it', () => {
+    const result = makeAuditResult(5);
+    result.recommendation = "Long recommendation ".repeat(60);
+
+    downloadBillAuditPDF(result);
+
+    expect(mockSplitTextToSize).toHaveBeenCalledWith(result.recommendation, 180);
+    const textValues = mockText.mock.calls.map((call) => String(call[0]));
+    expect(textValues).not.toContain(result.recommendation);
+  });
+
+  it('adds a page when wrapped recommendation lines do not fit', () => {
+    const result = makeAuditResult(5);
+    result.recommendation = "Long recommendation ".repeat(120);
+    mockLastAutoTable = { finalY: 270 };
+
+    downloadBillAuditPDF(result);
+
+    expect(mockAddPage).toHaveBeenCalled();
   });
 
   it("uses provided recipient in PDF header and metadata", () => {
