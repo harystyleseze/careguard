@@ -51,7 +51,7 @@ function saveOrder(order: any) {
 const app = express();
 applySecurityMiddleware(app);
 app.use(createCorsMiddleware());
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "20kb" }));
 
 app.get("/", (_req, res) => {
   res.json({
@@ -146,6 +146,13 @@ app.post("/pharmacy/order", async (req, res) => {
   response.headers.forEach((value: string, key: string) => res.setHeader(key, value));
   const responseBody = await response.json();
   res.status(response.status).json(responseBody);
+});
+
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large", limit: err.limit });
+  }
+  next(err);
 });
 
 app.listen(PORT, () => {

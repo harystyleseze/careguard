@@ -16,7 +16,8 @@ import { createEd25519Signer, ExactStellarScheme } from "@x402/stellar";
 import { Mppx } from "mppx/client";
 import { stellar as stellarCharge } from "@stellar/mpp/charge/client";
 import type { SpendingPolicy, Transaction } from "../shared/types.ts";
-export { SPENDING_TIMEZONE, getLocalDateStr } from "./tz.ts";
+import { SPENDING_TIMEZONE, getLocalDateStr } from "./tz.ts";
+export { SPENDING_TIMEZONE, getLocalDateStr };
 
 // Environment
 const AGENT_SECRET_KEY = process.env.AGENT_SECRET_KEY;
@@ -456,6 +457,17 @@ export async function payBill(providerId: string, providerName: string, descript
       .build();
 
     stellarTx.sign(agentKeypair);
+
+    // Belt-and-braces: verify the signed envelope's signer hint matches the agent keypair
+    // before broadcast — cheap guard against future wallet mix-ups.
+    const sigHint = stellarTx.signatures[0]?.hint();
+    if (!sigHint || !sigHint.equals(agentKeypair.signatureHint())) {
+      throw new Error(
+        `Signer mismatch: expected ${agentKeypair.publicKey()} — refusing to submit`
+      );
+    }
+    console.log(`  [Stellar] Signer verified: ${agentKeypair.publicKey().slice(0, 8)}...`);
+
     const result = await horizonServer.submitTransaction(stellarTx);
     stellarTxHash = (result as any).hash;
     logger.info({ txHash: stellarTxHash }, "[Stellar] TX confirmed");

@@ -24,6 +24,7 @@ import { createCorsMiddleware } from "./shared/cors.ts";
 import { applySecurityMiddleware } from "./shared/security-middleware.ts";
 import { logger } from "./shared/logger.ts";
 import { validateTask, getSuspiciousTaskCount } from "./shared/task-validation.ts";
+import { buildScrubSession, scrubText } from "./shared/prompt-scrub.ts";
 
 // Sentry (gated by SENTRY_DSN)
 import { initSentry } from "./shared/sentry.ts";
@@ -114,7 +115,11 @@ const sentry = await initSentry({ service: "careguard-server" });
 app.use(sentry.requestHandler());
 applySecurityMiddleware(app);
 app.use(createCorsMiddleware());
-app.use(express.json());
+const _smallJson = express.json({ limit: process.env.JSON_BODY_LIMIT ?? "20kb" });
+const _largeJson = express.json({ limit: process.env.BILL_AUDIT_BODY_LIMIT ?? "256kb" });
+app.use((req, res, next) =>
+  (req.path.startsWith("/bill/audit") ? _largeJson : _smallJson)(req, res, next)
+);
 
 // --- Root info ---
 app.get("/", (_req, res) => {
@@ -843,6 +848,15 @@ IMPORTANT RULES:
 Current care recipient: Rosa Garcia (age 78)
 Caregiver: Maria Garcia (daughter)`;
 
+// PHI scrubbing — active unless LLM_PII_SCRUB=false (e.g. provider has a BAA)
+const _piiScrub = process.env.LLM_PII_SCRUB !== "false";
+const _scrubSession = _piiScrub
+  ? buildScrubSession(["Rosa Garcia"], ["Maria Garcia"])
+  : null;
+const SCRUBBED_SYSTEM_PROMPT = _scrubSession
+  ? scrubText(SYSTEM_PROMPT, _scrubSession)
+  : SYSTEM_PROMPT;
+
 const LLM_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] =
   TOOL_DEFINITIONS.map((t) => ({
     type: "function" as const,
@@ -894,9 +908,10 @@ async function executeTool(name: string, input: any): Promise<any> {
 }
 
 async function runAgent(task: string) {
+  const userTask = _scrubSession ? scrubText(task, _scrubSession) : task;
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: task },
+    { role: "system", content: SCRUBBED_SYSTEM_PROMPT },
+    { role: "user", content: userTask },
   ];
   const toolCalls: Array<{ tool: string; input: any; result: any }> = [];
   let finalResponse = "";
@@ -1064,6 +1079,14 @@ app.post("/agent/run", async (req, res) => {
 // ============================================================
 
 const horizonServer = new Horizon.Server("https://horizon-testnet.stellar.org");
+
+// 413 handler — must be before Sentry so Sentry also captures it
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large", limit: err.limit });
+  }
+  next(err);
+});
 
 // Sentry error handler must be registered AFTER all routes
 app.use(sentry.errorHandler());

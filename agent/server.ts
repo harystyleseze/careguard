@@ -17,6 +17,7 @@ import { applySecurityMiddleware } from "../shared/security-middleware.ts";
 import { logger } from "../shared/logger.ts";
 import { validateTask, getSuspiciousTaskCount } from "../shared/task-validation.ts";
 import { appendAuditEntry } from "../shared/audit-log.ts";
+import { buildScrubSession, scrubText } from "../shared/prompt-scrub.ts";
 import {
   comparePharmacyPrices,
   auditBill,
@@ -74,6 +75,15 @@ PAYMENT PROTOCOLS:
 Current care recipient: Rosa Garcia (age 78)
 Caregiver: Maria Garcia (daughter)`;
 
+// PHI scrubbing — active unless LLM_PII_SCRUB=false (e.g. provider has a BAA)
+const _piiScrub = process.env.LLM_PII_SCRUB !== "false";
+const _scrubSession = _piiScrub
+  ? buildScrubSession(["Rosa Garcia"], ["Maria Garcia"])
+  : null;
+const SCRUBBED_SYSTEM_PROMPT = _scrubSession
+  ? scrubText(SYSTEM_PROMPT, _scrubSession)
+  : SYSTEM_PROMPT;
+
 // Convert tool definitions to OpenAI-compatible function format
 const LLM_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = TOOL_DEFINITIONS.map((t) => ({
   type: "function" as const,
@@ -130,9 +140,10 @@ let totalCompletionTokens = 0;
 
 // Run the agent with a task — full agentic loop
 async function runAgent(task: string) {
+  const userTask = _scrubSession ? scrubText(task, _scrubSession) : task;
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: task },
+    { role: "system", content: SCRUBBED_SYSTEM_PROMPT },
+    { role: "user", content: userTask },
   ];
   const toolCalls: Array<{ tool: string; input: any; result: any }> = [];
   let finalResponse = "";
@@ -304,7 +315,7 @@ let toolCallCapHitsTotal = 0;
 const app = express();
 applySecurityMiddleware(app);
 app.use(createCorsMiddleware());
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "20kb" }));
 
 let agentPaused = false;
 
@@ -498,6 +509,15 @@ async function verifyWallet() {
     process.exit(1);
   }
 }
+
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large", limit: err.limit });
+  }
+  next(err);
+});
+
+export { app };
 
 app.listen(PORT, async () => {
   logger.info({ port: PORT, network: "stellar:testnet", llm: LLM_MODEL, llmBaseUrl: LLM_BASE_URL, wallet: agentKeypair.publicKey() }, "CareGuard Agent started");

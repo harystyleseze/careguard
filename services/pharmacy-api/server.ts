@@ -31,7 +31,7 @@ const pricingProvider = createPricingProvider();
 const app = express();
 applySecurityMiddleware(app);
 app.use(createCorsMiddleware());
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "20kb" }));
 
 // Unprotected endpoints
 app.get("/", async (_req, res) => {
@@ -102,6 +102,13 @@ app.get("/pharmacy/compare", async (req, res) => {
       drugCount: await pricingProvider.getDrugCount()
     });
   }
+});
+
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large", limit: err.limit });
+  }
+  next(err);
 });
 
 app.listen(PORT, async () => {

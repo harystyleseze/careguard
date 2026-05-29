@@ -103,7 +103,7 @@ function auditBill(lineItems: BillItem[]) {
 const app = express();
 applySecurityMiddleware(app);
 app.use(createCorsMiddleware());
-app.use(express.json());
+app.use(express.json({ limit: process.env.BILL_AUDIT_BODY_LIMIT ?? "256kb" }));
 
 app.get("/", (_req, res) => {
   res.json({
@@ -156,6 +156,13 @@ app.post("/bill/audit", (req, res) => {
       res.status(400).json({ error: "Invalid request body" });
     }
   }
+});
+
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large", limit: err.limit });
+  }
+  next(err);
 });
 
 app.listen(PORT, () => {

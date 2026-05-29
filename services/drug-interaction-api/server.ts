@@ -69,7 +69,7 @@ function checkInteractions(medications: string[]) {
 const app = express();
 applySecurityMiddleware(app);
 app.use(createCorsMiddleware());
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "20kb" }));
 
 app.get("/", (_req, res) => {
   res.json({ service: "CareGuard Drug Interaction Check API", version: "1.0.0", protocol: "x402 on Stellar", network: NETWORK, payTo: PAY_TO, price: "$0.001 per check" });
@@ -89,6 +89,13 @@ app.get("/drug/interactions", (req, res) => {
   const medications = medsParam.split(",").map(m => m.trim()).filter(Boolean);
   if (medications.length < 2) { res.status(400).json({ error: "Need at least 2 medications" }); return; }
   res.json(checkInteractions(medications));
+});
+
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large", limit: err.limit });
+  }
+  next(err);
 });
 
 app.listen(PORT, () => {

@@ -1,8 +1,12 @@
 // vi.hoisted runs before any vi.mock factory — sets env vars + captures mutable refs
-const { mockMppFetch, onProgressHolder } = vi.hoisted(() => {
+const { mockMppFetch, onProgressHolder, MOCK_HINT } = vi.hoisted(() => {
   process.env.AGENT_SECRET_KEY = "SBWWZYCAFDDJXNRRMKSFNRB6OTVZHTCMPUCVZ4FBZLSPHFKHYLPRTJCD";
   const onProgressHolder: { fn?: (event: any) => void } = {};
-  return { mockMppFetch: vi.fn(), onProgressHolder };
+  return {
+    mockMppFetch: vi.fn(),
+    onProgressHolder,
+    MOCK_HINT: Buffer.from([0xca, 0xfe, 0xba, 0xbe]),
+  };
 });
 
 vi.mock("dotenv/config", () => ({}));
@@ -13,12 +17,21 @@ vi.mock("fs", () => ({
   mkdirSync: vi.fn(),
 }));
 vi.mock("@stellar/stellar-sdk", () => ({
-  Keypair: { fromSecret: vi.fn().mockReturnValue({ publicKey: () => "GPUB123", sign: vi.fn() }) },
+  Keypair: {
+    fromSecret: vi.fn().mockReturnValue({
+      publicKey: () => "GPUB123",
+      sign: vi.fn(),
+      signatureHint: vi.fn().mockReturnValue(MOCK_HINT),
+    }),
+  },
   Networks: { TESTNET: "Test SDF Network ; September 2015" },
   TransactionBuilder: vi.fn().mockReturnValue({
     addOperation: vi.fn().mockReturnThis(),
     setTimeout: vi.fn().mockReturnThis(),
-    build: vi.fn().mockReturnValue({ sign: vi.fn() }),
+    build: vi.fn().mockReturnValue({
+      sign: vi.fn(),
+      signatures: [{ hint: vi.fn().mockReturnValue(MOCK_HINT) }],
+    }),
   }),
   Operation: { payment: vi.fn() },
   Asset: vi.fn(),

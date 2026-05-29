@@ -64,6 +64,54 @@ Log format: JSON in `NODE_ENV=production`, pino-pretty in development.
 
 ---
 
+## #97 — PHI Scrubbing for LLM Providers
+
+### Data flow to LLM providers
+
+CareGuard sends two types of text to the configured LLM provider (Groq, OpenAI, OpenRouter, etc.):
+
+| What | When | Contains PHI? |
+|------|------|---------------|
+| `SYSTEM_PROMPT` | Once per agent run | Patient/caregiver **names** (scrubbed — see below) |
+| User task string | Once per run | May contain names typed by the caregiver (scrubbed) |
+| Tool call results | Each tool invocation | Medication names, prices, CPT codes — **not scrubbed** (not identifying by themselves) |
+
+### PHI scrubbing
+
+Before any text reaches the LLM, `shared/prompt-scrub.ts` replaces real patient and caregiver names with stable pseudonyms for the duration of a run:
+
+| Real value | Pseudonym sent to LLM |
+|------------|-----------------------|
+| Rosa Garcia | Patient A |
+| Maria Garcia | Caregiver A |
+
+The mapping table is kept **server-side only** and never forwarded to the provider. Agent tool calls continue to use real wallet IDs and API identifiers — only the free-form text visible to the model is pseudonymised.
+
+### Disabling scrubbing (BAA providers)
+
+Set `LLM_PII_SCRUB=false` in your environment to send real names to the LLM. Do this **only** when your LLM provider has a signed HIPAA BAA covering patient name use in prompts (e.g. enterprise OpenAI).
+
+---
+
+## #92 — Body-Size Limits
+
+All Express endpoints enforce explicit JSON body limits to reduce DoS surface:
+
+| Endpoint | Limit | Configured via |
+|----------|-------|----------------|
+| `/bill/audit` | 256 kb | `BILL_AUDIT_BODY_LIMIT` |
+| All others | 20 kb | `JSON_BODY_LIMIT` |
+
+Requests exceeding the limit receive HTTP 413 with a JSON error body.
+
+---
+
+## Secret Rotation
+
+See `docs/runbooks/rotate-secrets.md` for step-by-step rotation procedures for every secret (agent wallet, OZ API key, LLM key, MPP key, JWT).
+
+---
+
 ## Reporting Vulnerabilities
 
 Open a private issue on the repository or contact the maintainers directly. Do not disclose vulnerabilities publicly before a fix is available.
