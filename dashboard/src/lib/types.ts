@@ -82,6 +82,7 @@ export const SpendingDataSchema = z.object({
     medications: z.number(),
     bills: z.number(),
     serviceFees: z.number(),
+    pendingServiceFees: z.number(),
     total: z.number(),
   }),
   budgetRemaining: z.object({
