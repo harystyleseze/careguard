@@ -82,6 +82,7 @@ const envSchema = z.object({
   MPP_SECRET_KEY: z.string().min(1, "MPP_SECRET_KEY required"),
   LLM_BASE_URL: z.string().min(1).optional(),
   LLM_MODEL: z.string().min(1).optional(),
+  CAREGIVER_TOKEN: z.string().min(1, "CAREGIVER_TOKEN required"),
   OZ_FACILITATOR_API_KEY: z.string().min(1).optional(),
   X402_FACILITATOR_URL: z.string().min(1).optional(),
 });
@@ -110,6 +111,7 @@ if (env.data.STELLAR_NETWORK !== "public" && !env.data.OZ_FACILITATOR_API_KEY) {
 const PORT = env.data.PORT;
 const LLM_BASE_URL = env.data.LLM_BASE_URL || "https://api.groq.com/openai/v1";
 const LLM_MODEL = env.data.LLM_MODEL || "llama-3.3-70b-versatile";
+const CAREGIVER_TOKEN = env.data.CAREGIVER_TOKEN;
 const NETWORK = (
   env.data.STELLAR_NETWORK === "public" ? "stellar:public" : "stellar:testnet"
 ) as `${string}:${string}`;
@@ -146,7 +148,18 @@ let _profileData = {
 const app = express();
 let isDraining = false;
 
-app.use("/agent/audit", auditRouter);
+function requireCaregiverToken(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith("Bearer ")) {
+    res.status(401).setHeader("WWW-Authenticate", "Bearer").json({ error: "Missing caregiver token" });
+    return;
+  }
+  if (auth.slice("Bearer ".length) !== CAREGIVER_TOKEN) {
+    res.status(403).json({ error: "Invalid caregiver token" });
+    return;
+  }
+  next();
+}
 
 app.use("/agent", rateLimiters.agent);
 app.use("/health", rateLimiters.health);
@@ -162,6 +175,8 @@ app.use((req, res, next) =>
 );
 app.use(requestContextMiddleware());
 app.use(requestLoggerMiddleware());
+app.use("/agent", requireCaregiverToken);
+app.use("/agent/audit", auditRouter);
 
 // --- Prometheus metrics ---
 app.get("/metrics", metricsHandler());
@@ -204,7 +219,7 @@ app.get("/ready", async (_req, res) => {
   const checks: Record<string, boolean | string> = {};
 
   // 1. Required env vars
-  const requiredEnv = ["LLM_API_KEY", "AGENT_SECRET_KEY", "MPP_SECRET_KEY"];
+  const requiredEnv = ["LLM_API_KEY", "AGENT_SECRET_KEY", "MPP_SECRET_KEY", "CAREGIVER_TOKEN"];
   const missingEnv = requiredEnv.filter((k) => !process.env[k]);
   checks.env = missingEnv.length === 0 ? true : `missing: ${missingEnv.join(", ")}`;
 

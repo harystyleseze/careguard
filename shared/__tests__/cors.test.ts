@@ -109,14 +109,16 @@ describe("createCorsMiddleware — production mode", () => {
 });
 
 describe("createCorsMiddleware — development mode", () => {
-  it("allows any origin in dev (wildcard behaviour)", async () => {
+  it("pins origins in dev too", async () => {
     const app = buildApp("development", undefined);
-    const res = await supertest(app)
+    const allowed = await supertest(app)
+      .get("/test")
+      .set("Origin", "http://localhost:3000");
+    const blocked = await supertest(app)
       .get("/test")
       .set("Origin", "http://anything.local");
 
-    expect(res.status).toBe(200);
-    // cors() with wildcard sets '*' or reflects origin
-    expect(res.headers["access-control-allow-origin"]).toBeTruthy();
+    expect(allowed.headers["access-control-allow-origin"]).toBe("http://localhost:3000");
+    expect(blocked.headers["access-control-allow-origin"]).toBeUndefined();
   });
 });

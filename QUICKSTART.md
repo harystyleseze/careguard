@@ -58,6 +58,14 @@ Fill in these required values:
 | `MPP_SECRET_KEY` | Run: `openssl rand -hex 32` |
 | `LLM_API_KEY` | [console.groq.com](https://console.groq.com) (or any OpenAI-compatible provider) |
 
+For the dashboard, copy `.env.local.example` to `.env.local` and edit it if your agent API runs on a different URL:
+
+```bash
+cd dashboard
+cp .env.local.example .env.local
+cd ..
+```
+
 ---
 
 ## Step 4: Fund Agent with Testnet USDC

@@ -1,11 +1,11 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 export const BillLineItemSchema = z.object({
   description: z.string(),
   cptCode: z.string().optional(),
   quantity: z.number(),
   chargedAmount: z.number(),
-  status: z.enum(["valid", "duplicate", "upcoded", "unbundled", "error"]),
+  status: z.enum(['valid', 'duplicate', 'upcoded', 'unbundled', 'error']),
   suggestedAmount: z.number().optional(),
   errorDescription: z.string().optional(),
 });
@@ -58,7 +58,7 @@ export type DrugInteractionResult = z.infer<typeof DrugInteractionResultSchema>;
 export const TransactionSchema = z.object({
   id: z.string(),
   timestamp: z.string(),
-  type: z.enum(["medication", "bill", "service_fee"]),
+  type: z.enum(['medication', 'bill', 'service_fee']),
   description: z.string(),
   amount: z.number(),
   recipient: z.string(),
@@ -66,6 +66,7 @@ export const TransactionSchema = z.object({
   mppOrderId: z.string().optional(),
   status: z.string(),
   category: z.string(),
+  pendingUntil: z.string().optional(),
 });
 
 export type Transaction = z.infer<typeof TransactionSchema>;
@@ -86,6 +87,7 @@ export const SpendingDataSchema = z.object({
     medicationMonthlyBudget: z.number(),
     billMonthlyBudget: z.number(),
     approvalThreshold: z.number(),
+    holdTimeSeconds: z.number(),
   }),
   spending: z.object({
     medications: z.number(),
@@ -118,4 +120,3 @@ export type CaregiverProfile = {
   location?: string;
   notifications?: string;
 };
-

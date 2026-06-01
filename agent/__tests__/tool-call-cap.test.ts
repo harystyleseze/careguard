@@ -72,8 +72,10 @@ process.env.PHARMACY_1_PUBLIC_KEY = "GBQTESTPHARMACY1";
 process.env.BILL_PROVIDER_PUBLIC_KEY = "GBQTESTBILLPROVIDER";
 process.env.MPP_SECRET_KEY = "test-mpp-secret";
 process.env.MAX_TOOL_CALLS_PER_RUN = "5";
+process.env.CAREGIVER_TOKEN = "test-caregiver-token";
 
 const { app } = await import("../../server.ts");
+const auth = (req: any) => req.set("Authorization", "Bearer test-caregiver-token");
 
 describe("tool call cap", () => {
   beforeEach(() => {
@@ -102,8 +104,7 @@ describe("tool call cap", () => {
       usage: { prompt_tokens: 10, completion_tokens: 5 },
     }));
 
-    const res = await request(app)
-      .post("/agent/run")
+    const res = await auth(request(app).post("/agent/run"))
       .send({ task: "Run the spending summary repeatedly" });
 
     expect(res.status).toBe(200);
@@ -131,8 +132,7 @@ describe("tool call cap", () => {
       };
     });
 
-    const res = await request(app)
-      .post("/agent/run")
+    const res = await auth(request(app).post("/agent/run"))
       .send({ task: "Check spending summary" });
 
     expect(res.status).toBe(200);
