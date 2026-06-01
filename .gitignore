@@ -5,4 +5,6 @@ dist/
 .env.local
 *.log
 data/audit.log.jsonl
+data/spending.json
+data/orders.json
 .DS_Store
