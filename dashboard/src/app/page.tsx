@@ -6,6 +6,7 @@ import { DashboardFooter } from "../components/dashboard-footer";
 import { DashboardHeader } from "../components/dashboard-header";
 import { DashboardTabsNav } from "../components/dashboard-tabs-nav";
 import { LowBalanceBanner } from "../components/low-balance-banner";
+import { WalletNetworkBanner } from "../components/wallet-network-banner";
 import { LiveRegion } from "../components/primitives/live-region";
 import { ActivityTab } from "../components/tabs/activity-tab";
 import { BillsTab } from "../components/tabs/bills-tab";
@@ -55,6 +56,11 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen">
       <LiveRegion message={state.liveMessage} />
+      <WalletNetworkBanner
+        expectedNetwork="testnet"
+        walletAddress={state.agentInfo?.agentWallet}
+        enabled={true}
+      />
       <LowBalanceBanner
         pausedReason={state.agentPausedReason}
         walletBalance={state.walletBalance}

@@ -591,6 +591,29 @@ app.get("/agent/profile", (req, res) => {
   res.json({ recipient, caregiver: caregiverProfile });
 });
 
+// Marketplace-style metrics endpoint for analytics dashboard
+app.get("/agent/metrics", (req, res) => {
+  const recipientId = (req.query.recipient_id as string) || "rosa";
+  setCurrentRecipient(recipientId);
+  const tracker = getSpendingTracker();
+  
+  // Calculate metrics from transaction history
+  const totalListings = tracker.transactions.length;
+  const activeListings = tracker.transactions.filter((t: any) => t.status === "pending").length;
+  const totalSales = tracker.transactions.filter((t: any) => t.status === "completed").length;
+  const volumeXLM = tracker.transactions
+    .filter((t: any) => t.status === "completed")
+    .reduce((sum: number, t: any) => sum + (t.amount || 0), 0);
+  
+  res.json({
+    totalListings,
+    activeListings,
+    totalSales,
+    volumeXLM,
+    recipientId,
+  });
+});
+
 app.patch("/agent/profile", (req, res) => {
   const { recipient, caregiver } = req.body ?? {};
   const recipientId = (req.query.recipient_id as string) || "rosa";

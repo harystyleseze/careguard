@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Bar } from "../primitives/bar";
 import { Btn } from "../primitives/btn";
 import { Card } from "../primitives/card";
+import { MarketplaceAnalytics } from "../marketplace-analytics";
 import type { AgentResult, SpendingData } from "../types";
 import type { RecipientProfile } from "../../lib/types";
 
@@ -60,6 +61,9 @@ export function OverviewTab({
       className="space-y-6"
     >
       <AdherencePrompt />
+
+      {/* Marketplace Analytics Cards */}
+      <MarketplaceAnalytics />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card

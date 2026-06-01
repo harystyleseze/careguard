@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed"
   },
@@ -22,13 +24,19 @@
   "devDependencies": {
     "@playwright/test": "^1.54.2",
     "@tailwindcss/postcss": "^4",
+    "@testing-library/jest-dom": "^6.1.5",
+    "@testing-library/react": "^14.1.2",
+    "@testing-library/user-event": "^14.5.1",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4.2.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "jsdom": "^23.0.1",
     "pdf-parse": "^1.1.1",
     "tailwindcss": "^4",
-    "typescript": "5.8.3"
+    "typescript": "5.8.3",
+    "vitest": "^1.0.4"
   }
 }
