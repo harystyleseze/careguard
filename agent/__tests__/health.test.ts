@@ -46,6 +46,7 @@ process.env.AGENT_SECRET_KEY = "SCZANGBA5YHTNYVS23C4QSOT45PZCBL2D4ZO5TSRE73UFYS3
 process.env.PHARMACY_1_PUBLIC_KEY = "GBQTESTPHARMACY1";
 process.env.BILL_PROVIDER_PUBLIC_KEY = "GBQTESTBILLPROVIDER";
 process.env.MPP_SECRET_KEY = "test-mpp-secret";
+process.env.CAREGIVER_TOKEN = "test-caregiver-token";
 
 const { app } = await import("../../server.ts");
 
