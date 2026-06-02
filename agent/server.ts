@@ -50,6 +50,7 @@ import {
   confirmAdherenceReminder,
   setCurrentRecipient,
   TOOL_DEFINITIONS,
+  validateToolInput,
 } from "./tools.ts";
 import { getPendingAdherences } from "../shared/adherence.ts";
 import { notify } from "../shared/notifications.ts";
@@ -127,6 +128,7 @@ type ToolResult = Record<string, unknown>;
 
 async function executeTool(name: string, input: Record<string, unknown>): Promise<ToolResult> {
   try {
+    input = validateToolInput(name, input);
     let result: any;
     const rid = (input.recipient_id as string) || "rosa";
     setCurrentRecipient(rid);
@@ -404,7 +406,7 @@ app.post("/agent/approvals/:txId", async (req, res) => {
   }
 
   try {
-    let result;
+    let result: any;
     if (tx.category === "medications") {
       const match = tx.description.match(/(.+) from (.+)/);
       if (!match) throw new Error("Cannot parse transaction description");

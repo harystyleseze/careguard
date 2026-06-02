@@ -3,6 +3,7 @@ dist/
 .env
 .env.prod
 .env.local
+.dev-seed
 *.log
 data/audit.log.jsonl
 data/spending.json

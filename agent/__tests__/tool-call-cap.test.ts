@@ -37,6 +37,7 @@ vi.mock("../../agent/tools.ts", () => ({
   getSpendingTracker: vi.fn(() => ({ transactions: [], medications: 0, bills: 0, serviceFees: 0 })),
   resetSpendingTracker: vi.fn(),
   TOOL_DEFINITIONS: [],
+  validateToolInput: vi.fn((_name: string, input: Record<string, unknown>) => input),
 }));
 vi.mock("../../shared/wallet-balance.ts", () => ({
   checkWalletBalance: vi.fn(async () => ({ action: "ok" })),

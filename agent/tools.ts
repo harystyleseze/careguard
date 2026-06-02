@@ -17,6 +17,7 @@
 
 import 'dotenv/config';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { z } from 'zod';
 import { logger } from '../shared/logger.ts';
 import {
   Keypair,
@@ -52,6 +53,13 @@ import {
   agentSpendingUsd,
   agentTransactionsTotal,
 } from '../shared/metrics.ts';
+import {
+  assertMockNetworkAllowed,
+  createMockReceipt,
+  isMockNetwork,
+} from '../shared/network-mode.ts';
+
+assertMockNetworkAllowed();
 
 // Environment
 const AGENT_SECRET_KEY = process.env.AGENT_SECRET_KEY;
@@ -145,7 +153,7 @@ async function submitTransactionWithRetry(
 // Helper: submit transaction with automatic fee bump on insufficient_fee error
 async function submitTransactionWithFeeBump(
   server: Horizon.Server,
-  account: Horizon.ServerApi.AccountRecord,
+  account: any,
   operations: any[],
   signer: Keypair,
   initialFee?: string,
@@ -212,19 +220,52 @@ async function waitForStellarSettlement(
 }
 
 // --- x402 Client: Auto-handles 402 Payment Required for API queries ---
-const signer = createEd25519Signer(AGENT_SECRET_KEY, 'stellar:testnet');
-const x402ClientInstance = new x402Client().register(
-  'stellar:testnet',
-  new ExactStellarScheme(signer),
-);
-const x402Fetch = wrapFetchWithPayment(fetch, x402ClientInstance);
+const x402Fetch = isMockNetwork()
+  ? fetch
+  : wrapFetchWithPayment(
+      fetch,
+      new x402Client().register(
+        'stellar:testnet',
+        new ExactStellarScheme(
+          createEd25519Signer(AGENT_SECRET_KEY, 'stellar:testnet'),
+        ),
+      ),
+    );
 
 // --- MPP Client: Auto-handles 402 for medication order payments ---
 // Use factory function to create client instance (supports DI for testing)
-let mppClient: MppClientInstance = createMppClient({
-  keypair: agentKeypair,
-  mode: 'pull',
-});
+let mppClient: MppClientInstance = isMockNetwork()
+  ? {
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        const receipt = createMockReceipt('mpp', {
+          url: String(input),
+          body: init?.body ? String(init.body) : '',
+        });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            order: { id: receipt.receiptId },
+            receipt,
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'Payment-Receipt': Buffer.from(
+                JSON.stringify({ reference: receipt.stellarTxHash }),
+              ).toString('base64'),
+            },
+          },
+        );
+      },
+      get lastTxHash() {
+        return undefined;
+      },
+    }
+  : createMppClient({
+      keypair: agentKeypair,
+      mode: 'pull',
+    });
 
 /**
  * Set a custom MPP client instance (for testing/DI).
@@ -246,6 +287,16 @@ export function getMppClient(): MppClientInstance {
 const DATA_DIR = new URL('../data', import.meta.url).pathname;
 
 let currentRecipientId = 'rosa';
+
+const DEFAULT_POLICY: SpendingPolicy = {
+  dailyLimit: 100,
+  monthlyLimit: 500,
+  medicationMonthlyBudget: 300,
+  billMonthlyBudget: 500,
+  approvalThreshold: 75,
+  holdTimeSeconds: 0,
+  notifications: { email: false, sms: false },
+};
 
 export function setCurrentRecipient(recipientId: string) {
   currentRecipientId = recipientId;
@@ -297,6 +348,14 @@ interface SpendingTracker {
   transactions: Transaction[];
 }
 
+type SpendingPolicyInput = Partial<SpendingPolicy> & {
+  dailyLimit: number;
+  monthlyLimit: number;
+  medicationMonthlyBudget: number;
+  billMonthlyBudget: number;
+  approvalThreshold: number;
+};
+
 function loadSpending(recipientId?: string): SpendingTracker {
   const file = getSpendingFile(recipientId);
   if (!existsSync(file)) return { medications: 0, bills: 0, serviceFees: 0, transactions: [] };
@@ -317,15 +376,32 @@ function truncateError(message: string): string {
   return message.replace(/<[^>]*>/g, '').slice(0, MAX_ERROR_LENGTH);
 }
 
-const DEFAULT_POLICY: SpendingPolicy = {
-  dailyLimit: 100,
-  monthlyLimit: 500,
-  medicationMonthlyBudget: 300,
-  billMonthlyBudget: 500,
-  approvalThreshold: 75,
-  holdTimeSeconds: 0,
-  notifications: { email: false, sms: false },
-};
+function recordServiceFee(
+  amount: number,
+  description: string,
+  recipient: string,
+  stellarTxHash?: string,
+) {
+  x402SettlementsTotal.inc();
+  spendingTracker.serviceFees += amount;
+  spendingTracker.transactions.push({
+    id: `tx-${Date.now()}`,
+    timestamp: new Date().toISOString(),
+    type: 'service_fee',
+    description,
+    amount,
+    recipient,
+    stellarTxHash,
+    status: 'completed',
+    category: 'service_fees',
+  });
+  agentTransactionsTotal.inc({ status: 'completed' });
+  agentSpendingUsd.set(
+    { category: 'service_fees' },
+    spendingTracker.serviceFees,
+  );
+  saveSpending(spendingTracker);
+}
 
 function loadPolicy(recipientId?: string): SpendingPolicy {
   const file = getPolicyFile(recipientId);
@@ -340,28 +416,54 @@ function savePolicy(policy: SpendingPolicy, recipientId?: string) {
 
 let currentPolicy: SpendingPolicy = loadPolicy();
 
-export function setSpendingPolicy(policy: SpendingPolicy) {
+export function setSpendingPolicy(policy: SpendingPolicyInput): void;
+export function setSpendingPolicy(recipientId: string, policy: SpendingPolicyInput): void;
+export function setSpendingPolicy(
+  policyOrRecipientId: SpendingPolicyInput | string,
+  maybePolicy?: SpendingPolicyInput,
+) {
+  if (typeof policyOrRecipientId === 'string') {
+    setCurrentRecipient(policyOrRecipientId);
+  }
+  const policy =
+    typeof policyOrRecipientId === 'string' ? maybePolicy : policyOrRecipientId;
+  if (!policy) {
+    throw new Error('Spending policy required');
+  }
+  const normalizedPolicy: SpendingPolicy = {
+    ...DEFAULT_POLICY,
+    ...policy,
+    notifications: {
+      ...DEFAULT_POLICY.notifications,
+      ...(policy.notifications || {}),
+      email: policy.notifications?.email ?? false,
+      sms: policy.notifications?.sms ?? false,
+    },
+  };
   const previous = currentPolicy;
-  currentPolicy = policy;
-  savePolicy(policy);
+  currentPolicy = normalizedPolicy;
+  savePolicy(normalizedPolicy);
   appendAuditEntry({
     event: 'policy.updated',
     actor: 'caregiver',
     details: {
       previous: { ...previous },
-      current: { ...policy },
+      current: { ...normalizedPolicy },
     },
   });
   notify({
     level: "info",
     title: "Spending Policy Updated",
-    description: `Daily: $${policy.dailyLimit}, Monthly: $${policy.monthlyLimit}, Meds: $${policy.medicationMonthlyBudget}, Bills: $${policy.billMonthlyBudget}, Approval: $${policy.approvalThreshold}`,
+    description: `Daily: $${normalizedPolicy.dailyLimit}, Monthly: $${normalizedPolicy.monthlyLimit}, Meds: $${normalizedPolicy.medicationMonthlyBudget}, Bills: $${normalizedPolicy.billMonthlyBudget}, Approval: $${normalizedPolicy.approvalThreshold}`,
   });
 }
-export function getSpendingTracker() {
+export function getSpendingTracker(): any {
   return { ...spendingTracker, policy: currentPolicy };
 }
-export function resetSpendingTracker() {
+export function resetSpendingTracker(recipientId?: string) {
+  if (recipientId) {
+    setCurrentRecipient(recipientId);
+  }
   const previousTotal =
     spendingTracker.medications +
     spendingTracker.bills +
@@ -388,6 +490,60 @@ export async function comparePharmacyPrices(
   const url = `${PHARMACY_API}/pharmacy/compare?drug=${encodeURIComponent(drugName)}&zip=${encodeURIComponent(zipCode)}`;
   logger.info({ drug: drugName }, '[x402] paying for pharmacy price query');
 
+  if (isMockNetwork()) {
+    const receipt = createMockReceipt('x402:pharmacy-prices', {
+      drugName,
+      zipCode,
+    });
+    const data = {
+      drug: drugName,
+      zipCode,
+      protocol: {
+        name: 'x402',
+        mockNetwork: true,
+        price: '$0.002',
+        payTo: 'mock-pharmacy-price-api',
+        receipt,
+      },
+      prices: [
+        {
+          pharmacyName: 'MockCare Pharmacy',
+          pharmacyId: 'mock-pharmacy-1',
+          price: 4.25,
+          distance: '1.0 mi',
+          inStock: 'unknown',
+        },
+        {
+          pharmacyName: 'MockTown Drugs',
+          pharmacyId: 'mock-pharmacy-2',
+          price: 9.75,
+          distance: '2.4 mi',
+          inStock: 'unknown',
+        },
+      ],
+      cheapest: {
+        pharmacyName: 'MockCare Pharmacy',
+        pharmacyId: 'mock-pharmacy-1',
+        price: 4.25,
+        distance: '1.0 mi',
+      },
+      mostExpensive: {
+        pharmacyName: 'MockTown Drugs',
+        pharmacyId: 'mock-pharmacy-2',
+        price: 9.75,
+      },
+      potentialSavings: 5.5,
+      savingsPercent: 56.4,
+    };
+    recordServiceFee(
+      0.002,
+      `x402 query: pharmacy prices for ${drugName}`,
+      'mock-pharmacy-price-api',
+      receipt.stellarTxHash,
+    );
+    return data;
+  }
+
   const response = await x402Fetch(url);
 
   if (!response.ok) {
@@ -412,25 +568,12 @@ export async function comparePharmacyPrices(
     }
   }
 
-  x402SettlementsTotal.inc();
-  spendingTracker.serviceFees += 0.002;
-  spendingTracker.transactions.push({
-    id: `tx-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    type: 'service_fee',
-    description: `x402 query: pharmacy prices for ${drugName}`,
-    amount: 0.002,
-    recipient: data.protocol?.payTo || 'pharmacy-price-api',
-    stellarTxHash: txHash,
-    status: 'completed',
-    category: 'service_fees',
-  });
-  agentTransactionsTotal.inc({ status: 'completed' });
-  agentSpendingUsd.set(
-    { category: 'service_fees' },
-    spendingTracker.serviceFees,
+  recordServiceFee(
+    0.002,
+    `x402 query: pharmacy prices for ${drugName}`,
+    data.protocol?.payTo || 'pharmacy-price-api',
+    txHash,
   );
-  saveSpending(spendingTracker);
 
   return data;
 }
@@ -438,6 +581,22 @@ export async function comparePharmacyPrices(
 // --- Tool: Fetch Rosa's hospital bill (free endpoint, no x402 payment) ---
 export async function fetchRosaBill() {
   logger.info("[fetch] getting Rosa's hospital bill");
+
+  if (isMockNetwork()) {
+    return {
+      patientName: 'Rosa Garcia',
+      facilityName: 'Mock General Hospital',
+      dateOfService: '2026-03-15',
+      lineItems: [
+        {
+          description: 'Office visit, moderate',
+          cptCode: '99213',
+          quantity: 1,
+          chargedAmount: 130,
+        },
+      ],
+    };
+  }
 
   const response = await fetch(`${BILL_AUDIT_API}/bill/sample`);
 
@@ -455,13 +614,7 @@ export async function fetchAndAuditBill() {
   logger.info("[fetch+audit] getting Rosa's bill and auditing it");
 
   // Step 1: Fetch the bill (free)
-  const billResponse = await fetch(`${BILL_AUDIT_API}/bill/sample`);
-  if (!billResponse.ok) {
-    throw new Error(
-      `Failed to fetch bill (${billResponse.status}): service may be starting up.`,
-    );
-  }
-  const bill = await billResponse.json();
+  const bill = await fetchRosaBill();
 
   // Step 2: Audit it (pays via x402)
   return await auditBill(bill.lineItems);
@@ -480,6 +633,43 @@ export async function auditBill(
     { lineItemCount: lineItems.length },
     '[x402] paying for bill audit',
   );
+
+  if (isMockNetwork()) {
+    const receipt = createMockReceipt('x402:bill-audit', { lineItems });
+    const totalCharged = lineItems.reduce(
+      (sum, item) => sum + item.chargedAmount,
+      0,
+    );
+    const data = {
+      auditTimestamp: new Date().toISOString(),
+      protocol: {
+        name: 'x402',
+        mockNetwork: true,
+        price: '$0.01',
+        payTo: 'mock-bill-audit-api',
+        receipt,
+      },
+      totalCharged: +totalCharged.toFixed(2),
+      totalCorrect: +totalCharged.toFixed(2),
+      totalOvercharge: 0,
+      savingsPercent: 0,
+      errorCount: 0,
+      lineItems: lineItems.map((item) => ({
+        ...item,
+        status: 'valid',
+        errorDescription: null,
+        suggestedAmount: item.chargedAmount,
+      })),
+      recommendation: 'Mock network audit completed. No errors detected.',
+    };
+    recordServiceFee(
+      0.01,
+      'x402 query: medical bill audit',
+      'mock-bill-audit-api',
+      receipt.stellarTxHash,
+    );
+    return data;
+  }
 
   let response: Response;
   try {
@@ -561,25 +751,12 @@ export async function auditBill(
     }
   }
 
-  x402SettlementsTotal.inc();
-  spendingTracker.serviceFees += 0.01;
-  spendingTracker.transactions.push({
-    id: `tx-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    type: 'service_fee',
-    description: 'x402 query: medical bill audit',
-    amount: 0.01,
-    recipient: data.protocol?.payTo || 'bill-audit-api',
-    stellarTxHash: txHash,
-    status: 'completed',
-    category: 'service_fees',
-  });
-  agentTransactionsTotal.inc({ status: 'completed' });
-  agentSpendingUsd.set(
-    { category: 'service_fees' },
-    spendingTracker.serviceFees,
+  recordServiceFee(
+    0.01,
+    'x402 query: medical bill audit',
+    data.protocol?.payTo || 'bill-audit-api',
+    txHash,
   );
-  saveSpending(spendingTracker);
 
   return data;
 }
@@ -591,6 +768,31 @@ export async function checkDrugInteractions(medications: string[]) {
     { medicationCount: medications.length },
     '[x402] paying for drug interaction check',
   );
+
+  if (isMockNetwork()) {
+    const receipt = createMockReceipt('x402:drug-interactions', {
+      medications,
+    });
+    const data = {
+      medications,
+      protocol: {
+        name: 'x402',
+        mockNetwork: true,
+        price: '$0.001',
+        payTo: 'mock-drug-interaction-api',
+        receipt,
+      },
+      interactions: [],
+      summary: 'Mock network interaction check completed. No interactions detected.',
+    };
+    recordServiceFee(
+      0.001,
+      `x402 query: drug interactions for ${medications.join(', ')}`,
+      'mock-drug-interaction-api',
+      receipt.stellarTxHash,
+    );
+    return data;
+  }
 
   const response = await x402Fetch(
     `${DRUG_INTERACTION_API}/drug/interactions?meds=${encodeURIComponent(medsParam)}`,
@@ -617,25 +819,12 @@ export async function checkDrugInteractions(medications: string[]) {
     }
   }
 
-  x402SettlementsTotal.inc();
-  spendingTracker.serviceFees += 0.001;
-  spendingTracker.transactions.push({
-    id: `tx-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    type: 'service_fee',
-    description: `x402 query: drug interactions for ${medications.join(', ')}`,
-    amount: 0.001,
-    recipient: data.protocol?.payTo || 'drug-interaction-api',
-    stellarTxHash: txHash,
-    status: 'completed',
-    category: 'service_fees',
-  });
-  agentTransactionsTotal.inc({ status: 'completed' });
-  agentSpendingUsd.set(
-    { category: 'service_fees' },
-    spendingTracker.serviceFees,
+  recordServiceFee(
+    0.001,
+    `x402 query: drug interactions for ${medications.join(', ')}`,
+    data.protocol?.payTo || 'drug-interaction-api',
+    txHash,
   );
-  saveSpending(spendingTracker);
 
   return data;
 }
@@ -705,6 +894,23 @@ async function executeMedicationPayment(
 
   let stellarTxHash: string | undefined;
   let mppOrderId: string | undefined;
+  const previousMppTxHash = mppClient.lastTxHash;
+
+  if (isMockNetwork()) {
+    const receipt = createMockReceipt('mpp:medication-order', {
+      pharmacyId,
+      pharmacyName,
+      drugName,
+      amount,
+    });
+    stellarTxSubmittedTotal.inc({ result: 'success' });
+    paymentsUsdcTotal.inc({ type: 'medication' });
+    return {
+      success: true,
+      stellarTxHash: receipt.stellarTxHash,
+      mppOrderId: receipt.receiptId,
+    };
+  }
 
   try {
     const response = await mppClient.fetch(
@@ -725,7 +931,10 @@ async function executeMedicationPayment(
       throw new Error(data.error || 'MPP payment failed');
     }
 
-    stellarTxHash = mppClient.lastTxHash;
+    stellarTxHash =
+      mppClient.lastTxHash && mppClient.lastTxHash !== previousMppTxHash
+        ? mppClient.lastTxHash
+        : undefined;
     if (!stellarTxHash) {
       const receiptHeader =
         response.headers.get('Payment-Receipt') ||
@@ -819,8 +1028,8 @@ async function getPendingTransaction(txId: string) {
   return { tx, tracker };
 }
 
-export async function approvePendingTransaction(txId: string) {
-  const tracker = loadSpending();
+export async function approvePendingTransaction(txId: string): Promise<any> {
+  const tracker = spendingTracker;
   const tx = tracker.transactions.find((t: any) => t.id === txId);
   if (!tx) return { success: false, error: 'Transaction not found' };
   if (tx.status !== 'pending')
@@ -889,8 +1098,8 @@ export async function approvePendingTransaction(txId: string) {
   return { success: true, transaction: tx };
 }
 
-export function cancelPendingTransaction(txId: string) {
-  const tracker = loadSpending();
+export function cancelPendingTransaction(txId: string): any {
+  const tracker = spendingTracker;
   const tx = tracker.transactions.find((t: any) => t.id === txId);
   if (!tx) return { success: false, error: 'Transaction not found' };
   if (tx.status !== 'pending')
@@ -906,7 +1115,7 @@ export function cancelPendingTransaction(txId: string) {
 }
 
 export async function processPendingTransactions() {
-  const tracker = loadSpending();
+  const tracker = spendingTracker;
   const now = Date.now();
   const pending = tracker.transactions.filter(
     (t: any) =>
@@ -977,60 +1186,15 @@ export async function payForMedication(
   }
 
   // Execute real MPP charge payment to pharmacy
-  logger.info(
-    { pharmacy: pharmacyName, amount },
-    '[MPP] paying for medication',
+  const paymentResult = await executeMedicationPayment(
+    pharmacyId,
+    pharmacyName,
+    drugName,
+    amount,
   );
-
-  let stellarTxHash: string | undefined;
-  let mppOrderId: string | undefined;
-
-  try {
-    const response = await mppClient.fetch(
-      `${PHARMACY_PAYMENT_API}/pharmacy/order`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          drug: drugName,
-          pharmacy: pharmacyName,
-          amount,
-        }),
-      },
-    );
-
-    const data = await response.json();
-    if (data.success) {
-      // Try to get tx hash from: 1) MPP progress event, 2) Payment-Receipt header
-      stellarTxHash = mppClient.lastTxHash;
-      if (!stellarTxHash) {
-        const receiptHeader =
-          response.headers.get('Payment-Receipt') ||
-          response.headers.get('payment-receipt');
-        if (receiptHeader) {
-          try {
-            const receipt = JSON.parse(
-              Buffer.from(receiptHeader, 'base64').toString(),
-            );
-            stellarTxHash =
-              receipt.reference || receipt.hash || receipt.transaction;
-          } catch {
-            stellarTxHash = receiptHeader;
-          }
-        }
-      }
-      // data.order.id is an MPP order identifier — kept separate from stellarTxHash
-      mppOrderId = data.order?.id;
-    } else {
-      throw new Error(data.error || 'MPP payment failed');
-    }
-  } catch (err: any) {
-    stellarTxSubmittedTotal.inc({ result: 'error' });
-    return { success: false, error: `MPP payment failed: ${err.message}` };
+  if (!paymentResult.success) {
+    return paymentResult;
   }
-
-  stellarTxSubmittedTotal.inc({ result: 'success' });
-  paymentsUsdcTotal.inc({ type: 'medication' });
 
   const tx: Transaction = {
     id: `tx-${Date.now()}`,
@@ -1039,8 +1203,8 @@ export async function payForMedication(
     description: `${drugName} from ${pharmacyName} [MPP Charge]`,
     amount,
     recipient: pharmacyId,
-    stellarTxHash,
-    mppOrderId,
+    stellarTxHash: paymentResult.stellarTxHash,
+    mppOrderId: paymentResult.mppOrderId,
     status: 'completed',
     category: 'medications',
   };
@@ -1060,7 +1224,7 @@ export async function payForMedication(
     recipientId: currentRecipientId,
     reminderDate,
     drug: drugName,
-    orderId: mppOrderId || tx.id,
+    orderId: paymentResult.mppOrderId || tx.id,
   });
 
   // Notify on significant payment (Issue #265)
@@ -1069,7 +1233,7 @@ export async function payForMedication(
       level: "info",
       title: "Medication Payment Made",
       description: `$${amount.toFixed(2)} paid for ${drugName} at ${pharmacyName}. Adherence reminder scheduled for ${new Date(reminderDate).toLocaleDateString()}.`,
-      context: { recipientId: currentRecipientId, txId: tx.id, stellarTxHash },
+      context: { recipientId: currentRecipientId, txId: tx.id, stellarTxHash: paymentResult.stellarTxHash },
     });
   }
 
@@ -1387,13 +1551,115 @@ export function confirmAdherenceReminder(recordId: string) {
   return { success: confirmAdherence(recordId) };
 }
 
+const recipientIdSchema = z.string().min(1).optional();
+const amountSchema = z.union([z.number(), z.string()]);
+
+const TOOL_INPUT_SCHEMAS = {
+  compare_pharmacy_prices: z.object({
+    drug_name: z.string().min(1),
+    zip_code: z.string().optional(),
+    recipient_id: recipientIdSchema,
+  }).strict(),
+  audit_medical_bill: z.object({
+    line_items_json: z.string().min(1),
+    recipient_id: recipientIdSchema,
+  }).strict(),
+  check_drug_interactions: z.object({
+    medications: z.array(z.string().min(1)),
+    recipient_id: recipientIdSchema,
+  }).strict(),
+  pay_for_medication: z.object({
+    pharmacy_id: z.string().min(1),
+    pharmacy_name: z.string().min(1),
+    drug_name: z.string().min(1),
+    amount: amountSchema,
+    days_supply: amountSchema.optional(),
+    recipient_id: recipientIdSchema,
+  }).strict(),
+  pay_bill: z.object({
+    provider_id: z.string().min(1),
+    provider_name: z.string().min(1),
+    description: z.string().min(1),
+    amount: amountSchema,
+    recipient_id: recipientIdSchema,
+  }).strict(),
+  check_spending_policy: z.object({
+    amount: amountSchema,
+    category: z.enum(['medications', 'bills']),
+    recipient_id: recipientIdSchema,
+  }).strict(),
+  fetch_rosa_bill: z.object({}).strict(),
+  fetch_and_audit_bill: z.object({
+    recipient_id: recipientIdSchema,
+  }).strict(),
+  get_spending_summary: z.object({
+    recipient_id: recipientIdSchema,
+  }).strict(),
+  get_wallet_balance: z.object({}).strict(),
+  generate_dispute_letter: z.object({
+    bill_id: z.string().min(1),
+    audit_result_json: z.string().min(1),
+    error_descriptions: z.array(z.string()).optional(),
+    recipient_name: z.string().optional(),
+    facility: z.string().optional(),
+    caregiver_name: z.string().optional(),
+    caregiver_email: z.string().optional(),
+    recipient_id: recipientIdSchema,
+  }).strict(),
+  get_adherence_status: z.object({
+    recipient_id: recipientIdSchema,
+  }).strict(),
+  confirm_adherence: z.object({
+    record_id: z.string().min(1),
+  }).strict(),
+} as const;
+
+export function validateToolInput(
+  name: string,
+  input: unknown,
+): Record<string, unknown> {
+  const schema = TOOL_INPUT_SCHEMAS[name as keyof typeof TOOL_INPUT_SCHEMAS];
+  if (!schema) {
+    throw new Error(`Unknown tool: ${name}`);
+  }
+
+  const result = schema.safeParse(input ?? {});
+  if (result.success) {
+    return result.data as Record<string, unknown>;
+  }
+
+  const unknownKeys = result.error.issues
+    .filter((issue) => issue.code === 'unrecognized_keys')
+    .flatMap((issue) => (issue as z.ZodUnrecognizedKeysIssue).keys);
+  if (unknownKeys.length > 0) {
+    throw new Error(
+      `Invalid tool input for ${name}: unknown field(s) not allowed: ${unknownKeys.join(', ')}`,
+    );
+  }
+
+  const details = result.error.issues
+    .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
+    .join('; ');
+  throw new Error(`Invalid tool input for ${name}: ${details}`);
+}
+
+function strictInputSchema<
+  T extends {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required: string[];
+  },
+>(schema: T): T & { additionalProperties: false } {
+  return { ...schema, additionalProperties: false };
+}
+
 // Claude API tool definitions
 export const TOOL_DEFINITIONS = [
   {
     name: 'compare_pharmacy_prices',
     description:
       'Compare medication prices across multiple pharmacies. Pays $0.002 USDC per query via x402 on Stellar. Returns prices sorted cheapest to most expensive, with potential savings. Each pharmacy has an inStock field: "unknown" means real-time inventory is unavailable (proceed with caution), true means in stock. Never assume a medication is in stock if inStock is "unknown" — confirm with the pharmacy before ordering.',
-    input_schema: {
+    input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
         drug_name: { type: 'string', description: 'Name of the medication (e.g., Lisinopril, Metformin)' },
@@ -1401,13 +1667,13 @@ export const TOOL_DEFINITIONS = [
         recipient_id: { type: 'string', description: 'Care recipient ID (default: rosa)' },
       },
       required: ['drug_name'],
-    },
+    }),
   },
   {
     name: 'audit_medical_bill',
     description:
       'Audit a medical bill for errors (duplicates, upcoding, overcharges). 80% of medical bills contain errors. Pays $0.01 USDC per audit via x402 on Stellar. Pass line_items as a JSON string array of objects with fields: description, cptCode, quantity, chargedAmount.',
-    input_schema: {
+    input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
         line_items_json: {
@@ -1417,13 +1683,13 @@ export const TOOL_DEFINITIONS = [
         recipient_id: { type: 'string', description: 'Care recipient ID (default: rosa)' },
       },
       required: ['line_items_json'],
-    },
+    }),
   },
   {
     name: 'check_drug_interactions',
     description:
       'Check for drug-drug interactions. Pays $0.001 USDC per check via x402 on Stellar. Returns severity levels and clinical recommendations.',
-    input_schema: {
+    input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
         medications: {
@@ -1434,13 +1700,13 @@ export const TOOL_DEFINITIONS = [
         recipient_id: { type: 'string', description: 'Care recipient ID (default: rosa)' },
       },
       required: ['medications'],
-    },
+    }),
   },
   {
     name: 'pay_for_medication',
     description:
       'Pay a pharmacy for a medication order via MPP Charge on Stellar (real USDC payment). Subject to spending policy limits.',
-    input_schema: {
+    input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
         pharmacy_id: { type: 'string' },
@@ -1451,13 +1717,13 @@ export const TOOL_DEFINITIONS = [
         recipient_id: { type: 'string', description: 'Care recipient ID (default: rosa)' },
       },
       required: ['pharmacy_id', 'pharmacy_name', 'drug_name', 'amount'],
-    },
+    }),
   },
   {
     name: 'pay_bill',
     description:
       'Pay a medical bill via direct Stellar USDC transfer. Subject to spending policy limits. If the bill has been audited and errors found, pay only the corrected amount.',
-    input_schema: {
+    input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
         provider_id: { type: 'string' },
@@ -1467,13 +1733,13 @@ export const TOOL_DEFINITIONS = [
         recipient_id: { type: 'string', description: 'Care recipient ID (default: rosa)' },
       },
       required: ['provider_id', 'provider_name', 'description', 'amount'],
-    },
+    }),
   },
   {
     name: 'check_spending_policy',
     description:
       'Check if a payment amount is within the caregiver-set spending policy limits before attempting payment.',
-    input_schema: {
+    input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
         amount: { type: 'number' },
@@ -1481,64 +1747,57 @@ export const TOOL_DEFINITIONS = [
         recipient_id: { type: 'string', description: 'Care recipient ID (default: rosa)' },
       },
       required: ['amount', 'category'],
-    },
+    }),
   },
   {
     name: 'fetch_rosa_bill',
     description:
       "Fetch the current care recipient's hospital bill. Returns the bill with line items including CPT codes and charged amounts.",
-    input_schema: {
+    input_schema: strictInputSchema({
       type: 'object' as const,
-      properties: {
-        recipient_id: { type: 'string', description: 'Care recipient ID (default: rosa)' },
-      },
+      properties: {},
       required: [] as string[],
-    },
+    }),
   },
   {
     name: 'fetch_and_audit_bill',
     description:
       "Fetch the care recipient's hospital bill AND audit it for errors in one step. Pays $0.01 USDC via x402. Returns the audit results with errors found, overcharges, and corrected total. Use this instead of calling fetch_bill + audit_medical_bill separately.",
-    input_schema: {
+    input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
         recipient_id: { type: 'string', description: 'Care recipient ID (default: rosa)' },
       },
       required: [] as string[],
-    },
+    }),
   },
   {
     name: 'get_spending_summary',
     description:
       'Get current spending summary: total spent, budget remaining per category, recent transactions with Stellar tx hashes for the current care recipient.',
-    input_schema: {
+    input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
         recipient_id: { type: 'string', description: 'Care recipient ID (default: rosa)' },
       },
       required: [] as string[],
-    },
+    }),
   },
   {
     name: 'get_wallet_balance',
     description:
       'Get the current on-chain wallet balance (USDC and XLM) from Stellar Horizon. Returns real-time balance data. If usdcTrustlineMissing is true, the agent wallet lacks a USDC trustline — instruct the caregiver to fund the wallet at https://faucet.circle.com.',
-    input_schema: {
+    input_schema: strictInputSchema({
       type: 'object' as const,
-      properties: {
-        _unused: {
-          type: 'string',
-          description: 'Not used. Pass empty string.',
-        },
-      },
+      properties: {},
       required: [] as string[],
-    },
+    }),
   },
   {
     name: 'generate_dispute_letter',
     description:
       'Generate a dispute letter PDF and email body for a billing error. Use after audit finds overcharges. Letter includes audit findings, CPT codes, fair-market rates, and caregiver contact info.',
-    input_schema: {
+    input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
         bill_id: { type: 'string', description: 'The disputed bill ID' },
@@ -1551,31 +1810,31 @@ export const TOOL_DEFINITIONS = [
         recipient_id: { type: 'string', description: 'Care recipient ID (default: rosa)' },
       },
       required: ['bill_id', 'audit_result_json'],
-    },
+    }),
   },
   {
     name: 'get_adherence_status',
     description:
       'Get medication adherence status for a recipient — pending reminders, confirmed doses, skipped doses, and flagged persistent skips.',
-    input_schema: {
+    input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
         recipient_id: { type: 'string', description: 'Recipient identifier (default: rosa)' },
       },
       required: [] as string[],
-    },
+    }),
   },
   {
     name: 'confirm_adherence',
     description:
       'Confirm that a medication dose was taken. Call this when the caregiver reports the recipient took their medication.',
-    input_schema: {
+    input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
         record_id: { type: 'string', description: 'Adherence record ID to confirm' },
       },
       required: ['record_id'],
-    },
+    }),
   },
 ];
 

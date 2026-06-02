@@ -67,6 +67,7 @@ import {
   getSpendingTracker,
   resetSpendingTracker,
   TOOL_DEFINITIONS,
+  validateToolInput,
 } from "./agent/tools.ts";
 
 // --- Environment ---
@@ -951,6 +952,7 @@ const LLM_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] =
 async function executeTool(name: string, input: any): Promise<any> {
   let result: any;
   try {
+    input = validateToolInput(name, input);
     switch (name) {
       case "compare_pharmacy_prices":
         result = await comparePharmacyPrices(input.drug_name, input.zip_code);

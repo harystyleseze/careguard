@@ -48,6 +48,7 @@ vi.mock("../tools.ts", () => ({
   getSpendingTracker: vi.fn(() => ({ transactions: [], policy: {}, spending: {} })),
   resetSpendingTracker: vi.fn(),
   TOOL_DEFINITIONS: [],
+  validateToolInput: vi.fn((_name: string, input: Record<string, unknown>) => input),
 }));
 
 vi.mock("../../shared/x402-middleware.ts", () => ({
