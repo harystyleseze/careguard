@@ -11,7 +11,7 @@
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
-    "@sentry/nextjs": "^8.45.1",
+    "@sentry/nextjs": "^10.51.0",
     "@tanstack/react-virtual": "^3.13.24",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
