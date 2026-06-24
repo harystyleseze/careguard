@@ -64,6 +64,19 @@ export const agentLlmTokensTotal = new Counter({
   registers: [registry],
 });
 
+export const agentLlmIterationTokens = new Gauge({
+  name: "agent_llm_iteration_tokens",
+  help: "LLM tokens consumed in the latest iteration",
+  labelNames: ["kind"] as const,
+  registers: [registry],
+});
+
+export const agentLlmContextUsageRatio = new Gauge({
+  name: "agent_llm_context_usage_ratio",
+  help: "Latest agent LLM iteration token usage ratio versus model context window",
+  registers: [registry],
+});
+
 export const agentSpendingUsd = new Gauge({
   name: "agent_spending_usd",
   help: "Total USD spent by category",

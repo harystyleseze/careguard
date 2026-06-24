@@ -14,8 +14,12 @@ if (!process.stdout.isTTY) {
 
 import "dotenv/config";
 import express from "express";
-import { z } from "zod";
 import { readFileSync } from "fs";
+import {
+  BillAuditValidationError,
+  type LineItem,
+  validateBillAuditRequest,
+} from "../../shared/bill-audit.ts";
 import { applyX402Middleware, NETWORK, OZ_FACILITATOR_URL } from "../../shared/x402-middleware.ts";
 import { createCorsMiddleware } from "../../shared/cors.ts";
 import { applySecurityMiddleware } from "../../shared/security-middleware.ts";
@@ -245,17 +249,15 @@ app.post("/bill/audit", (req, res) => {
     }));
     res.json(auditBill(sanitizedLineItems));
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      const issues = error.issues.map((issue, idx) => {
-        const path = issue.path.join(".");
-        return `Item ${path}: ${issue.message}`;
-      });
+    if (error instanceof BillAuditValidationError) {
       res.status(400).json({
-        error: "Invalid lineItems",
-        details: issues,
+        ok: false,
+        reason: error.code,
+        message: error.message,
+        issues: error.issues,
       });
     } else {
-      res.status(400).json({ error: "Invalid request body" });
+      res.status(400).json({ ok: false, reason: "INVALID_REQUEST_BODY" });
     }
   }
 });

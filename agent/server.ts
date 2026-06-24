@@ -29,7 +29,8 @@ import {
   agentRunsTotal,
   agentToolCallsTotal,
   agentLlmTokensTotal,
-  agentLlmErrorTotal,
+  agentLlmIterationTokens,
+  agentLlmContextUsageRatio,
 } from "../shared/metrics.ts";
 import {
   comparePharmacyPrices,
@@ -53,6 +54,10 @@ import {
   TOOL_DEFINITIONS,
   validateToolInput,
 } from "./tools.ts";
+import {
+  fetchToolResult,
+  serializeToolResultForPrompt,
+} from "./tool-result.ts";
 import { getPendingAdherences } from "../shared/adherence.ts";
 import { notify } from "../shared/notifications.ts";
 
@@ -87,10 +92,12 @@ IMPORTANT RULES:
 - If a payment requires caregiver approval, flag it and wait — do not proceed
 - If a payment is blocked by policy, explain why clearly
 - When comparing medication prices, compare ALL medications at once, then check interactions, then order from cheapest
+- Drug interaction checks require at least 2 medications; if the tool returns NEED_AT_LEAST_TWO_MEDS, ask for more meds instead of concluding "no interactions"
 - When auditing a bill, use fetch_and_audit_bill which fetches Rosa's bill and audits it in one step. Never invent bill data.
 - Report the total savings found and the cost of the agent's API queries
 - After paying for medication, schedule an adherence reminder
 - When audit errors are found, offer to generate a dispute letter via generate_dispute_letter
+- If a tool result is truncated and includes resultId or a summary, call fetch_tool_result to page through the remaining data before making conclusions
 
 PAYMENT PROTOCOLS:
 - API queries (pharmacy prices, bill audits, drug interactions) are paid via x402 on Stellar ($0.001-$0.01 per query)
@@ -154,7 +161,13 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
           } catch (e: any) {
             const sample = input.line_items_json.slice(0, 200);
             agentToolCallsTotal.inc({ tool: name, status: "error" });
-            return { ok: false, reason: "INVALID_LINE_ITEMS_JSON", sample, error: e.message };
+            return {
+              ok: false,
+              reason: "INVALID_LINE_ITEMS_JSON",
+              message: "line_items_json must be valid JSON",
+              sample,
+              error: e.message,
+            };
           }
         } else {
           items = input.line_items || input.line_items_json;
@@ -165,6 +178,7 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       case "fetch_rosa_bill": result = await fetchRosaBill(); break;
       case "fetch_and_audit_bill": result = await fetchAndAuditBill(); break;
       case "check_drug_interactions": result = await checkDrugInteractions(input.medications as string[]); break;
+      case "fetch_tool_result": result = fetchToolResult(input.result_id as string, Number(input.offset ?? 0), Number(input.limit ?? 10)); break;
       case "pay_for_medication": result = await payForMedication(pharmId || "", pharmName || "", drugN || "", amt); break;
       case "pay_bill": result = await payBill(provId || "", provName || "", desc || "", amt); break;
       case "check_spending_policy": result = checkSpendingPolicy(amt, cat as "medications" | "bills"); break;
@@ -245,6 +259,20 @@ async function runAgent(task: string) {
           result: tc.result,
         })),
       });
+      if (toolCalls.length > 0 && !finalResponse) {
+        finalResponse = toolCalls.map(tc => {
+          if (tc.result?.error) return `${tc.tool}: ${tc.result.error}`;
+          if (tc.result?.ok === false && tc.result?.reason) return `${tc.tool}: ${tc.result.reason}`;
+          if (tc.tool === "compare_pharmacy_prices" && (tc.result as any)?.cheapest) return `${(tc.result as any).drug}: cheapest at $${(tc.result as any).cheapest.price} (${(tc.result as any).cheapest.pharmacyName}), save $${(tc.result as any).potentialSavings}/mo`;
+          if (tc.tool === "audit_medical_bill" && (tc.result as any)?.totalOvercharge) return `Bill audit: $${(tc.result as any).totalOvercharge} in overcharges found (${(tc.result as any).errorCount} errors)`;
+          if (tc.tool === "check_drug_interactions" && (tc.result as any)?.summary) return (tc.result as any).summary;
+          if (tc.tool === "pay_for_medication" && (tc.result as any)?.success) return `Paid $${(tc.result as any).transaction.amount} for ${(tc.result as any).transaction.description}`;
+          if (tc.tool === "pay_bill" && (tc.result as any)?.success) return `Paid bill: $${(tc.result as any).transaction.amount}`;
+          return `${tc.tool}: completed`;
+        }).join("\n");
+      } else if (!finalResponse) {
+        finalResponse = `LLM error: ${llmErr.message}`;
+      }
       break;
     }
 
@@ -256,6 +284,24 @@ async function runAgent(task: string) {
       llmUsage.completionTokens += completionTokens;
       agentLlmTokensTotal.inc({ kind: "prompt" }, promptTokens);
       agentLlmTokensTotal.inc({ kind: "completion" }, completionTokens);
+      agentLlmIterationTokens.set({ kind: "prompt" }, promptTokens);
+      agentLlmIterationTokens.set({ kind: "completion" }, completionTokens);
+      agentLlmIterationTokens.set({ kind: "total" }, promptTokens + completionTokens);
+      const contextWindow = parseInt(process.env.LLM_CONTEXT_WINDOW || "32768", 10);
+      const usageRatio = contextWindow > 0 ? (promptTokens + completionTokens) / contextWindow : 0;
+      agentLlmContextUsageRatio.set(usageRatio);
+      if (usageRatio >= 0.8) {
+        logger.warn(
+          {
+            iteration,
+            promptTokens,
+            completionTokens,
+            usageRatio,
+            contextWindow,
+          },
+          "LLM context usage reached 80% of the configured window",
+        );
+      }
     }
 
     const choice = response.choices[0];
@@ -314,10 +360,11 @@ async function runAgent(task: string) {
         }
       });
 
+      const toolContent = serializeToolResultForPrompt(fnName, result);
       messages.push({
         role: "tool",
         tool_call_id: toolCall.id,
-        content: JSON.stringify(result),
+        content: toolContent,
       });
     }
 

@@ -16,9 +16,14 @@
  */
 
 import 'dotenv/config';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
 import { z } from 'zod';
 import { logger } from '../shared/logger.ts';
+import {
+  BillAuditValidationError,
+  validateLineItems,
+  type LineItem,
+} from '../shared/bill-audit.ts';
 import {
   Keypair,
   Networks,
@@ -302,6 +307,8 @@ export function setCurrentRecipient(recipientId: string) {
   currentRecipientId = recipientId;
   const dir = getRecipientDir(recipientId);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  spendingTracker = loadSpending(recipientId);
+  currentPolicy = loadPolicy(recipientId);
 }
 export function getCurrentRecipient() { return currentRecipientId; }
 
@@ -356,15 +363,48 @@ type SpendingPolicyInput = Partial<SpendingPolicy> & {
   approvalThreshold: number;
 };
 
-function loadSpending(recipientId?: string): SpendingTracker {
+const SPENDING_CACHE_TTL_MS = 5000;
+
+type SpendingCacheEntry = {
+  data: SpendingTracker;
+  loadedAt: number;
+};
+
+const spendingCache = new Map<string, SpendingCacheEntry>();
+
+function createEmptySpendingTracker(): SpendingTracker {
+  return { medications: 0, bills: 0, serviceFees: 0, transactions: [] };
+}
+
+function readSpendingFromDisk(recipientId?: string): SpendingTracker {
   const file = getSpendingFile(recipientId);
-  if (!existsSync(file)) return { medications: 0, bills: 0, serviceFees: 0, transactions: [] };
+  if (!existsSync(file)) return createEmptySpendingTracker();
   return JSON.parse(readFileSync(file, 'utf-8'));
+}
+
+export function loadSpending(recipientId?: string): SpendingTracker {
+  const resolvedRecipientId = recipientId || currentRecipientId;
+  const cached = spendingCache.get(resolvedRecipientId);
+  const now = Date.now();
+
+  if (cached && now - cached.loadedAt < SPENDING_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  const data = readSpendingFromDisk(resolvedRecipientId);
+  spendingCache.set(resolvedRecipientId, { data, loadedAt: now });
+  return data;
 }
 
 export function saveSpending(data: SpendingTracker, recipientId?: string) {
   const file = getSpendingFile(recipientId);
-  writeFileSync(file, JSON.stringify(data, null, 2));
+  const tempFile = `${file}.tmp-${Date.now()}`;
+  writeFileSync(tempFile, JSON.stringify(data, null, 2));
+  renameSync(tempFile, file);
+  spendingCache.set(recipientId || currentRecipientId, {
+    data,
+    loadedAt: Date.now(),
+  });
 }
 
 let spendingTracker = loadSpending();
@@ -626,13 +666,23 @@ export async function fetchAndAuditBill() {
 
 // --- Tool: Audit a medical bill (pays via x402) ---
 export async function auditBill(
-  lineItems: Array<{
-    description: string;
-    cptCode: string;
-    quantity: number;
-    chargedAmount: number;
-  }>,
+  lineItemsInput: unknown,
 ) {
+  let lineItems: LineItem[];
+  try {
+    lineItems = validateLineItems(lineItemsInput);
+  } catch (error) {
+    if (error instanceof BillAuditValidationError) {
+      return {
+        ok: false,
+        reason: error.code,
+        message: error.message,
+        issues: error.issues,
+      };
+    }
+    throw error;
+  }
+
   logger.info(
     { lineItemCount: lineItems.length },
     '[x402] paying for bill audit',
@@ -767,6 +817,16 @@ export async function auditBill(
 
 // --- Tool: Check drug interactions (pays via x402) ---
 export async function checkDrugInteractions(medications: string[]) {
+  if (medications.length < 2) {
+    return {
+      ok: false,
+      reason: 'NEED_AT_LEAST_TWO_MEDS',
+      message: 'Drug interaction checks require at least 2 medications.',
+      receivedMedications: medications.length,
+      requiredMedications: 2,
+    };
+  }
+
   const medsParam = medications.join(',');
   logger.info(
     { medicationCount: medications.length },
@@ -1576,6 +1636,11 @@ const TOOL_INPUT_SCHEMAS = {
     medications: z.array(z.string().min(1)),
     recipient_id: recipientIdSchema,
   }).strict(),
+  fetch_tool_result: z.object({
+    result_id: z.string().min(1),
+    offset: z.number().int().nonnegative().optional(),
+    limit: z.number().int().positive().optional(),
+  }).strict(),
   pay_for_medication: z.object({
     pharmacy_id: z.string().min(1),
     pharmacy_name: z.string().min(1),
@@ -1680,13 +1745,13 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'audit_medical_bill',
     description:
-      'Audit a medical bill for errors (duplicates, upcoding, overcharges). 80% of medical bills contain errors. Pays $0.01 USDC per audit via x402 on Stellar. Pass line_items as a JSON string array of objects with fields: description, cptCode, quantity, chargedAmount.',
+      'Audit a medical bill for errors (duplicates, upcoding, overcharges). 80% of medical bills contain errors. Pays $0.01 USDC per audit via x402 on Stellar. Pass line_items_json as a JSON string array of line items. Each line item must include description, cptCode, quantity, and chargedAmount. cptCode must match /^(?:\\d{5}|J\\d{4})$/, quantity must be > 0, and chargedAmount must be > 0.',
     input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
         line_items_json: {
           type: 'string',
-          description: 'JSON string of line items array. Each item: {"description":"...","cptCode":"...","quantity":1,"chargedAmount":100}',
+          description: 'JSON string of line items array. Each item must include description, cptCode, quantity, and chargedAmount. Example: [{"description":"Office visit","cptCode":"99213","quantity":1,"chargedAmount":130}]',
         },
         recipient_id: { type: 'string', description: 'Care recipient ID (default: rosa)' },
       },
@@ -1696,7 +1761,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'check_drug_interactions',
     description:
-      'Check for drug-drug interactions. Pays $0.001 USDC per check via x402 on Stellar. Returns severity levels and clinical recommendations.',
+      'Check for drug-drug interactions. Pays $0.001 USDC per check via x402 on Stellar. Requires at least 2 medications; if fewer are supplied, the tool returns NEED_AT_LEAST_TWO_MEDS instead of claiming there are no interactions. Returns severity levels and clinical recommendations.',
     input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
@@ -1708,6 +1773,20 @@ export const TOOL_DEFINITIONS = [
         recipient_id: { type: 'string', description: 'Care recipient ID (default: rosa)' },
       },
       required: ['medications'],
+    }),
+  },
+  {
+    name: 'fetch_tool_result',
+    description:
+      'Fetch the remainder of a previously truncated tool result by result_id. Use this when a tool response includes resultId, summary, or hasMore=true and you need the full data before concluding.',
+    input_schema: strictInputSchema({
+      type: 'object' as const,
+      properties: {
+        result_id: { type: 'string', description: 'Identifier returned in the truncated tool response' },
+        offset: { type: 'number', description: 'Zero-based offset into the stored result (default: 0)' },
+        limit: { type: 'number', description: 'Maximum number of items to fetch (default: 10)' },
+      },
+      required: ['result_id'],
     }),
   },
   {
@@ -1847,7 +1926,7 @@ export const TOOL_DEFINITIONS = [
 ];
 
 // Start scanner (runs in-process). Interval is conservative (5s).
-setInterval(() => {
+const pendingTransactionScanner = setInterval(() => {
   processPendingTransactions().catch((err) => {
     logger.error(
       { err: err?.message || err },
@@ -1855,3 +1934,21 @@ setInterval(() => {
     );
   });
 }, 5000);
+pendingTransactionScanner.unref?.();
+
+const spendingCacheRefreshTimer = setInterval(() => {
+  for (const recipientId of spendingCache.keys()) {
+    try {
+      spendingCache.set(recipientId, {
+        data: readSpendingFromDisk(recipientId),
+        loadedAt: Date.now(),
+      });
+    } catch (err: any) {
+      logger.warn(
+        { recipientId, err: err?.message || err },
+        '[SpendingCache] refresh failed',
+      );
+    }
+  }
+}, SPENDING_CACHE_TTL_MS);
+spendingCacheRefreshTimer.unref?.();
