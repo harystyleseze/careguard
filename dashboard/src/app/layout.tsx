@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CareGuard — AI Healthcare Agent",
+  title: "CareGuard - AI Healthcare Agent",
   description:
     "AI agent that autonomously manages elderly healthcare spending on Stellar",
 };
@@ -28,7 +28,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">
+      <body className="min-h-full flex flex-col overflow-x-hidden bg-slate-50 text-slate-900">
         {children}
       </body>
     </html>

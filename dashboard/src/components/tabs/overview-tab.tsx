@@ -38,14 +38,17 @@ export function OverviewTab({
         .filter(
           (t) => t.tool === "audit_medical_bill" || t.tool === "fetch_and_audit_bill",
         )
-        .reduce((s, t) => s + (t.result?.totalOvercharge || 0),0)
+        .reduce((s, t) => s + (t.result?.totalOvercharge || 0), 0)
     : 0;
 
   const llmTokens = agentResult?.llmUsage
     ? agentResult.llmUsage.promptTokens + agentResult.llmUsage.completionTokens
     : 0;
   const llmCost = agentResult?.llmUsage
-    ? ((agentResult.llmUsage.promptTokens * 0.00000059) + (agentResult.llmUsage.completionTokens * 0.00000139)).toFixed(4)
+    ? (
+        agentResult.llmUsage.promptTokens * 0.00000059 +
+        agentResult.llmUsage.completionTokens * 0.00000139
+      ).toFixed(4)
     : "0.0000";
 
   return (
@@ -56,7 +59,7 @@ export function OverviewTab({
       tabIndex={0}
       className="space-y-6"
     >
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
         <Card
           label="Monthly Spending"
           value={`$${spending?.spending.total.toFixed(2) || "0.00"}`}
@@ -84,13 +87,15 @@ export function OverviewTab({
         <Card
           label="LLM Tokens"
           value={agentResult ? `${llmTokens} tokens` : "0 tokens"}
-          sub={`≈ $${llmCost} this run`}
+          sub={`~ $${llmCost} this run`}
           color="purple"
         />
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 p-6">
-        <h2 className="text-sm font-semibold text-slate-700 mb-4">Budget Status</h2>
+      <div className="rounded-xl border border-slate-200 bg-white p-6">
+        <h2 className="mb-4 text-sm font-semibold text-slate-700">
+          Budget Status
+        </h2>
         <div className="space-y-4">
           <Bar
             label="Medications"
@@ -105,9 +110,11 @@ export function OverviewTab({
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 p-6">
-        <h2 className="text-sm font-semibold text-slate-700 mb-4">Agent Actions</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="rounded-xl border border-slate-200 bg-white p-6">
+        <h2 className="mb-4 text-sm font-semibold text-slate-700">
+          Agent Actions
+        </h2>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Btn
             label="Compare Medication Prices"
             desc={
@@ -141,7 +148,7 @@ export function OverviewTab({
         </div>
         {loading && (
           <div className="mt-4 flex items-center gap-2 text-sm text-sky-600">
-            <div className="w-4 h-4 border-2 border-sky-600 border-t-transparent rounded-full animate-spin" />
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-sky-600 border-t-transparent" />
             Agent working...
           </div>
         )}
@@ -149,11 +156,11 @@ export function OverviewTab({
 
       {agentResult && (
         <div
-          className="bg-white rounded-xl border border-slate-200 p-6"
+          className="rounded-xl border border-slate-200 bg-white p-6"
           aria-live="polite"
           aria-atomic="true"
         >
-          <h2 className="text-sm font-semibold text-slate-700 mb-3">
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">
             Agent Response
           </h2>
           <p className="text-sm text-slate-600 whitespace-pre-wrap">

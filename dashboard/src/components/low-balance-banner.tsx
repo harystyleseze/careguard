@@ -18,29 +18,34 @@ const REASON_COPY: Record<string, { kind: string; suffix: string }> = {
   },
 };
 
-export function LowBalanceBanner({ pausedReason, walletBalance, walletXlm, onResume }: LowBalanceBannerProps) {
+export function LowBalanceBanner({
+  pausedReason,
+  walletBalance,
+  walletXlm,
+  onResume,
+}: LowBalanceBannerProps) {
   const copy = pausedReason ? REASON_COPY[pausedReason] : undefined;
   if (!copy) return null;
+
   return (
-    <div
-      role="alert"
-      aria-live="assertive"
-      className="bg-red-600 text-white"
-    >
-      <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3">
-        <span aria-hidden className="text-lg">🚨</span>
-        <div className="flex-1 min-w-0">
-          <p className="font-semibold text-sm">
-            Agent paused — low {copy.kind} balance.
+    <div role="alert" aria-live="assertive" className="bg-red-600 text-white">
+      <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center">
+        <span aria-hidden className="text-sm font-semibold uppercase tracking-wide">
+          Alert
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">
+            Agent paused - low {copy.kind} balance.
           </p>
           <p className="text-xs text-red-100">
-            USDC: {walletBalance ?? "—"} · XLM: {walletXlm ?? "—"}. {copy.suffix}
+            USDC: {walletBalance ?? "-"} | XLM: {walletXlm ?? "-"}.
+            {` ${copy.suffix}`}
           </p>
         </div>
         <button
           type="button"
           onClick={onResume}
-          className="text-sm font-semibold rounded-md bg-white text-red-700 px-3 py-1.5 hover:bg-red-50 active:bg-red-100 transition-colors cursor-pointer"
+          className="min-h-11 rounded-md bg-white px-4 py-3 text-sm font-semibold text-red-700 transition-colors cursor-pointer hover:bg-red-50 active:bg-red-100"
         >
           Resume agent
         </button>

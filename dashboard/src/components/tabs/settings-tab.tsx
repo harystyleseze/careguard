@@ -40,7 +40,7 @@ export function SettingsTab({
       id="tabpanel-settings"
       aria-labelledby="tab-settings"
       tabIndex={0}
-      className="space-y-6 max-w-2xl"
+      className="w-full max-w-none space-y-6 sm:max-w-2xl"
     >
       <Toast
         message={toastMsg}
@@ -54,7 +54,7 @@ export function SettingsTab({
         <h2 className="text-sm font-semibold text-slate-700 mb-4">
           Care Recipient
         </h2>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">
               Name
@@ -71,7 +71,7 @@ export function SettingsTab({
               {recipient.age ?? "N/A"}
             </div>
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-slate-600 mb-1">
               Medications
             </label>
@@ -100,7 +100,7 @@ export function SettingsTab({
 
       <div className="bg-white rounded-xl border border-slate-200 p-6">
         <h2 className="text-sm font-semibold text-slate-700 mb-4">Caregiver</h2>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">
               Name
@@ -145,15 +145,15 @@ export function SettingsTab({
             <label className="block text-xs font-medium text-slate-600 mb-1">
               Agent Status
             </label>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div
-                className={`px-3 py-2 flex-1 bg-slate-50 border border-slate-200 rounded-lg text-sm ${agentPaused ? "text-amber-600" : "text-green-600"}`}
+                className={`min-h-11 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm ${agentPaused ? "text-amber-600" : "text-green-600"}`}
               >
                 {agentPaused ? "Paused" : "Active"}
               </div>
               <button
                 onClick={onTogglePause}
-                className={`px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-all ${agentPaused ? "bg-green-500 text-white hover:bg-green-600" : "bg-amber-500 text-white hover:bg-amber-600"}`}
+                className={`w-full rounded-lg px-4 py-3 text-sm font-medium cursor-pointer transition-all min-h-11 sm:w-auto ${agentPaused ? "bg-green-500 text-white hover:bg-green-600" : "bg-amber-500 text-white hover:bg-amber-600"}`}
               >
                 {agentPaused ? "Resume Agent" : "Pause Agent"}
               </button>
@@ -179,8 +179,8 @@ export function SettingsTab({
             <label className="block text-xs font-medium text-slate-600 mb-1">
               Agent Wallet
             </label>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono break-all">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <code className="w-full min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-[11px] leading-5 font-mono break-all">
                 {agentInfo?.agentWallet || "Not connected"}
               </code>
               {agentInfo?.agentWallet && (
@@ -188,7 +188,7 @@ export function SettingsTab({
                   onClick={() =>
                     handleCopy(agentInfo.agentWallet, "settings-wallet")
                   }
-                  className={`px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${copiedId === "settings-wallet" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+                  className={`w-full rounded-lg px-4 py-3 text-xs font-medium transition-all cursor-pointer sm:w-auto ${copiedId === "settings-wallet" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
                 >
                   {copiedId === "settings-wallet" ? "Copied" : "Copy"}
                 </button>

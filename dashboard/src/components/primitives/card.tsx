@@ -2,7 +2,7 @@ export interface CardProps {
   label: string;
   value: string;
   sub: string;
-  color: "sky" | "green" | "amber" | "slate";
+  color: "sky" | "green" | "amber" | "slate" | "purple";
 }
 
 const COLORS: Record<CardProps["color"], string> = {
@@ -10,6 +10,7 @@ const COLORS: Record<CardProps["color"], string> = {
   green: "border-green-200 bg-green-50",
   amber: "border-amber-200 bg-amber-50",
   slate: "border-slate-200 bg-white",
+  purple: "border-violet-200 bg-violet-50",
 };
 
 export function Card({ label, value, sub, color }: CardProps) {

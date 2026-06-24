@@ -7,9 +7,9 @@ export interface DashboardFooterProps {
 export function DashboardFooter({ agentWallet }: DashboardFooterProps) {
   return (
     <footer className="mt-auto border-t border-slate-200 bg-white py-3">
-      <div className="max-w-7xl mx-auto px-4 flex items-center justify-between text-xs text-slate-400">
+      <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
         <span>CareGuard | Stellar Testnet | x402 + MPP</span>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
           {agentWallet && (
             <a
               href={`https://stellar.expert/explorer/testnet/account/${agentWallet}`}

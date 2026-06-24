@@ -53,7 +53,7 @@ export function DashboardTabsNav({ activeTab, pathname }: DashboardTabsNavProps)
     <nav
       role="tablist"
       aria-label="Dashboard tabs"
-      className="flex gap-1 mb-6 bg-white rounded-lg p-1 border border-slate-200 w-fit"
+      className="mb-6 grid w-full grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-white p-2 sm:flex sm:w-fit sm:flex-wrap"
       onKeyDown={handleKeyDown}
     >
       {DASHBOARD_TABS.map((tab) => {
@@ -69,7 +69,7 @@ export function DashboardTabsNav({ activeTab, pathname }: DashboardTabsNavProps)
             id={`tab-${tab}`}
             tabIndex={isActive ? 0 : -1}
             onFocus={() => setFocusedTab(tab)}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${isActive ? "bg-sky-500 text-white" : "text-slate-600 hover:bg-slate-100 active:bg-slate-200"}`}
+            className={`inline-flex min-h-11 w-full items-center justify-center rounded-md px-3 py-2.5 text-center text-sm font-medium transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 sm:w-auto ${isActive ? "bg-sky-500 text-white" : "text-slate-600 hover:bg-slate-100 active:bg-slate-200"}`}
           >
             {tab.charAt(0).toUpperCase() + tab.slice(1)}
           </Link>

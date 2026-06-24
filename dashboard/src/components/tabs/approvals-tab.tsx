@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Btn } from "../primitives/btn";
-import { Card } from "../primitives/card";
 import type { Transaction } from "../types";
 
 const AGENT_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3004";
@@ -79,11 +77,8 @@ export function ApprovalsTab({ agentConnected }: ApprovalsTabProps) {
         {approvals.length > 0 && (
           <div className="space-y-3">
             {approvals.map((tx) => (
-              <div
-                key={tx.id}
-                className="border border-amber-200 bg-amber-50 rounded-lg p-4"
-              >
-                <div className="flex justify-between items-start">
+              <div key={tx.id} className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <div className="text-sm font-medium text-slate-700">
                       {tx.description}
@@ -95,18 +90,18 @@ export function ApprovalsTab({ agentConnected }: ApprovalsTabProps) {
                       {new Date(tx.timestamp).toLocaleString()}
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                     <button
                       onClick={() => handleApprove(tx.id)}
                       disabled={loading}
-                      className="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 cursor-pointer"
+                      className="w-full rounded-lg bg-green-600 px-4 py-3 text-xs font-medium text-white cursor-pointer hover:bg-green-700 disabled:opacity-50 sm:w-auto"
                     >
                       Approve
                     </button>
                     <button
                       onClick={() => handleReject(tx.id)}
                       disabled={loading}
-                      className="px-3 py-1.5 bg-red-600 text-white text-xs font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 cursor-pointer"
+                      className="w-full rounded-lg bg-red-600 px-4 py-3 text-xs font-medium text-white cursor-pointer hover:bg-red-700 disabled:opacity-50 sm:w-auto"
                     >
                       Reject
                     </button>

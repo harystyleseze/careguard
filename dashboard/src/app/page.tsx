@@ -53,7 +53,7 @@ export default function Dashboard() {
   }, [state.agentLog]);
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen overflow-x-hidden">
       <LiveRegion message={state.liveMessage} />
       <LowBalanceBanner
         pausedReason={state.agentPausedReason}
@@ -70,7 +70,7 @@ export default function Dashboard() {
         walletBalance={state.walletBalance}
         onTogglePause={state.togglePause}
       />
-      <div className="max-w-7xl mx-auto px-4 py-6">
+      <div className="max-w-7xl mx-auto px-4 py-6 overflow-x-hidden">
         <DashboardTabsNav activeTab={activeTab} pathname={pathname} />
         {activeTab === "overview" && (
           <OverviewTab

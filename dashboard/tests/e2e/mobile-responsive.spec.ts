@@ -1,24 +1,43 @@
 import { expect, test } from "@playwright/test";
 import { mockDashboardApis } from "./helpers";
 
+test.use({
+  locale: "en-US",
+  timezoneId: "UTC",
+});
+
 const viewports = [
-  { name: "iPhone SE", width: 375, height: 667 },
-  { name: "iPhone 14 Pro", width: 393, height: 852 },
-  { name: "Pixel 5", width: 393, height: 851 },
-  { name: "iPad", width: 768, height: 1024 },
+  { name: "375px", width: 375, height: 667 },
+  { name: "768px", width: 768, height: 1024 },
+  { name: "1024px", width: 1024, height: 768 },
+  { name: "1280px", width: 1280, height: 800 },
 ];
 
+const tabs = ["Overview", "Medications", "Bills", "Policy", "Wallet", "Activity", "Settings"];
+
 for (const viewport of viewports) {
-  test(`activity and bill tables are scrollable on ${viewport.name}`, async ({ page }) => {
+  test(`dashboard screenshots stay responsive at ${viewport.name}`, async ({ page }) => {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await mockDashboardApis(page);
     await page.goto("/");
 
-    await page.getByRole("button", { name: "Audit Hospital Bill" }).click();
-    await page.getByRole("tab", { name: "Bills" }).click();
-    await expect(page.locator(".overflow-x-auto").first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "CareGuard" })).toBeVisible();
+    await expect(page.getByText("Ada Lovelace")).toBeVisible();
 
-    await page.getByRole("tab", { name: "Activity" }).click();
-    await expect(page.locator("table.min-w-\\[640px\\]")).toBeVisible();
+    for (const tab of tabs) {
+      await page.getByRole("tab", { name: tab }).click();
+      await expect(page.getByRole("tab", { name: tab })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await expect(page.locator(`#tabpanel-${tab.toLowerCase()}`)).toBeVisible();
+      await expect(page).toHaveScreenshot(
+        `${viewport.name}-${tab.toLowerCase()}.png`,
+        {
+          animations: "disabled",
+          caret: "hide",
+        },
+      );
+    }
   });
 }
