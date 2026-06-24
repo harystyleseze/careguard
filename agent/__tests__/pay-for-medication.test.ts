@@ -66,8 +66,8 @@ const DEFAULT_POLICY = {
 
 beforeEach(() => {
   mockMppFetch.mockReset();
-  resetSpendingTracker();
-  setSpendingPolicy({ ...DEFAULT_POLICY });
+  resetSpendingTracker("rosa");
+  setSpendingPolicy("rosa", { ...DEFAULT_POLICY });
 });
 
 // --- Input validation ---
@@ -109,7 +109,7 @@ describe("payForMedication — input validation (Issue #35)", () => {
 describe("payForMedication — policy-blocked (Issue #35)", () => {
   it("returns success:false with BLOCKED BY SPENDING POLICY when budget exceeded", async () => {
     // Set a very low medication budget so any payment is blocked
-    setSpendingPolicy({ ...DEFAULT_POLICY, medicationMonthlyBudget: 5 });
+    setSpendingPolicy("rosa", { ...DEFAULT_POLICY, medicationMonthlyBudget: 5 });
     const r = await payForMedication("p1", "Pharma", "Drug", 50);
     expect(r.success).toBe(false);
     expect(r.error).toContain("BLOCKED BY SPENDING POLICY");
@@ -118,7 +118,7 @@ describe("payForMedication — policy-blocked (Issue #35)", () => {
   });
 
   it("returns success:false when daily limit would be exceeded", async () => {
-    setSpendingPolicy({ ...DEFAULT_POLICY, dailyLimit: 10 });
+    setSpendingPolicy("rosa", { ...DEFAULT_POLICY, dailyLimit: 10 });
     const r = await payForMedication("p1", "Pharma", "Drug", 50);
     expect(r.success).toBe(false);
     expect(r.error).toContain("BLOCKED BY SPENDING POLICY");
@@ -249,7 +249,7 @@ describe("checkSpendingPolicy — basic rules (Issue #35)", () => {
   });
 
   it("blocks when amount exceeds monthly medication budget", () => {
-    setSpendingPolicy({ ...DEFAULT_POLICY, medicationMonthlyBudget: 20 });
+    setSpendingPolicy("rosa", { ...DEFAULT_POLICY, medicationMonthlyBudget: 20 });
     const r = checkSpendingPolicy(50, "medications");
     expect(r.allowed).toBe(false);
   });

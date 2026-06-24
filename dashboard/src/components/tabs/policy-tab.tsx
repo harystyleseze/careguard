@@ -16,6 +16,7 @@ const FIELDS: Array<[keyof SpendingPolicyInput, string]> = [
   ["medicationMonthlyBudget", "Medication Monthly Budget ($)"],
   ["billMonthlyBudget", "Bill Monthly Budget ($)"],
   ["approvalThreshold", "Caregiver Approval Threshold ($)"],
+  ["holdTimeSeconds", "Hold Time Before Auto-Approval (seconds)"],
 ];
 
 export interface PolicyTabProps {

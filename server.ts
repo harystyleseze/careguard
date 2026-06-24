@@ -9,6 +9,7 @@
  */
 
 import "dotenv/config";
+import { createHash } from "crypto";
 import express from "express";
 import { Keypair, Horizon } from "@stellar/stellar-sdk";
 import OpenAI from "openai";
@@ -24,9 +25,19 @@ import { createCorsMiddleware } from "./shared/cors.ts";
 import { applySecurityMiddleware } from "./shared/security-middleware.ts";
 import { logger } from "./shared/logger.ts";
 import { validateTask, getSuspiciousTaskCount } from "./shared/task-validation.ts";
+import { buildScrubSession, scrubText } from "./shared/prompt-scrub.ts";
 
 // Sentry (gated by SENTRY_DSN)
 import { initSentry } from "./shared/sentry.ts";
+
+// Observability
+import { requestContextMiddleware, setAgentRunId, getRequestId } from "./shared/request-context.ts";
+import { requestLoggerMiddleware } from "./shared/request-logger.ts";
+import {
+  metricsHandler,
+  agentRunsTotal,
+  agentToolCallsTotal,
+} from "./shared/metrics.ts";
 
 // Shared agent pause state + wallet low-balance scheduler
 import {
@@ -37,7 +48,9 @@ import {
   type PauseReason,
 } from "./shared/agent-state.ts";
 import { checkWalletBalance, formatResult } from "./shared/wallet-balance.ts";
-import { appendAuditEntry } from "./shared/audit-log.ts";
+import { appendAuditEntry, auditRouter } from "./shared/audit-log.ts";
+import { rateLimiters } from "./shared/rate-limit.ts";
+import { agentQueue } from "./shared/agent-queue.ts";
 
 // Agent tools
 import {
@@ -54,6 +67,7 @@ import {
   getSpendingTracker,
   resetSpendingTracker,
   TOOL_DEFINITIONS,
+  validateToolInput,
 } from "./agent/tools.ts";
 
 // --- Environment ---
@@ -69,6 +83,7 @@ const envSchema = z.object({
   MPP_SECRET_KEY: z.string().min(1, "MPP_SECRET_KEY required"),
   LLM_BASE_URL: z.string().min(1).optional(),
   LLM_MODEL: z.string().min(1).optional(),
+  CAREGIVER_TOKEN: z.string().min(1, "CAREGIVER_TOKEN required"),
   OZ_FACILITATOR_API_KEY: z.string().min(1).optional(),
   X402_FACILITATOR_URL: z.string().min(1).optional(),
 });
@@ -97,6 +112,7 @@ if (env.data.STELLAR_NETWORK !== "public" && !env.data.OZ_FACILITATOR_API_KEY) {
 const PORT = env.data.PORT;
 const LLM_BASE_URL = env.data.LLM_BASE_URL || "https://api.groq.com/openai/v1";
 const LLM_MODEL = env.data.LLM_MODEL || "llama-3.3-70b-versatile";
+const CAREGIVER_TOKEN = env.data.CAREGIVER_TOKEN;
 const NETWORK = (
   env.data.STELLAR_NETWORK === "public" ? "stellar:public" : "stellar:testnet"
 ) as `${string}:${string}`;
@@ -108,13 +124,63 @@ const agentKeypair = Keypair.fromSecret(env.data.AGENT_SECRET_KEY);
 const MAX_TOOL_CALLS_PER_RUN = parseInt(process.env.MAX_TOOL_CALLS_PER_RUN || "30", 10);
 let toolCallCapHitsTotal = 0;
 
+// --- Mutable profile (issue #79) ---
+const _DEFAULT_PROFILE = {
+  recipient: {
+    name: "Rosa Garcia",
+    age: 78,
+    medications: ["Lisinopril", "Metformin", "Atorvastatin", "Amlodipine"],
+    doctor: "Dr. Chen, General Hospital",
+    insurance: "Medicare Part D",
+  },
+  caregiver: {
+    name: "Maria Garcia",
+    relationship: "Daughter",
+    location: "Phoenix, AZ (800 miles from Rosa)",
+    notifications: "Email + SMS",
+  },
+};
+let _profileData = {
+  recipient: { ..._DEFAULT_PROFILE.recipient, medications: [..._DEFAULT_PROFILE.recipient.medications] },
+  caregiver: { ..._DEFAULT_PROFILE.caregiver },
+};
+
 // --- Express App ---
 const app = express();
+let isDraining = false;
+
+function requireCaregiverToken(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith("Bearer ")) {
+    res.status(401).setHeader("WWW-Authenticate", "Bearer").json({ error: "Missing caregiver token" });
+    return;
+  }
+  if (auth.slice("Bearer ".length) !== CAREGIVER_TOKEN) {
+    res.status(403).json({ error: "Invalid caregiver token" });
+    return;
+  }
+  next();
+}
+
+app.use("/agent", rateLimiters.agent);
+app.use("/health", rateLimiters.health);
+app.use(rateLimiters.default);
 const sentry = await initSentry({ service: "careguard-server" });
 app.use(sentry.requestHandler());
 applySecurityMiddleware(app);
 app.use(createCorsMiddleware());
-app.use(express.json());
+const _smallJson = express.json({ limit: process.env.JSON_BODY_LIMIT ?? "20kb" });
+const _largeJson = express.json({ limit: process.env.BILL_AUDIT_BODY_LIMIT ?? "256kb" });
+app.use((req, res, next) =>
+  (req.path.startsWith("/bill/audit") ? _largeJson : _smallJson)(req, res, next)
+);
+app.use(requestContextMiddleware());
+app.use(requestLoggerMiddleware());
+app.use("/agent", requireCaregiverToken);
+app.use("/agent/audit", auditRouter);
+
+// --- Prometheus metrics ---
+app.get("/metrics", metricsHandler());
 
 // --- Root info ---
 app.get("/", (_req, res) => {
@@ -147,10 +213,14 @@ export function setOzFacilitatorReachable(reachable: boolean) {
 
 // --- Readiness probe — checks Horizon + OZ facilitator flag + required env ---
 app.get("/ready", async (_req, res) => {
+  if (isDraining) {
+    res.status(503).send("Service Unavailable");
+    return;
+  }
   const checks: Record<string, boolean | string> = {};
 
   // 1. Required env vars
-  const requiredEnv = ["LLM_API_KEY", "AGENT_SECRET_KEY", "MPP_SECRET_KEY"];
+  const requiredEnv = ["LLM_API_KEY", "AGENT_SECRET_KEY", "MPP_SECRET_KEY", "CAREGIVER_TOKEN"];
   const missingEnv = requiredEnv.filter((k) => !process.env[k]);
   checks.env = missingEnv.length === 0 ? true : `missing: ${missingEnv.join(", ")}`;
 
@@ -172,6 +242,23 @@ app.get("/ready", async (_req, res) => {
 
   const allOk = Object.values(checks).every((v) => v === true);
   res.status(allOk ? 200 : 503).json({ status: allOk ? "ok" : "degraded", checks });
+});
+
+// --- Profile (issue #79) ---
+app.get("/agent/profile", (_req, res) => { res.json(_profileData); });
+
+app.patch("/agent/profile", (req, res) => {
+  const { recipient, caregiver } = req.body ?? {};
+  if (recipient && typeof recipient === "object") {
+    _profileData.recipient = { ..._profileData.recipient, ...recipient };
+    if (Array.isArray(recipient.medications)) {
+      _profileData.recipient.medications = recipient.medications;
+    }
+  }
+  if (caregiver && typeof caregiver === "object") {
+    _profileData.caregiver = { ..._profileData.caregiver, ...caregiver };
+  }
+  res.json(_profileData);
 });
 
 // ============================================================
@@ -398,7 +485,7 @@ app.get("/pharmacy/compare", (req, res) => {
       pharmacyId: p.id,
       price: p.price,
       distance: p.distance,
-      inStock: true,
+      inStock: 'unknown',
     })),
     cheapest: {
       pharmacyName: cheapest.pharmacy,
@@ -843,6 +930,15 @@ IMPORTANT RULES:
 Current care recipient: Rosa Garcia (age 78)
 Caregiver: Maria Garcia (daughter)`;
 
+// PHI scrubbing — active unless LLM_PII_SCRUB=false (e.g. provider has a BAA)
+const _piiScrub = process.env.LLM_PII_SCRUB !== "false";
+const _scrubSession = _piiScrub
+  ? buildScrubSession(["Rosa Garcia"], ["Maria Garcia"])
+  : null;
+const SCRUBBED_SYSTEM_PROMPT = _scrubSession
+  ? scrubText(SYSTEM_PROMPT, _scrubSession)
+  : SYSTEM_PROMPT;
+
 const LLM_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] =
   TOOL_DEFINITIONS.map((t) => ({
     type: "function" as const,
@@ -854,49 +950,71 @@ const LLM_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] =
   }));
 
 async function executeTool(name: string, input: any): Promise<any> {
-  switch (name) {
-    case "compare_pharmacy_prices":
-      return await comparePharmacyPrices(input.drug_name, input.zip_code);
-    case "audit_medical_bill": {
-      const items =
-        typeof input.line_items_json === "string"
-          ? JSON.parse(input.line_items_json)
-          : input.line_items || input.line_items_json;
-      return await auditBill(items);
+  let result: any;
+  try {
+    input = validateToolInput(name, input);
+    switch (name) {
+      case "compare_pharmacy_prices":
+        result = await comparePharmacyPrices(input.drug_name, input.zip_code);
+        break;
+      case "audit_medical_bill": {
+        const items =
+          typeof input.line_items_json === "string"
+            ? JSON.parse(input.line_items_json)
+            : input.line_items || input.line_items_json;
+        result = await auditBill(items);
+        break;
+      }
+      case "fetch_rosa_bill":
+        result = await fetchRosaBill();
+        break;
+      case "fetch_and_audit_bill":
+        result = await fetchAndAuditBill();
+        break;
+      case "check_drug_interactions":
+        result = await checkDrugInteractions(input.medications);
+        break;
+      case "pay_for_medication":
+        result = await payForMedication(
+          input.pharmacy_id,
+          input.pharmacy_name,
+          input.drug_name,
+          parseFloat(input.amount),
+        );
+        break;
+      case "pay_bill":
+        result = await payBill(
+          input.provider_id,
+          input.provider_name,
+          input.description,
+          parseFloat(input.amount),
+        );
+        break;
+      case "check_spending_policy":
+        result = checkSpendingPolicy(parseFloat(input.amount), input.category);
+        break;
+      case "get_spending_summary":
+        result = getSpendingSummary();
+        break;
+      default:
+        result = { error: `Unknown tool: ${name}` };
     }
-    case "fetch_rosa_bill":
-      return await fetchRosaBill();
-    case "fetch_and_audit_bill":
-      return await fetchAndAuditBill();
-    case "check_drug_interactions":
-      return await checkDrugInteractions(input.medications);
-    case "pay_for_medication":
-      return await payForMedication(
-        input.pharmacy_id,
-        input.pharmacy_name,
-        input.drug_name,
-        parseFloat(input.amount),
-      );
-    case "pay_bill":
-      return await payBill(
-        input.provider_id,
-        input.provider_name,
-        input.description,
-        parseFloat(input.amount),
-      );
-    case "check_spending_policy":
-      return checkSpendingPolicy(parseFloat(input.amount), input.category);
-    case "get_spending_summary":
-      return getSpendingSummary();
-    default:
-      return { error: `Unknown tool: ${name}` };
+    agentToolCallsTotal.inc({ tool: name, status: "success" });
+    return result;
+  } catch (err: any) {
+    agentToolCallsTotal.inc({ tool: name, status: "error" });
+    throw err;
   }
 }
 
 async function runAgent(task: string) {
+  const userTask = _scrubSession ? scrubText(task, _scrubSession) : task;
+  const runId = `run-${getRequestId() ?? Date.now()}`;
+  setAgentRunId(runId);
+
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: task },
+    { role: "system", content: SCRUBBED_SYSTEM_PROMPT },
+    { role: "user", content: userTask },
   ];
   const toolCalls: Array<{ tool: string; input: any; result: any }> = [];
   let finalResponse = "";
@@ -970,6 +1088,16 @@ async function runAgent(task: string) {
         result = { error: err.message };
         toolCalls.push({ tool: tc.function.name, input: args, result });
       }
+
+      appendAuditEntry({
+        event: "tool_call",
+        actor: "agent",
+        details: {
+          tool: tc.function.name,
+          inputs: args,
+          resultHash: createHash("sha256").update(JSON.stringify(result || {})).digest("hex")
+        }
+      });
       messages.push({
         role: "tool",
         tool_call_id: tc.id,
@@ -1029,8 +1157,19 @@ app.get("/agent/transactions", (req, res) => {
   });
 });
 app.post("/agent/policy", (req, res) => {
-  setSpendingPolicy(req.body);
-  res.json({ success: true, policy: req.body });
+  const body = req.body;
+  if (!body || typeof body !== "object") {
+    return res.status(400).json({ error: "Invalid policy" });
+  }
+  const fields = ["dailyLimit", "monthlyLimit", "medicationMonthlyBudget", "billMonthlyBudget", "approvalThreshold"] as const;
+  const errors: string[] = [];
+  for (const f of fields) {
+    const v = body[f];
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) errors.push(`${f} must be a positive finite number`);
+  }
+  if (errors.length > 0) return res.status(400).json({ error: "Invalid policy", details: errors });
+  setSpendingPolicy(body);
+  res.json({ success: true, policy: body });
 });
 app.post("/agent/reset", (_req, res) => {
   resetSpendingTracker();
@@ -1051,10 +1190,16 @@ app.post("/agent/run", async (req, res) => {
   const task = validation.task!;
   logger.info({ task, suspicious: validation.suspicious }, "agent task received");
   try {
-    const result = await runAgent(task);
+    const result = await agentQueue.enqueue(() => runAgent(task));
+    agentRunsTotal.inc({ status: "success" });
     logger.info({ toolCalls: result.toolCalls.length, truncated: result.truncated }, "agent task complete");
     res.json(result);
   } catch (err: any) {
+    if (err.status === 429) {
+      res.status(429).set("Retry-After", String(err.retryAfter)).json({ error: err.message });
+      return;
+    }
+    agentRunsTotal.inc({ status: "error" });
     res.status(500).json({ error: err.message });
   }
 });
@@ -1064,6 +1209,14 @@ app.post("/agent/run", async (req, res) => {
 // ============================================================
 
 const horizonServer = new Horizon.Server("https://horizon-testnet.stellar.org");
+
+// 413 handler — must be before Sentry so Sentry also captures it
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large", limit: err.limit });
+  }
+  next(err);
+});
 
 // Sentry error handler must be registered AFTER all routes
 app.use(sentry.errorHandler());
@@ -1101,7 +1254,7 @@ async function startWalletBalanceScheduler(): Promise<void> {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  app.listen(PORT, async () => {
+  const server = app.listen(PORT, async () => {
     let usdcBalance = "unknown";
     try {
       const acc = await horizonServer.loadAccount(agentKeypair.publicKey());
@@ -1112,5 +1265,18 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
     logger.info({ port: PORT, network: NETWORK, llm: LLM_MODEL, wallet: agentKeypair.publicKey(), usdc: usdcBalance }, "CareGuard Unified Server started");
     await startWalletBalanceScheduler();
+  });
+
+  process.on("SIGTERM", () => {
+    logger.info("SIGTERM received. Draining server...");
+    isDraining = true;
+    server.close(() => {
+      logger.info("Server closed. Exiting process.");
+      process.exit(0);
+    });
+    setTimeout(() => {
+      logger.error("Graceful shutdown timeout. Forcing exit.");
+      process.exit(1);
+    }, 30000);
   });
 }

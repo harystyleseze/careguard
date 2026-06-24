@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { downloadTransactionPDF } from "../../app/pdf";
 import type { RecipientProfile } from "../../lib/types";
 import { ConfirmDialog } from "../primitives/confirm-dialog";
@@ -10,6 +10,7 @@ import type {
   PaginationData,
   SpendingData,
   Transaction,
+  AuditLogEvent,
 } from "../types";
 
 export interface ActivityTabProps {
@@ -17,6 +18,7 @@ export interface ActivityTabProps {
   agentLog: AgentLogEntry[];
   setAgentLog: (entries: AgentLogEntry[]) => void;
   allTransactions: Transaction[];
+  auditEvents?: AuditLogEvent[];
   pagination: PaginationData | null;
   currentPage: number;
   setCurrentPage: (page: number) => void;
@@ -82,6 +84,7 @@ export function ActivityTab({
   agentLog,
   setAgentLog,
   allTransactions,
+  auditEvents = [],
   pagination,
   currentPage,
   setCurrentPage,
@@ -92,6 +95,13 @@ export function ActivityTab({
 }: ActivityTabProps) {
   const [showAllLogEntries, setShowAllLogEntries] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const mergedTimeline = useMemo(() => {
+    const items: Array<{ ts: number, kind: "tx" | "audit", id: string, data: any }> = [];
+    for (const tx of allTransactions) items.push({ kind: "tx", ts: new Date(tx.timestamp).getTime(), id: tx.id, data: tx });
+    for (const au of auditEvents) items.push({ kind: "audit", ts: new Date(au.timestamp).getTime(), id: `audit-${au.timestamp}-${au.event}`, data: au });
+    return items.sort((a, b) => b.ts - a.ts);
+  }, [allTransactions, auditEvents]);
 
   return (
     <div
@@ -192,11 +202,10 @@ export function ActivityTab({
             .join("\n")}
         </div>
       </div>
-
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        {allTransactions.length === 0 && !pagination ? (
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        {mergedTimeline.length === 0 && !pagination ? (
           <div className="p-8 text-center text-sm text-slate-400">
-            No transactions yet
+            No activity yet
           </div>
         ) : (
           <>
@@ -251,52 +260,72 @@ export function ActivityTab({
                 </div>
               </div>
             )}
-
-            <div className="p-4 sm:hidden">
-              <div className="space-y-3">
-                {allTransactions.map((tx) => (
-                  <TransactionCard key={tx.id} tx={tx} />
-                ))}
-              </div>
-            </div>
-
-            <div className="hidden sm:block">
-              <div className="overflow-x-auto shadow-[inset_-10px_0_12px_-12px_rgba(15,23,42,0.25)]">
-                <table className="w-full min-w-[640px] text-sm">
-                  <thead className="border-b border-slate-200 bg-slate-50">
-                    <tr>
-                      <th className="hidden px-4 py-2 text-left text-xs font-medium text-slate-500 md:table-cell">
-                        Time
-                      </th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-slate-500">
-                        Type
-                      </th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-slate-500">
-                        Description
-                      </th>
-                      <th className="px-4 py-2 text-right text-xs font-medium text-slate-500">
-                        Amount
-                      </th>
-                      <th className="px-4 py-2 text-right text-xs font-medium text-slate-500">
-                        Status
-                      </th>
-                      <th className="px-4 py-2 text-right text-xs font-medium text-slate-500">
-                        Stellar Tx
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {allTransactions.map((tx) => (
+            <div className="overflow-x-auto shadow-[inset_-10px_0_12px_-12px_rgba(15,23,42,0.25)]">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    <th className="hidden md:table-cell text-left px-4 py-2 text-xs font-medium text-slate-500">
+                      Time
+                    </th>
+                    <th className="text-left px-4 py-2 text-xs font-medium text-slate-500">
+                      Type
+                    </th>
+                    <th className="text-left px-4 py-2 text-xs font-medium text-slate-500">
+                      Description
+                    </th>
+                    <th className="text-right px-4 py-2 text-xs font-medium text-slate-500">
+                      Amount
+                    </th>
+                    <th className="text-right px-4 py-2 text-xs font-medium text-slate-500">
+                      Status
+                    </th>
+                    <th className="text-right px-4 py-2 text-xs font-medium text-slate-500">
+                      Stellar Tx
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {mergedTimeline.map((item) => {
+                    if (item.kind === "audit") {
+                      const au = item.data as AuditLogEvent;
+                      return (
+                        <tr key={item.id} className="border-b border-slate-100 last:border-0 bg-slate-50/50">
+                          <td className="hidden md:table-cell px-4 py-2 text-xs text-slate-400">
+                            {new Date(au.timestamp).toLocaleTimeString()}
+                          </td>
+                          <td className="px-4 py-2">
+                            <span className="px-2 py-0.5 rounded text-xs font-medium bg-slate-800 text-slate-200">
+                              audit
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-xs">
+                            <span className="font-semibold text-slate-700">{au.event}</span>
+                            {au.details?.tool && <span className="text-slate-500 ml-1">— Tool: {au.details.tool}</span>}
+                          </td>
+                          <td className="px-4 py-2 text-right text-xs font-mono text-slate-400">-</td>
+                          <td className="px-4 py-2 text-right text-xs text-slate-500">{au.actor}</td>
+                          <td className="px-4 py-2 text-right text-xs text-slate-400">-</td>
+                        </tr>
+                      );
+                    }
+                    const tx = item.data as Transaction;
+                    return (
                       <tr
                         key={tx.id}
                         className="border-b border-slate-100 last:border-0"
                       >
-                        <td className="hidden px-4 py-2 text-xs text-slate-400 md:table-cell">
+                        <td className="hidden md:table-cell px-4 py-2 text-xs text-slate-400">
                           {new Date(tx.timestamp).toLocaleTimeString()}
                         </td>
                         <td className="px-4 py-2">
                           <span
-                            className={`rounded px-2 py-1 text-xs font-medium ${transactionTypeClass(tx.type)}`}
+                            className={`px-2 py-0.5 rounded text-xs font-medium ${
+                              tx.type === "medication"
+                                ? "bg-blue-100 text-blue-700"
+                                : tx.type === "bill"
+                                  ? "bg-purple-100 text-purple-700"
+                                  : "bg-slate-100 text-slate-600"
+                            }`}
                           >
                             {tx.type}
                           </span>
@@ -310,7 +339,13 @@ export function ActivityTab({
                         </td>
                         <td className="px-4 py-2 text-right">
                           <span
-                            className={`rounded px-2 py-1 text-xs ${transactionStatusClass(tx.status)}`}
+                            className={`px-2 py-0.5 rounded text-xs ${
+                              tx.status === "completed"
+                                ? "bg-green-100 text-green-700"
+                                : tx.status === "blocked"
+                                  ? "bg-red-100 text-red-700"
+                                  : "bg-amber-100 text-amber-700"
+                            }`}
                           >
                             {tx.status}
                           </span>
@@ -319,10 +354,10 @@ export function ActivityTab({
                           <TxLink hash={tx.stellarTxHash} />
                         </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </>
         )}

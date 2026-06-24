@@ -14,18 +14,99 @@ if (!process.stdout.isTTY) {
 
 import "dotenv/config";
 import express from "express";
-import { z } from "zod";
+import { readFileSync } from "fs";
+import {
+  BillAuditValidationError,
+  type LineItem,
+  validateBillAuditRequest,
+} from "../../shared/bill-audit.ts";
 import { applyX402Middleware, NETWORK, OZ_FACILITATOR_URL } from "../../shared/x402-middleware.ts";
 import { createCorsMiddleware } from "../../shared/cors.ts";
 import { applySecurityMiddleware } from "../../shared/security-middleware.ts";
 import { logger } from "../../shared/logger.ts";
+import { requestContextMiddleware } from "../../shared/request-context.ts";
+import { requestLoggerMiddleware } from "../../shared/request-logger.ts";
+import { sanitizeUserString } from "../../shared/sanitize.ts";
 
 const PORT = parseInt(process.env.BILL_AUDIT_API_PORT || "3002");
 const PAY_TO = process.env.BILL_PROVIDER_PUBLIC_KEY;
 
 if (!PAY_TO) throw new Error("BILL_PROVIDER_PUBLIC_KEY required in .env");
 
+// Duplicate detection allowlist configuration
+interface DuplicateAllowlistEntry {
+  code: string;
+  reason: string;
+  addedBy: string;
+  addedAt: string;
+  facilityId?: string; // Optional: per-facility override
+}
+
+let duplicateAllowlist: Set<string> = new Set();
+let allowlistMetadata: Map<string, DuplicateAllowlistEntry> = new Map();
+
+function loadDuplicateAllowlist() {
+  try {
+    const allowlistPath = new URL('./duplicates-allowlist.json', import.meta.url).pathname;
+    const data = JSON.parse(readFileSync(allowlistPath, 'utf-8')) as DuplicateAllowlistEntry[];
+    
+    duplicateAllowlist = new Set(data.map(entry => entry.code));
+    allowlistMetadata = new Map(data.map(entry => [entry.code, entry]));
+    
+    logger.info({ count: duplicateAllowlist.size, codes: Array.from(duplicateAllowlist) }, 'Loaded duplicate detection allowlist');
+  } catch (err: any) {
+    logger.error({ err: err.message }, 'Failed to load duplicates-allowlist.json, using empty allowlist');
+    duplicateAllowlist = new Set();
+    allowlistMetadata = new Map();
+  }
+}
+
+// Load allowlist at boot
+loadDuplicateAllowlist();
+
+// Reload allowlist on SIGHUP
+process.on('SIGHUP', () => {
+  logger.info('SIGHUP received, reloading duplicate allowlist');
+  loadDuplicateAllowlist();
+});
+
+// Audit threshold configuration
+interface AuditThresholdConfig {
+  default: number;
+  byCpt: Record<string, number>;
+}
+
+let auditThresholds: AuditThresholdConfig = { default: 1.5, byCpt: {} };
+
+function loadAuditThresholds() {
+  try {
+    const thresholdsPath = new URL('./audit_thresholds.json', import.meta.url).pathname;
+    auditThresholds = JSON.parse(readFileSync(thresholdsPath, 'utf-8')) as AuditThresholdConfig;
+    logger.info({ default: auditThresholds.default, cptCount: Object.keys(auditThresholds.byCpt).length }, 'Loaded audit thresholds configuration');
+  } catch (err: any) {
+    logger.error({ err: err.message }, 'Failed to load audit_thresholds.json, using default threshold of 1.5');
+    auditThresholds = { default: 1.5, byCpt: {} };
+  }
+}
+
+function getAuditThreshold(cptCode: string): number {
+  return auditThresholds.byCpt[cptCode] ?? auditThresholds.default;
+}
+
+// Load thresholds at boot
+loadAuditThresholds();
+
+// Reload thresholds on SIGHUP
+process.on('SIGHUP', () => {
+  logger.info('SIGHUP received, reloading audit thresholds');
+  loadAuditThresholds();
+});
+
 // Fair market rate database — based on CMS Medicare Physician Fee Schedule 2026
+// Rates are valid through end of 2026. After this date, rates should be refreshed.
+const RATES_AS_OF = '2026-01-01';
+const RATES_VALID_UNTIL = '2026-12-31';
+
 const FAIR_MARKET_RATES: Record<string, { description: string; fairRate: number }> = {
   "99213": { description: "Office visit, established patient, moderate", fairRate: 130 },
   "99214": { description: "Office visit, established patient, high", fairRate: 195 },
@@ -44,12 +125,26 @@ const FAIR_MARKET_RATES: Record<string, { description: string; fairRate: number 
   "97110": { description: "Physical therapy, therapeutic exercises", fairRate: 55 },
 };
 
+// Check if rates data is stale
+function checkRatesFreshness() {
+  const validUntil = new Date(RATES_VALID_UNTIL);
+  const now = new Date();
+  if (now > validUntil) {
+    logger.warn({ ratesAsOf: RATES_AS_OF, validUntil: RATES_VALID_UNTIL, currentDate: now.toISOString() }, 'Fair market rates are stale. Please refresh rates from CMS fee schedule.');
+  }
+}
+
+// Check freshness at boot
+checkRatesFreshness();
+
 interface BillItem { description: string; cptCode: string; quantity: number; chargedAmount: number; }
 
 // Zod schema for validating bill items
+const CPT_CODE_PATTERN = /^(?:\d{5}|J\d{4})$/;
+
 const BillItemSchema = z.object({
   description: z.string().min(1, "description is required"),
-  cptCode: z.string().min(1, "cptCode is required"),
+  cptCode: z.string().regex(CPT_CODE_PATTERN, "cptCode must be a valid CPT code (5 digits or J followed by 4 digits)"),
   quantity: z.number().positive("quantity must be positive"),
   chargedAmount: z.number().nonnegative("chargedAmount must be non-negative"),
 });
@@ -67,15 +162,16 @@ function auditBill(lineItems: BillItem[]) {
     totalCharged += item.chargedAmount;
     const fairRate = FAIR_MARKET_RATES[item.cptCode];
     const fairAmount = fairRate ? fairRate.fairRate * item.quantity : null;
+    const threshold = getAuditThreshold(item.cptCode);
 
     seenCodes[item.cptCode] = (seenCodes[item.cptCode] || 0) + 1;
-    if (seenCodes[item.cptCode] > 1 && !["96372", "97110"].includes(item.cptCode)) {
+    if (seenCodes[item.cptCode] > 1 && !duplicateAllowlist.has(item.cptCode)) {
       errorCount++;
       results.push({ description: item.description, cptCode: item.cptCode, quantity: item.quantity, chargedAmount: item.chargedAmount, fairMarketRate: fairAmount, status: "duplicate", errorDescription: `Duplicate charge for CPT ${item.cptCode}. Appears ${seenCodes[item.cptCode]} times.`, suggestedAmount: 0 });
       continue;
     }
 
-    if (fairAmount && item.chargedAmount > fairAmount * 1.5) {
+    if (fairAmount && item.chargedAmount > fairAmount * threshold) {
       errorCount++;
       const suggestedAmount = +(fairAmount * 1.2).toFixed(2);
       totalCorrect += suggestedAmount;
@@ -90,12 +186,16 @@ function auditBill(lineItems: BillItem[]) {
 
   const totalOvercharge = +(totalCharged - totalCorrect).toFixed(2);
   const savingsPercent = totalCharged > 0 ? +((totalOvercharge / totalCharged) * 100).toFixed(1) : 0;
+  const now = new Date();
+  const validUntil = new Date(RATES_VALID_UNTIL);
+  const isStale = now > validUntil;
 
   return {
     auditTimestamp: new Date().toISOString(),
     protocol: { name: "x402", network: NETWORK, price: "$0.01", payTo: PAY_TO },
     totalCharged: +totalCharged.toFixed(2), totalCorrect: +totalCorrect.toFixed(2),
     totalOvercharge, savingsPercent, errorCount, lineItems: results,
+    dataFreshness: { ratesAsOf: RATES_AS_OF, validUntil: RATES_VALID_UNTIL, isStale },
     recommendation: errorCount === 0 ? "No errors detected. This bill appears correct." : `Found ${errorCount} errors totaling $${totalOvercharge} in overcharges (${savingsPercent}% of total bill). Strongly recommend filing a formal dispute.`,
   };
 }
@@ -103,7 +203,9 @@ function auditBill(lineItems: BillItem[]) {
 const app = express();
 applySecurityMiddleware(app);
 app.use(createCorsMiddleware());
-app.use(express.json());
+app.use(express.json({ limit: process.env.BILL_AUDIT_BODY_LIMIT ?? "256kb" }));
+app.use(requestContextMiddleware());
+app.use(requestLoggerMiddleware());
 
 app.get("/", (_req, res) => {
   res.json({
@@ -141,23 +243,54 @@ applyX402Middleware(app, {
 app.post("/bill/audit", (req, res) => {
   try {
     const validatedData = BillAuditRequestSchema.parse(req.body);
-    res.json(auditBill(validatedData.lineItems));
+    const sanitizedLineItems = validatedData.lineItems.map(item => ({
+      ...item,
+      description: sanitizeUserString(item.description),
+    }));
+    res.json(auditBill(sanitizedLineItems));
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      const issues = error.issues.map((issue, idx) => {
-        const path = issue.path.join(".");
-        return `Item ${path}: ${issue.message}`;
-      });
+    if (error instanceof BillAuditValidationError) {
       res.status(400).json({
-        error: "Invalid lineItems",
-        details: issues,
+        ok: false,
+        reason: error.code,
+        message: error.message,
+        issues: error.issues,
       });
     } else {
-      res.status(400).json({ error: "Invalid request body" });
+      res.status(400).json({ ok: false, reason: "INVALID_REQUEST_BODY" });
     }
   }
 });
 
-app.listen(PORT, () => {
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large", limit: err.limit });
+  }
+  next(err);
+});
+
+let isDraining = false;
+app.get("/ready", (_req, res) => {
+  if (isDraining) {
+    res.status(503).send("Service Unavailable");
+    return;
+  }
+  res.send("OK");
+});
+
+const server = app.listen(PORT, () => {
   logger.info({ port: PORT, network: NETWORK, facilitator: OZ_FACILITATOR_URL, payTo: PAY_TO }, "Bill Audit API started");
+});
+
+process.on("SIGTERM", () => {
+  logger.info("SIGTERM received. Draining server...");
+  isDraining = true;
+  server.close(() => {
+    logger.info("Server closed. Exiting process.");
+    process.exit(0);
+  });
+  setTimeout(() => {
+    logger.error("Graceful shutdown timeout. Forcing exit.");
+    process.exit(1);
+  }, 30000);
 });

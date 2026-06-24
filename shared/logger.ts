@@ -1,4 +1,5 @@
 import pino from "pino";
+import { getRequestId, getAgentRunId } from "./request-context.ts";
 
 const STELLAR_KEY_RE = /S[A-Z2-7]{55}/g;
 
@@ -8,6 +9,14 @@ function sanitize(v: unknown): unknown {
 
 export const logger = pino({
   level: process.env.LOG_LEVEL ?? "info",
+  mixin() {
+    const requestId = getRequestId();
+    const agentRunId = getAgentRunId();
+    const ctx: Record<string, string> = {};
+    if (requestId) ctx.requestId = requestId;
+    if (agentRunId) ctx.agentRunId = agentRunId;
+    return ctx;
+  },
   redact: {
     paths: [
       "authorization",
@@ -35,3 +44,5 @@ export const logger = pino({
       ? { target: "pino-pretty", options: { colorize: true } }
       : undefined,
 });
+
+export const log = logger;

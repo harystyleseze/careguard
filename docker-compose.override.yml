@@ -38,8 +38,9 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - .:/app
-      - server-node-modules:/app/node_modules
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    # Optional: set METRICS_TOKEN in .env and Prometheus will send it as a bearer token.
+    # See docker/prometheus/prometheus.yml for scrape_config bearer_token usage.
 
   dashboard:
     image: node:22-alpine

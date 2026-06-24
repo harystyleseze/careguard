@@ -1,6 +1,6 @@
-import type { SpendingData, Transaction } from "../lib/types";
+import type { SpendingData, Transaction, AuditLogEvent } from "../lib/types";
 
-export type { SpendingData, Transaction };
+export type { SpendingData, Transaction, AuditLogEvent };
 
 export interface AgentResult {
   response: string;

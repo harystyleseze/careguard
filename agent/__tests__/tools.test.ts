@@ -1,24 +1,43 @@
 // vi.hoisted runs before any vi.mock factory — sets env vars + captures mutable refs
-const { mockMppFetch, onProgressHolder } = vi.hoisted(() => {
+const { mockMppFetch, onProgressHolder, MOCK_HINT } = vi.hoisted(() => {
   process.env.AGENT_SECRET_KEY = "SBWWZYCAFDDJXNRRMKSFNRB6OTVZHTCMPUCVZ4FBZLSPHFKHYLPRTJCD";
+  process.env.MOCK_NETWORK = "1";
   const onProgressHolder: { fn?: (event: any) => void } = {};
-  return { mockMppFetch: vi.fn(), onProgressHolder };
+  return {
+    mockMppFetch: vi.fn(),
+    onProgressHolder,
+    MOCK_HINT: Buffer.from([0xca, 0xfe, 0xba, 0xbe]),
+  };
 });
 
 vi.mock("dotenv/config", () => ({}));
 vi.mock("fs", () => ({
-  readFileSync: vi.fn().mockReturnValue("{}"),
+  readFileSync: vi.fn((filePath: string) =>
+    String(filePath).includes("spending.json")
+      ? JSON.stringify({ medications: 0, bills: 0, serviceFees: 0, transactions: [] })
+      : "{}",
+  ),
   writeFileSync: vi.fn(),
-  existsSync: vi.fn().mockReturnValue(false),
+  existsSync: vi.fn((filePath: string) => String(filePath).includes("spending.json")),
   mkdirSync: vi.fn(),
+  renameSync: vi.fn(),
 }));
 vi.mock("@stellar/stellar-sdk", () => ({
-  Keypair: { fromSecret: vi.fn().mockReturnValue({ publicKey: () => "GPUB123", sign: vi.fn() }) },
+  Keypair: {
+    fromSecret: vi.fn().mockReturnValue({
+      publicKey: () => "GPUB123",
+      sign: vi.fn(),
+      signatureHint: vi.fn().mockReturnValue(MOCK_HINT),
+    }),
+  },
   Networks: { TESTNET: "Test SDF Network ; September 2015" },
   TransactionBuilder: vi.fn().mockReturnValue({
     addOperation: vi.fn().mockReturnThis(),
     setTimeout: vi.fn().mockReturnThis(),
-    build: vi.fn().mockReturnValue({ sign: vi.fn() }),
+    build: vi.fn().mockReturnValue({
+      sign: vi.fn(),
+      signatures: [{ hint: vi.fn().mockReturnValue(MOCK_HINT) }],
+    }),
   }),
   Operation: { payment: vi.fn() },
   Asset: vi.fn(),
@@ -44,7 +63,10 @@ vi.mock("mppx/client", () => ({
 }));
 
 import { describe, it, expect, vi } from "vitest";
-import { payForMedication, payBill, checkSpendingPolicy } from "../tools.ts";
+import { readFileSync } from "fs";
+import { auditBill, checkDrugInteractions, checkSpendingPolicy, loadSpending, payBill, payForMedication } from "../tools.ts";
+
+const mockedReadFileSync = vi.mocked(readFileSync);
 
 describe("Amount Validation (Issue #249)", () => {
   it("should reject Infinity as payment amount", async () => {
@@ -114,5 +136,47 @@ describe("Spending Policy", () => {
   it("should allow valid amounts within policy", () => {
     const policy = checkSpendingPolicy(50, "medications");
     expect(policy.allowed).toBe(true);
+  });
+});
+
+describe("Bill audit input validation", () => {
+  it.each([
+    ["missing field", [{ description: "Office visit", quantity: 1, chargedAmount: 130 }]],
+    ["zero qty", [{ description: "Office visit", cptCode: "99213", quantity: 0, chargedAmount: 130 }]],
+    ["negative amount", [{ description: "Office visit", cptCode: "99213", quantity: 1, chargedAmount: -1 }]],
+    ["malformed cpt", [{ description: "Office visit", cptCode: "AB123", quantity: 1, chargedAmount: 130 }]],
+  ])("rejects %s", async (_label, lineItems) => {
+    const result = await auditBill(lineItems as any);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("INVALID_LINE_ITEMS");
+    expect(Array.isArray(result.issues)).toBe(true);
+    expect(result.issues.length).toBeGreaterThan(0);
+  });
+});
+
+describe("Drug interaction checks", () => {
+  it("rejects a single medication", async () => {
+    const result = await checkDrugInteractions(["lisinopril"]);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("NEED_AT_LEAST_TWO_MEDS");
+  });
+
+  it("runs the audit when two medications are supplied", async () => {
+    const result = await checkDrugInteractions(["lisinopril", "amlodipine"]);
+    expect(result.reason).toBeUndefined();
+    expect(result.interactions).toEqual([]);
+  });
+});
+
+describe("Spending cache", () => {
+  it("keeps repeated spending loads on memory after boot", () => {
+    const before = mockedReadFileSync.mock.calls.length;
+    expect(before).toBe(1);
+
+    for (let index = 0; index < 100; index++) {
+      loadSpending("rosa");
+    }
+
+    expect(mockedReadFileSync.mock.calls.length).toBe(1);
   });
 });

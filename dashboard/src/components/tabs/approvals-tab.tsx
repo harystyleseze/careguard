@@ -12,6 +12,7 @@ export interface ApprovalsTabProps {
 export function ApprovalsTab({ agentConnected }: ApprovalsTabProps) {
   const [approvals, setApprovals] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(false);
+  const [, setTick] = useState(0);
 
   const fetchApprovals = async () => {
     try {
@@ -24,8 +25,13 @@ export function ApprovalsTab({ agentConnected }: ApprovalsTabProps) {
 
   useEffect(() => {
     fetchApprovals();
+    fetchApprovals();
     const i = setInterval(fetchApprovals, 5000);
-    return () => clearInterval(i);
+    const t = setInterval(() => setTick((s) => s + 1), 1000);
+    return () => {
+      clearInterval(i);
+      clearInterval(t);
+    };
   }, []);
 
   const handleApprove = async (txId: string) => {
@@ -42,7 +48,7 @@ export function ApprovalsTab({ agentConnected }: ApprovalsTabProps) {
     }
   };
 
-  const handleReject = async (txId: string) => {
+  const handleCancel = async (txId: string) => {
     setLoading(true);
     try {
       const res = await fetch(`${AGENT_URL}/agent/approvals/${txId}`, {
@@ -89,6 +95,19 @@ export function ApprovalsTab({ agentConnected }: ApprovalsTabProps) {
                     <div className="text-xs text-slate-400 mt-1">
                       {new Date(tx.timestamp).toLocaleString()}
                     </div>
+                    {tx.pendingUntil && (
+                      <div className="text-xs text-amber-600 mt-1">
+                        {(() => {
+                          try {
+                            const ms = new Date(tx.pendingUntil).getTime() - Date.now();
+                            const sec = Math.max(0, Math.ceil(ms / 1000));
+                            return `Auto-approve in ${sec}s`;
+                          } catch {
+                            return null;
+                          }
+                        })()}
+                      </div>
+                    )}
                   </div>
                   <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                     <button
@@ -99,11 +118,11 @@ export function ApprovalsTab({ agentConnected }: ApprovalsTabProps) {
                       Approve
                     </button>
                     <button
-                      onClick={() => handleReject(tx.id)}
+                      onClick={() => handleCancel(tx.id)}
                       disabled={loading}
                       className="w-full rounded-lg bg-red-600 px-4 py-3 text-xs font-medium text-white cursor-pointer hover:bg-red-700 disabled:opacity-50 sm:w-auto"
                     >
-                      Reject
+                      Cancel
                     </button>
                   </div>
                 </div>
@@ -125,8 +144,8 @@ export function ApprovalsTab({ agentConnected }: ApprovalsTabProps) {
             it creates a pending transaction instead of paying immediately.
           </p>
           <p>
-            You can review and approve or reject each pending transaction here.
-            Approving will execute the payment; rejecting will cancel it.
+            You can review and approve or cancel each pending transaction here.
+            Approving will execute the payment; canceling will stop it.
           </p>
         </div>
       </div>

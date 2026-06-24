@@ -18,6 +18,8 @@ import { applyX402Middleware, NETWORK, OZ_FACILITATOR_URL } from "../../shared/x
 import { createCorsMiddleware } from "../../shared/cors.ts";
 import { applySecurityMiddleware } from "../../shared/security-middleware.ts";
 import { logger } from "../../shared/logger.ts";
+import { requestContextMiddleware } from "../../shared/request-context.ts";
+import { requestLoggerMiddleware } from "../../shared/request-logger.ts";
 
 const PORT = parseInt(process.env.DRUG_INTERACTION_API_PORT || "3003");
 const PAY_TO = process.env.PHARMACY_2_PUBLIC_KEY;
@@ -36,6 +38,23 @@ const INTERACTIONS: Interaction[] = [
   { drugs: ["omeprazole", "metformin"], severity: "mild", description: "Long-term omeprazole use may reduce vitamin B12 absorption, compounding metformin's known B12 effect.", recommendation: "Consider periodic B12 level monitoring, especially after 2+ years of concurrent use." },
   { drugs: ["lisinopril", "amlodipine"], severity: "mild", description: "Common intentional combination for blood pressure management. Both lower BP through different mechanisms.", recommendation: "Monitor for excessive blood pressure lowering (dizziness, lightheadedness)." },
 ];
+
+/**
+ * Sort drug interaction pairs by severity (severe > moderate > mild)
+ * and alphabetically by drug name for equal severities.
+ * Severity order: severe (0) > moderate (1) > mild (2)
+ */
+function sortPairsBySeverity(pairs: any[]): any[] {
+  const severityOrder: Record<string, number> = { severe: 0, moderate: 1, mild: 2 };
+  return pairs.sort((a, b) => {
+    const severityDiff = (severityOrder[a.severity] ?? 3) - (severityOrder[b.severity] ?? 3);
+    if (severityDiff !== 0) return severityDiff;
+    // Equal severity: sort alphabetically by drug names
+    const aKey = [a.drug1, a.drug2].sort().join('|');
+    const bKey = [b.drug1, b.drug2].sort().join('|');
+    return aKey.localeCompare(bKey);
+  });
+}
 
 function checkInteractions(medications: string[]) {
   const meds = medications.map(m => m.toLowerCase().trim());
@@ -60,7 +79,7 @@ function checkInteractions(medications: string[]) {
     protocol: { name: "x402", network: NETWORK, price: "$0.001", payTo: PAY_TO },
     medications, interactionCount: found.length, severeCount: severe, moderateCount: moderate,
     mildCount: found.length - severe - moderate,
-    interactions: found.sort((a, b) => ({ severe: 0, moderate: 1, mild: 2 }[a.severity as string] ?? 3) - ({ severe: 0, moderate: 1, mild: 2 }[b.severity as string] ?? 3)),
+    interactions: sortPairsBySeverity(found),
     overallRisk: severe > 0 ? "high" : moderate > 0 ? "moderate" : found.length > 0 ? "low" : "none",
     summary: found.length === 0 ? "No known interactions found." : `Found ${found.length} interaction(s): ${severe} severe, ${moderate} moderate, ${found.length - severe - moderate} mild.`,
   };
@@ -69,7 +88,9 @@ function checkInteractions(medications: string[]) {
 const app = express();
 applySecurityMiddleware(app);
 app.use(createCorsMiddleware());
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "20kb" }));
+app.use(requestContextMiddleware());
+app.use(requestLoggerMiddleware());
 
 app.get("/", (_req, res) => {
   res.json({ service: "CareGuard Drug Interaction Check API", version: "1.0.0", protocol: "x402 on Stellar", network: NETWORK, payTo: PAY_TO, price: "$0.001 per check" });
@@ -91,6 +112,35 @@ app.get("/drug/interactions", (req, res) => {
   res.json(checkInteractions(medications));
 });
 
-app.listen(PORT, () => {
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large", limit: err.limit });
+  }
+  next(err);
+});
+
+let isDraining = false;
+app.get("/ready", (_req, res) => {
+  if (isDraining) {
+    res.status(503).send("Service Unavailable");
+    return;
+  }
+  res.send("OK");
+});
+
+const server = app.listen(PORT, () => {
   logger.info({ port: PORT, network: NETWORK, facilitator: OZ_FACILITATOR_URL, payTo: PAY_TO }, "Drug Interaction API started");
+});
+
+process.on("SIGTERM", () => {
+  logger.info("SIGTERM received. Draining server...");
+  isDraining = true;
+  server.close(() => {
+    logger.info("Server closed. Exiting process.");
+    process.exit(0);
+  });
+  setTimeout(() => {
+    logger.error("Graceful shutdown timeout. Forcing exit.");
+    process.exit(1);
+  }, 30000);
 });

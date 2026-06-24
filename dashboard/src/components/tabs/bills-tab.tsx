@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { downloadBillAuditPDF } from "../../app/pdf";
+import { useState, useCallback } from "react";
+import { downloadBillAuditPDF, downloadDisputeLetterPDF, downloadDisputeLetterEmail } from "../../app/pdf";
 import {
   BillAuditResultSchema,
   type RecipientProfile,
+  type DisputeLetter,
 } from "../../lib/types";
 import {
   BillLineItemsVirtualized,
@@ -19,11 +20,48 @@ export interface BillsTabProps {
 
 export function BillsTab({ agentResult, recipient }: BillsTabProps) {
   const [showErrorsOnly, setShowErrorsOnly] = useState(false);
+  const [generatingDispute, setGeneratingDispute] = useState<string | null>(null);
 
   const auditCalls = agentResult?.toolCalls.filter(
     (t) =>
       t.tool === "audit_medical_bill" || t.tool === "fetch_and_audit_bill",
   );
+
+  const handleDispute = useCallback(async (auditResult: any, index: number) => {
+    setGeneratingDispute(`dispute-${index}`);
+    try {
+      const letter: DisputeLetter = {
+        billId: `bill-${Date.now()}`,
+        recipientName: recipient.name,
+        facility: recipient.facility || "General Hospital",
+        totalOvercharge: auditResult.totalOvercharge,
+        errorCount: auditResult.errorCount,
+        emailText: generateDisputeText(auditResult, recipient),
+        emailHtml: generateDisputeHtml(auditResult, recipient),
+        generatedAt: new Date().toISOString(),
+      };
+      downloadDisputeLetterPDF(letter);
+    } finally {
+      setGeneratingDispute(null);
+    }
+  }, [recipient]);
+
+  const handleDisputeEmail = useCallback(async (auditResult: any) => {
+    const letter: DisputeLetter = {
+      billId: `bill-${Date.now()}`,
+      recipientName: recipient.name,
+      facility: recipient.facility || "General Hospital",
+      totalOvercharge: auditResult.totalOvercharge,
+      errorCount: auditResult.errorCount,
+      emailText: generateDisputeText(auditResult, recipient),
+      emailHtml: generateDisputeHtml(auditResult, recipient),
+      generatedAt: new Date().toISOString(),
+    };
+    const html = downloadDisputeLetterEmail(letter);
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+  }, [recipient]);
 
   return (
     <div
@@ -60,6 +98,23 @@ export function BillsTab({ agentResult, recipient }: BillsTabProps) {
                 >
                   Download PDF
                 </button>
+                {t.result.errorCount > 0 && (
+                  <>
+                    <button
+                      onClick={() => handleDispute(t.result, i)}
+                      disabled={generatingDispute === `dispute-${i}`}
+                      className="px-3 py-1.5 bg-red-50 text-red-700 rounded-lg text-xs font-medium hover:bg-red-100 active:bg-red-200 cursor-pointer transition-all disabled:opacity-50"
+                    >
+                      {generatingDispute === `dispute-${i}` ? "Generating..." : "Dispute"}
+                    </button>
+                    <button
+                      onClick={() => handleDisputeEmail(t.result)}
+                      className="px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-xs font-medium hover:bg-amber-100 active:bg-amber-200 cursor-pointer transition-all"
+                    >
+                      Email Text
+                    </button>
+                  </>
+                )}
                 <span
                   className={`px-3 py-1 rounded-full text-xs font-medium ${
                     result.errorCount > 0
@@ -120,4 +175,47 @@ export function BillsTab({ agentResult, recipient }: BillsTabProps) {
       )}
     </div>
   );
+}
+
+function generateDisputeText(auditResult: any, recipient: RecipientProfile): string {
+  const errorItems = (auditResult.lineItems || []).filter((item: any) => item.status !== "valid");
+  const lines: string[] = [];
+  lines.push(`Dear ${recipient.facility || "General Hospital"} Billing Department,`);
+  lines.push("");
+  lines.push(`I am writing on behalf of ${recipient.name} to formally dispute the following billing errors:`);
+  lines.push("");
+  for (const item of errorItems) {
+    lines.push(`  - ${item.description}${item.cptCode ? ` (CPT: ${item.cptCode})` : ""}: Charged $${item.chargedAmount.toFixed(2)}`);
+    if (item.suggestedAmount !== undefined) {
+      lines.push(`    Fair market rate: $${item.suggestedAmount.toFixed(2)}`);
+    }
+    if (item.errorDescription) {
+      lines.push(`    Issue: ${item.errorDescription}`);
+    }
+    lines.push("");
+  }
+  lines.push(`Total overcharge: $${auditResult.totalOvercharge.toFixed(2)}`);
+  lines.push("");
+  lines.push("We request these charges be reviewed and corrected.");
+  lines.push("");
+  lines.push("Sincerely,");
+  lines.push("Maria Garcia");
+  return lines.join("\n");
+}
+
+function generateDisputeHtml(auditResult: any, recipient: RecipientProfile): string {
+  const errorItems = (auditResult.lineItems || []).filter((item: any) => item.status !== "valid");
+  const itemsHtml = errorItems.map((item: any) =>
+    `<li><strong>${item.description}</strong>${item.cptCode ? ` (CPT: ${item.cptCode})` : ""}: Charged $${item.chargedAmount.toFixed(2)}${item.suggestedAmount !== undefined ? ` — Fair rate: $${item.suggestedAmount.toFixed(2)}` : ""}${item.errorDescription ? `<br/><em>${item.errorDescription}</em>` : ""}</li>`
+  ).join("");
+  return `
+<h2>Medical Bill Dispute</h2>
+<p>Dear ${recipient.facility || "General Hospital"} Billing Department,</p>
+<p>I am writing on behalf of <strong>${recipient.name}</strong> to formally dispute billing errors.</p>
+<h3>Discrepancies:</h3>
+<ul>${itemsHtml}</ul>
+<p><strong>Total overcharge: $${auditResult.totalOvercharge.toFixed(2)}</strong></p>
+<p>We request these charges be reviewed and corrected.</p>
+<p>Sincerely,<br/>Maria Garcia</p>
+`.trim();
 }

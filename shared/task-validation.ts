@@ -15,7 +15,7 @@ const BLOCKLIST = [
 
 const CONTROL_CHAR_RE = /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g;
 
-const taskSchema = z.string().min(1).max(2000);
+const taskSchema = z.string().min(10).max(5000);
 
 let suspiciousTaskTotal = 0;
 export function getSuspiciousTaskCount(): number {

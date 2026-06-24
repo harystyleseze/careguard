@@ -20,7 +20,7 @@ import { useAgentState } from "../hooks/use-agent-state";
 import { useProfile } from "../lib/useProfile";
 
 export default function Dashboard() {
-  const { recipient } = useProfile();
+  const { recipient, caregiver, updateProfile } = useProfile();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -80,13 +80,14 @@ export default function Dashboard() {
             loading={state.loading}
             activeTask={state.activeTask}
             onRunTask={state.runAgentTask}
+            recipient={recipient}
           />
         )}
         {activeTab === "medications" && (
           <MedicationsTab agentResult={state.agentResult} recipient={recipient} />
         )}
         {activeTab === "bills" && (
-          <BillsTab agentResult={state.agentResult} recipient={recipient} />
+          <BillsTab agentResult={state.agentResult} recipient={recipient} caregiverName={caregiver.name} />
         )}
         {activeTab === "approvals" && (
           <ApprovalsTab agentConnected={state.agentConnected} />
@@ -116,6 +117,7 @@ export default function Dashboard() {
             agentLog={state.agentLog}
             setAgentLog={state.setAgentLog}
             allTransactions={state.allTransactions}
+            auditEvents={state.auditEvents}
             pagination={state.pagination}
             currentPage={state.currentPage}
             setCurrentPage={state.setCurrentPage}
@@ -128,9 +130,11 @@ export default function Dashboard() {
         {activeTab === "settings" && (
           <SettingsTab
             recipient={recipient}
+            caregiver={caregiver}
             agentInfo={state.agentInfo}
             agentPaused={state.agentPaused}
             onTogglePause={state.togglePause}
+            onUpdateProfile={updateProfile}
           />
         )}
       </div>

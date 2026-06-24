@@ -1,0 +1,75 @@
+name: Sensitive Dependency Audit
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"  # Every Monday at 09:00 UTC
+  workflow_dispatch:
+
+jobs:
+  audit:
+    name: Payment-Path Version Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Check payment-path packages for new versions
+        run: |
+          PAYMENT_DEPS="@x402/core @x402/express @x402/fetch @x402/stellar @stellar/stellar-sdk @stellar/mpp mppx"
+          NEEDS_REVIEW=0
+
+          for pkg in $PAYMENT_DEPS; do
+            INSTALLED=$(node -e "
+              try {
+                const p = require('./node_modules/${pkg}/package.json');
+                console.log(p.version);
+              } catch {
+                console.log('not-installed');
+              }
+            " 2>/dev/null || echo "not-installed")
+
+            LATEST=$(npm view "$pkg" version 2>/dev/null || echo "REGISTRY_UNAVAILABLE")
+
+            if [ "$LATEST" = "REGISTRY_UNAVAILABLE" ]; then
+              echo "::error::npm registry unreachable when checking $pkg — cannot confirm safety"
+              exit 1
+            fi
+
+            if [ "$INSTALLED" = "not-installed" ]; then
+              echo "::warning::$pkg is listed as payment-path but not installed"
+              continue
+            fi
+
+            if [ "$INSTALLED" != "$LATEST" ]; then
+              echo "::warning::$pkg: installed=$INSTALLED latest=$LATEST — human review required before upgrading"
+              NEEDS_REVIEW=1
+            else
+              echo "  $pkg: $INSTALLED (up to date)"
+            fi
+          done
+
+          if [ "$NEEDS_REVIEW" -eq 1 ]; then
+            echo ""
+            echo "::error::One or more payment-path packages have newer versions available."
+            echo "::error::These packages require a human-reviewed PR before upgrading."
+            echo "::error::See docs/security/critical-dependencies.md for the runbook."
+            exit 1
+          fi
+
+      - name: Generate weekly SBOM
+        run: npx --yes @cyclonedx/cyclonedx-npm --output-format JSON --output-file sbom.cdx.json --package-lock-only
+
+      - name: Upload weekly SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-weekly-${{ github.run_id }}
+          path: sbom.cdx.json
+          retention-days: 90

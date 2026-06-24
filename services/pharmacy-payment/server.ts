@@ -14,12 +14,16 @@ if (!process.stdout.isTTY) {
 
 import "dotenv/config";
 import express from "express";
+import { z } from "zod";
 import { Mppx, Store } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
 import { createCorsMiddleware } from "../../shared/cors.ts";
 import { applySecurityMiddleware } from "../../shared/security-middleware.ts";
 import { logger } from "../../shared/logger.ts";
+import { requestContextMiddleware } from "../../shared/request-context.ts";
+import { requestLoggerMiddleware } from "../../shared/request-logger.ts";
+import { sanitizeUserString } from "../../shared/sanitize.ts";
 
 const PORT = parseInt(process.env.PHARMACY_PAYMENT_PORT || "3005");
 const RECIPIENT = process.env.PHARMACY_1_PUBLIC_KEY;
@@ -31,6 +35,7 @@ if (!MPP_SECRET_KEY) throw new Error("MPP_SECRET_KEY required in .env");
 
 // Order storage (persisted to file)
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import lock from "proper-lockfile";
 
 const DATA_DIR = new URL("../../data", import.meta.url).pathname;
 const ORDERS_FILE = `${DATA_DIR}/orders.json`;
@@ -42,16 +47,46 @@ function loadOrders(): any[] {
   return JSON.parse(readFileSync(ORDERS_FILE, "utf-8"));
 }
 
-function saveOrder(order: any) {
-  const orders = loadOrders();
-  orders.push(order);
-  writeFileSync(ORDERS_FILE, JSON.stringify(orders, null, 2));
+/**
+ * Save a new order to the orders file with file-level locking to prevent race conditions.
+ * Ensures that concurrent calls don't lose data due to simultaneous read-modify-write operations.
+ * 
+ * Trade-off: File-based locking is slower than in-memory storage but is sufficient for the demo.
+ * For production, consider switching to SQLite (#168) or a proper database.
+ */
+async function saveOrder(order: any) {
+  let release: any;
+  try {
+    // Acquire exclusive lock on the orders file
+    release = await lock.lock(ORDERS_FILE, { retries: 10, stale: 5000 });
+    
+    // Safe read-modify-write within lock
+    const orders = loadOrders();
+    orders.push(order);
+    writeFileSync(ORDERS_FILE, JSON.stringify(orders, null, 2));
+    
+    logger.info({ orderId: order.id || 'unknown' }, 'Order saved successfully with lock');
+  } catch (err: any) {
+    logger.error({ err: err.message, orderId: order.id || 'unknown' }, 'Failed to save order');
+    throw err;
+  } finally {
+    // Always release the lock
+    if (release) {
+      try {
+        await release();
+      } catch (err: any) {
+        logger.warn({ err: err.message }, 'Failed to release file lock');
+      }
+    }
+  }
 }
 
 const app = express();
 applySecurityMiddleware(app);
 app.use(createCorsMiddleware());
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "20kb" }));
+app.use(requestContextMiddleware());
+app.use(requestLoggerMiddleware());
 
 app.get("/", (_req, res) => {
   res.json({
@@ -81,6 +116,27 @@ const mppx = Mppx.create({
   ],
 });
 
+// Zod schema for amount validation
+const OrderAmountSchema = z.union([
+  z.number().min(0.01, "amount must be at least $0.01").max(10000, "amount must not exceed $10,000"),
+  z.string().transform((val, ctx) => {
+    const parsed = parseFloat(val);
+    if (!Number.isFinite(parsed)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "amount must be a valid number" });
+      return z.NEVER;
+    }
+    if (parsed < 0.01) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "amount must be at least $0.01" });
+      return z.NEVER;
+    }
+    if (parsed > 10000) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "amount must not exceed $10,000" });
+      return z.NEVER;
+    }
+    return parsed;
+  }),
+]);
+
 // MPP-protected medication order endpoint
 app.post("/pharmacy/order", async (req, res) => {
   const { drug, pharmacy, amount } = req.body;
@@ -89,6 +145,15 @@ app.post("/pharmacy/order", async (req, res) => {
     res.status(400).json({ error: "Missing required fields: drug, pharmacy, amount" });
     return;
   }
+
+  const parsedAmount = OrderAmountSchema.safeParse(amount);
+  if (!parsedAmount.success) {
+    res.status(400).json({ error: "Invalid amount", details: parsedAmount.error.issues.map(i => i.message) });
+    return;
+  }
+
+  const safeDrug = sanitizeUserString(drug);
+  const safePharmacy = sanitizeUserString(pharmacy);
 
   // Convert Express request to Web Request for mppx
   const headers = new Headers();
@@ -108,8 +173,8 @@ app.post("/pharmacy/order", async (req, res) => {
 
   // Run MPP charge flow
   const result = await mppx.charge({
-    amount: parseFloat(amount).toFixed(2),
-    description: `Medication: ${drug} from ${pharmacy}`,
+    amount: parsedAmount.data.toFixed(2),
+    description: `Medication: ${safeDrug} from ${safePharmacy}`,
   })(webReq);
 
   // 402 = client needs to sign and pay
@@ -124,22 +189,22 @@ app.post("/pharmacy/order", async (req, res) => {
   // Payment verified and settled on Stellar — create order
   const order = {
     id: `order-${Date.now()}`,
-    drug,
-    pharmacy,
-    amount: parseFloat(amount),
+    drug: safeDrug,
+    pharmacy: safePharmacy,
+    amount: parsedAmount.data,
     status: "confirmed",
     timestamp: new Date().toISOString(),
     network: NETWORK,
     protocol: "MPP Charge",
   };
-  saveOrder(order);
+  await saveOrder(order);
 
   // Return response with payment receipt headers
   const response = result.withReceipt(
     Response.json({
       success: true,
       order,
-      message: `Payment of $${amount} USDC settled on Stellar. ${drug} order from ${pharmacy} confirmed.`,
+      message: `Payment of $${parsedAmount.data} USDC settled on Stellar. ${safeDrug} order from ${safePharmacy} confirmed.`,
     })
   );
 
@@ -148,6 +213,35 @@ app.post("/pharmacy/order", async (req, res) => {
   res.status(response.status).json(responseBody);
 });
 
-app.listen(PORT, () => {
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large", limit: err.limit });
+  }
+  next(err);
+});
+
+let isDraining = false;
+app.get("/ready", (_req, res) => {
+  if (isDraining) {
+    res.status(503).send("Service Unavailable");
+    return;
+  }
+  res.send("OK");
+});
+
+const server = app.listen(PORT, () => {
   logger.info({ port: PORT, network: NETWORK, recipient: RECIPIENT, currency: USDC_SAC_TESTNET }, "Pharmacy Payment Service (MPP Charge) started");
+});
+
+process.on("SIGTERM", () => {
+  logger.info("SIGTERM received. Draining server...");
+  isDraining = true;
+  server.close(() => {
+    logger.info("Server closed. Exiting process.");
+    process.exit(0);
+  });
+  setTimeout(() => {
+    logger.error("Graceful shutdown timeout. Forcing exit.");
+    process.exit(1);
+  }, 30000);
 });

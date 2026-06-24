@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  draft-release:
+    name: Draft GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      release-body: ${{ steps.release-drafter.outputs.body }}
+      tag-name: ${{ github.ref_name }}
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        id: release-drafter
+        with:
+          config-name: release-drafter.yml
+          publish: true
+          tag: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENDER_DEPLOY_URL: ${{ vars.RENDER_DEPLOY_URL || 'https://careguard.onrender.com' }}
+
+  update-changelog:
+    name: Update CHANGELOG.md
+    runs-on: ubuntu-latest
+    needs: draft-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: stefanzweifel/changelog-updater-action@v1
+        with:
+          latest-changelog: ${{ needs.draft-release.outputs.release-body }}
+          release-notes-heading: ${{ needs.draft-release.outputs.tag-name }}
+
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update CHANGELOG.md for ${{ needs.draft-release.outputs.tag-name }}"
+          file_pattern: CHANGELOG.md
+          branch: main

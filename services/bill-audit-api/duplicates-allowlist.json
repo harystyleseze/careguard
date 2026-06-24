@@ -1,0 +1,14 @@
+[
+  {
+    "code": "96372",
+    "reason": "Injection procedures can legitimately occur multiple times per visit (e.g., multiple vaccines, multiple medication administrations)",
+    "addedBy": "system",
+    "addedAt": "2026-06-01T00:00:00Z"
+  },
+  {
+    "code": "97110",
+    "reason": "Physical therapy therapeutic exercises are typically billed in 15-minute units, multiple units per session are standard practice",
+    "addedBy": "system",
+    "addedAt": "2026-06-01T00:00:00Z"
+  }
+]

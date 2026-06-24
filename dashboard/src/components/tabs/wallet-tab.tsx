@@ -53,13 +53,13 @@ export function WalletTab({ agentInfo, walletBalance, walletXlm }: WalletTabProp
         <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="bg-sky-50 rounded-lg p-4 text-center border border-sky-200">
             <div className="text-2xl font-bold text-sky-700">
-              ${walletBalance || "0.00"}
+              ${walletBalance ?? "0.00"}
             </div>
             <div className="text-xs text-slate-500 mt-1">USDC Balance</div>
           </div>
           <div className="bg-slate-50 rounded-lg p-4 text-center border border-slate-200">
             <div className="text-2xl font-bold text-slate-700">
-              {walletXlm || "0.00"}
+              {walletXlm ?? "0.00"}
             </div>
             <div className="text-xs text-slate-500 mt-1">XLM Balance</div>
           </div>

@@ -3,6 +3,13 @@ dist/
 .env
 .env.prod
 .env.local
+.dev-seed
 *.log
 data/audit.log.jsonl
+data/spending.json
+data/orders.json
+data/adherence.jsonl
+data/recipients/*/*.json
+!data/recipients/*/
 .DS_Store
+fix.md
