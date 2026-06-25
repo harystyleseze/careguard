@@ -93,6 +93,34 @@ Set `LLM_PII_SCRUB=false` in your environment to send real names to the LLM. Do 
 
 ---
 
+## #96 — Dashboard Browser Storage Policy
+
+The dashboard must not persist PHI, wallet data, authentication material, policy details, or agent task content to browser storage. `localStorage` and `sessionStorage` are intentionally blocked in `dashboard/src/**` so future UI changes do not accidentally cache sensitive healthcare or payment data across reloads.
+
+### Enforcement
+
+- `dashboard/eslint.config.mjs` rejects `localStorage.setItem(...)` and `sessionStorage.setItem(...)` in dashboard source files.
+- `dashboard/package.json` runs `scripts/guard-browser-storage.mjs` before Playwright E2E tests, so the existing dashboard E2E workflow fails CI even if ESLint is bypassed.
+- Manual QA should confirm dashboard state remains in React memory only. Page reloads may reset transient UI state such as copy buttons, spinners, and tab-local form drafts.
+
+### Exception process
+
+Persisting dashboard data in browser storage requires all of the following:
+
+1. A security issue or ADR explaining why storage is required and why server-side or in-memory state is insufficient.
+2. Code-owner approval from a maintainer responsible for dashboard security.
+3. A short-lived or non-sensitive payload only. Never store PHI, wallet seed phrases, auth tokens, API keys, raw agent prompts, medical bills, or payment instructions.
+4. A narrow inline ESLint disable comment that links to the approval issue, for example:
+
+```ts
+// eslint-disable-next-line no-restricted-syntax -- approved in #123 for non-sensitive UI preference only
+localStorage.setItem("careguard.theme", theme);
+```
+
+5. A matching CI guard exemption or test update that documents the exact allowed key.
+
+---
+
 ## #92 — Body-Size Limits
 
 All Express endpoints enforce explicit JSON body limits to reduce DoS surface:
