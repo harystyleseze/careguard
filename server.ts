@@ -31,6 +31,10 @@ import {
   validateBillAuditRequest,
 } from "./shared/bill-audit.ts";
 import { sanitizeUserString } from "./shared/sanitize.ts";
+import {
+  appendJsonArrayItem,
+  readJsonFile,
+} from "./shared/atomic-json.ts";
 
 // Sentry (gated by SENTRY_DSN)
 import { initSentry } from "./shared/sentry.ts";
@@ -770,13 +774,10 @@ const ORDERS_FILE = `${DATA_DIR}/orders.json`;
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
 function loadOrders(): any[] {
-  if (!existsSync(ORDERS_FILE)) return [];
-  return JSON.parse(readFileSync(ORDERS_FILE, "utf-8"));
+  return readJsonFile<any[]>(ORDERS_FILE, []);
 }
-function saveOrder(order: any) {
-  const orders = loadOrders();
-  orders.push(order);
-  writeFileSync(ORDERS_FILE, JSON.stringify(orders, null, 2));
+async function saveOrder(order: any) {
+  await appendJsonArrayItem(ORDERS_FILE, order);
 }
 
 const mppx = Mppx.create({
@@ -845,7 +846,7 @@ app.post("/pharmacy/order", async (req, res) => {
     network: NETWORK,
     protocol: "MPP Charge",
   };
-  saveOrder(order);
+  await saveOrder(order);
   const response = result.withReceipt(
     Response.json({
       success: true,
