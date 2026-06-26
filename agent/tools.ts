@@ -629,6 +629,44 @@ function truncateError(message: string): string {
   return message.replace(/<[^>]*>/g, '').slice(0, MAX_ERROR_LENGTH);
 }
 
+class MalformedResponseError extends Error {
+  readonly reason = 'MALFORMED_RESPONSE';
+  readonly responsePreview?: string;
+
+  constructor(serviceName: string, causeMessage: string, responsePreview?: string) {
+    super(`${serviceName} returned malformed JSON: ${causeMessage}`);
+    this.name = 'MalformedResponseError';
+    this.responsePreview = responsePreview;
+  }
+}
+
+async function readResponsePreview(response: Response): Promise<string | undefined> {
+  try {
+    const previewSource =
+      typeof response.clone === 'function' ? response.clone() : response;
+    if (typeof previewSource.text !== 'function') return undefined;
+    return truncateError(await previewSource.text());
+  } catch {
+    return undefined;
+  }
+}
+
+async function parseJsonResponse<T = any>(
+  response: Response,
+  serviceName: string,
+): Promise<T> {
+  const previewPromise = readResponsePreview(response);
+  try {
+    return await response.json() as T;
+  } catch (err: any) {
+    throw new MalformedResponseError(
+      serviceName,
+      err?.message || String(err),
+      await previewPromise,
+    );
+  }
+}
+
 function recordServiceFee(
   amount: number,
   description: string,
@@ -834,7 +872,7 @@ export async function comparePharmacyPrices(
     );
   }
 
-  const data = await response.json();
+  const data = await parseJsonResponse(response, 'Pharmacy API');
 
   // Extract real Stellar tx hash from x402 payment response header
   const txHash = extractX402TxHash(response);
@@ -887,7 +925,7 @@ export async function fetchRosaBill() {
     );
   }
 
-  return await response.json();
+  return await parseJsonResponse(response, 'Bill sample API');
 }
 
 // --- Tool: Fetch Rosa's bill AND audit it in one step (pays via x402) ---
@@ -1029,7 +1067,7 @@ export async function auditBill(
     );
   }
 
-  const data = await response.json();
+  const data = await parseJsonResponse(response, 'Bill Audit API');
 
   const txHash = extractX402TxHash(response);
 
@@ -1108,7 +1146,7 @@ export async function checkDrugInteractions(medications: string[]) {
     );
   }
 
-  const data = await response.json();
+  const data = await parseJsonResponse(response, 'Drug Interaction API');
 
   const txHash = extractX402TxHash(response);
 
@@ -1259,7 +1297,7 @@ async function executeMedicationPayment(
       },
     );
 
-    const data = await response.json();
+    const data = await parseJsonResponse(response, 'MPP pharmacy payment API');
     if (!data.success) {
       throw new Error(data.error || 'MPP payment failed');
     }
@@ -1291,6 +1329,16 @@ async function executeMedicationPayment(
     mppOrderId = data.order?.id;
   } catch (err: any) {
     stellarTxSubmittedTotal.inc({ result: 'error' });
+    if (err?.reason === 'MALFORMED_RESPONSE') {
+      return {
+        success: false,
+        ok: false,
+        reason: 'MALFORMED_RESPONSE',
+        error: 'MPP payment failed: malformed response from pharmacy payment API',
+        message: err.message,
+        responsePreview: err.responsePreview,
+      };
+    }
     return { success: false, error: `MPP payment failed: ${err.message}` };
   }
 
