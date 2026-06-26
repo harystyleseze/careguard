@@ -62,6 +62,11 @@ import {
 import { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds } from './tz.ts';
 export { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds };
 import { appendAuditEntry } from '../shared/audit-log.ts';
+import {
+  readJsonFile,
+  writeTextFileAtomic,
+  writeJsonFileAtomicLocked,
+} from '../shared/atomic-json.ts';
 import { notify } from '../shared/notifications.ts';
 import {
   getAdherenceSummary,
@@ -393,7 +398,7 @@ function migrateLegacyData() {
   }
   if (existsSync(legacyOrders) && !existsSync(`${rosaDir}/orders.json`)) {
     const data = readFileSync(legacyOrders, 'utf-8');
-    writeFileSync(`${rosaDir}/orders.json`, data);
+    writeTextFileAtomic(`${rosaDir}/orders.json`, data);
   }
   if (!existsSync(`${rosaDir}/policy.json`)) {
     writeFileSync(`${rosaDir}/policy.json`, JSON.stringify(DEFAULT_POLICY, null, 2));
@@ -1840,12 +1845,10 @@ interface OrderRecord {
   status: string; timestamp: string; network?: string; protocol?: string;
 }
 function loadOrders(recipientId?: string): OrderRecord[] {
-  const file = getOrdersFile(recipientId);
-  if (!existsSync(file)) return [];
-  return JSON.parse(readFileSync(file, "utf-8"));
+  return readJsonFile<OrderRecord[]>(getOrdersFile(recipientId), []);
 }
 function saveOrders(orders: OrderRecord[], recipientId?: string) {
-  writeFileSync(getOrdersFile(recipientId), JSON.stringify(orders, null, 2));
+  writeJsonFileAtomicLocked(getOrdersFile(recipientId), orders);
 }
 
 // --- Tool: Schedule an adherence reminder after pharmacy order (Issue #264) ---

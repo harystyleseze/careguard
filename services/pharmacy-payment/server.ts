@@ -27,6 +27,10 @@ import {
   MedicationOrderSchema,
   type MedicationOrderInput,
 } from "./validation.ts";
+import {
+  appendJsonArrayItem,
+  readJsonFile,
+} from "../../shared/atomic-json.ts";
 
 const PORT = parseInt(process.env.PHARMACY_PAYMENT_PORT || "3005");
 const RECIPIENT = process.env.PHARMACY_1_PUBLIC_KEY;
@@ -37,8 +41,7 @@ if (!RECIPIENT) throw new Error("PHARMACY_1_PUBLIC_KEY required in .env");
 if (!MPP_SECRET_KEY) throw new Error("MPP_SECRET_KEY required in .env");
 
 // Order storage (persisted to file)
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import lock from "proper-lockfile";
+import { existsSync, mkdirSync } from "fs";
 
 const DATA_DIR = new URL("../../data", import.meta.url).pathname;
 const ORDERS_FILE = `${DATA_DIR}/orders.json`;
@@ -46,42 +49,12 @@ const ORDERS_FILE = `${DATA_DIR}/orders.json`;
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
 function loadOrders(): any[] {
-  if (!existsSync(ORDERS_FILE)) return [];
-  return JSON.parse(readFileSync(ORDERS_FILE, "utf-8"));
+  return readJsonFile<any[]>(ORDERS_FILE, []);
 }
 
-/**
- * Save a new order to the orders file with file-level locking to prevent race conditions.
- * Ensures that concurrent calls don't lose data due to simultaneous read-modify-write operations.
- * 
- * Trade-off: File-based locking is slower than in-memory storage but is sufficient for the demo.
- * For production, consider switching to SQLite (#168) or a proper database.
- */
 async function saveOrder(order: any) {
-  let release: any;
-  try {
-    // Acquire exclusive lock on the orders file
-    release = await lock.lock(ORDERS_FILE, { retries: 10, stale: 5000 });
-    
-    // Safe read-modify-write within lock
-    const orders = loadOrders();
-    orders.push(order);
-    writeFileSync(ORDERS_FILE, JSON.stringify(orders, null, 2));
-    
-    logger.info({ orderId: order.id || 'unknown' }, 'Order saved successfully with lock');
-  } catch (err: any) {
-    logger.error({ err: err.message, orderId: order.id || 'unknown' }, 'Failed to save order');
-    throw err;
-  } finally {
-    // Always release the lock
-    if (release) {
-      try {
-        await release();
-      } catch (err: any) {
-        logger.warn({ err: err.message }, 'Failed to release file lock');
-      }
-    }
-  }
+  await appendJsonArrayItem(ORDERS_FILE, order);
+  logger.info({ orderId: order.id || "unknown" }, "Order saved atomically");
 }
 
 const app = express();
@@ -130,9 +103,9 @@ app.post("/pharmacy/order", async (req, res) => {
     return;
   }
 
-  const order = parsedOrder.data as MedicationOrderInput;
-  const safeDrug = sanitizeUserString(order.drug);
-  const safePharmacy = sanitizeUserString(order.pharmacy);
+  const orderInput = parsedOrder.data as MedicationOrderInput;
+  const safeDrug = sanitizeUserString(orderInput.drug);
+  const safePharmacy = sanitizeUserString(orderInput.pharmacy);
 
   // Convert Express request to Web Request for mppx
   const headers = new Headers();
@@ -152,7 +125,7 @@ app.post("/pharmacy/order", async (req, res) => {
 
   // Run MPP charge flow
   const result = await mppx.charge({
-    amount: order.amount.toFixed(2),
+    amount: orderInput.amount.toFixed(2),
     description: `Medication: ${safeDrug} from ${safePharmacy}`,
   })(webReq);
 
@@ -166,24 +139,24 @@ app.post("/pharmacy/order", async (req, res) => {
   }
 
   // Payment verified and settled on Stellar — create order
-  const order = {
+  const confirmedOrder = {
     id: `order-${Date.now()}`,
     drug: safeDrug,
     pharmacy: safePharmacy,
-    amount: order.amount,
+    amount: orderInput.amount,
     status: "confirmed",
     timestamp: new Date().toISOString(),
     network: NETWORK,
     protocol: "MPP Charge",
   };
-  await saveOrder(order);
+  await saveOrder(confirmedOrder);
 
   // Return response with payment receipt headers
   const response = result.withReceipt(
     Response.json({
       success: true,
-      order,
-      message: `Payment of $${order.amount} USDC settled on Stellar. ${safeDrug} order from ${safePharmacy} confirmed.`,
+      order: confirmedOrder,
+      message: `Payment of $${confirmedOrder.amount} USDC settled on Stellar. ${safeDrug} order from ${safePharmacy} confirmed.`,
     })
   );
 
