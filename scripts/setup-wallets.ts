@@ -3,6 +3,10 @@
  *
  * Creates wallets for: agent, caregiver, 3 pharmacies, bill provider
  * Funds each with XLM via Friendbot, creates USDC trustlines
+ *
+ * Idempotency: safe to re-run. Already-funded Friendbot accounts are ignored,
+ * existing USDC trustlines are skipped, and stale Horizon sequence numbers are
+ * handled by reloading the account and retrying once.
  */
 
 import { Keypair, Networks, TransactionBuilder, Operation, Asset, Horizon } from "@stellar/stellar-sdk";
@@ -173,32 +177,56 @@ async function fundAccount(publicKey: string): Promise<void> {
   }
 }
 
-async function addUsdcTrustline(keypair: Keypair): Promise<void> {
-  const server = new Horizon.Server(HORIZON_URL);
-  const account = await server.loadAccount(keypair.publicKey());
+function isTxBadSeqError(err: unknown): boolean {
+  const value = err as any;
+  const resultCode =
+    value?.response?.data?.extras?.result_codes?.transaction ??
+    value?.extras?.result_codes?.transaction ??
+    value?.result_codes?.transaction;
+  const message = value?.message ? String(value.message) : "";
+  return resultCode === "tx_bad_seq" || message.includes("tx_bad_seq");
+}
 
+export async function addUsdcTrustline(keypair: Keypair): Promise<void> {
+  const server = new Horizon.Server(HORIZON_URL);
   const usdc = new Asset("USDC", USDC_ISSUER);
 
-  // Check if trustline already exists
-  const hasTrustline = account.balances.some(
-    (b: any) => b.asset_code === "USDC" && b.asset_issuer === USDC_ISSUER
-  );
+  const buildAndSubmit = async () => {
+    const account = await server.loadAccount(keypair.publicKey());
 
-  if (hasTrustline) {
-    logger.info({ wallet: keypair.publicKey().slice(0, 8) }, "USDC trustline already exists");
-    return;
+    const hasTrustline = account.balances.some(
+      (b: any) => b.asset_code === "USDC" && b.asset_issuer === USDC_ISSUER,
+    );
+
+    if (hasTrustline) {
+      logger.info({ wallet: keypair.publicKey().slice(0, 8) }, "USDC trustline already exists");
+      return;
+    }
+
+    const tx = new TransactionBuilder(account, {
+      fee: "100",
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(Operation.changeTrust({ asset: usdc }))
+      .setTimeout(30)
+      .build();
+
+    tx.sign(keypair);
+    await server.submitTransaction(tx);
+  };
+
+  try {
+    await buildAndSubmit();
+  } catch (err) {
+    if (!isTxBadSeqError(err)) {
+      throw err;
+    }
+    logger.warn(
+      { wallet: keypair.publicKey().slice(0, 8) },
+      "USDC trustline tx_bad_seq; reloading account and retrying once",
+    );
+    await buildAndSubmit();
   }
-
-  const tx = new TransactionBuilder(account, {
-    fee: "100",
-    networkPassphrase: Networks.TESTNET,
-  })
-    .addOperation(Operation.changeTrust({ asset: usdc }))
-    .setTimeout(30)
-    .build();
-
-  tx.sign(keypair);
-  await server.submitTransaction(tx);
   logger.info({ wallet: keypair.publicKey().slice(0, 8) }, "USDC trustline added");
 }
 
