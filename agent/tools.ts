@@ -162,11 +162,16 @@ async function submitTransactionWithRetry(
       return result;
     } catch (err: any) {
       lastError = err;
-      if (err?.response?.status) throw err;
+      if (err?.response?.status || err?.response?.data?.extras?.result_codes) throw err;
       const msg = err?.message ?? "";
       // tx_too_late: timebounds expired — retry once with fresh timebounds if rebuild fn provided
       if (msg.includes("tx_too_late") && rebuildTx && attempt < maxRetries) {
         logger.warn({ attempt: attempt + 1 }, "[Stellar] tx_too_late, rebuilding with fresh timebounds");
+        tx = await rebuildTx();
+        continue;
+      }
+      if (msg.includes("tx_bad_seq") && rebuildTx && attempt === 0) {
+        logger.warn({ attempt: attempt + 1 }, "[Stellar] tx_bad_seq, rebuilding with fresh account sequence");
         tx = await rebuildTx();
         continue;
       }
@@ -255,7 +260,7 @@ async function waitForStellarSettlement(
 
 // --- x402 Client: Auto-handles 402 Payment Required for API queries ---
 // Use stellar:testnet or stellar:public scheme based on STELLAR_NETWORK env
-const x402SchemeId = `stellar:${STELLAR_CONFIG.networkType}`;
+const x402SchemeId = `stellar:${STELLAR_CONFIG.networkType}` as `${string}:${string}`;
 const x402Fetch = isMockNetwork()
   ? fetch
   : wrapFetchWithPayment(
