@@ -26,6 +26,9 @@
   "author": "",
   "license": "ISC",
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "dependencies": {
     "@sentry/node": "^8.45.1",
     "@stellar/mpp": "^0.4.0",
