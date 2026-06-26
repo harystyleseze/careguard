@@ -10,6 +10,20 @@ CareGuard enforces five limits on every payment the agent makes:
 | `billMonthlyBudget` | $500 | Monthly cap for bill payments only |
 | `approvalThreshold` | $75 | Payments above this amount require explicit caregiver approval |
 
+## Platform Single-Transaction Cap
+
+`MAX_SINGLE_TX_USDC` is a deployment-level hard cap for any single medication or bill payment. It defaults to `$100` and is checked before the caregiver-editable spending policy.
+
+This cap is intentionally not stored in `policy.json` and cannot be changed through the dashboard or policy API. Raising it requires changing the environment variable and redeploying the service.
+
+Example:
+
+```
+MAX_SINGLE_TX_USDC=100
+```
+
+If a payment is above this cap, the agent returns `BLOCKED BY PLATFORM CAP` without attempting MPP, Horizon, or spending-policy approval.
+
 ## Daily Limit and Timezones
 
 The daily limit resets at **local midnight** in the caregiver's timezone, not UTC midnight.
