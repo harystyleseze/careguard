@@ -255,7 +255,7 @@ async function waitForStellarSettlement(
 
 // --- x402 Client: Auto-handles 402 Payment Required for API queries ---
 // Use stellar:testnet or stellar:public scheme based on STELLAR_NETWORK env
-const x402SchemeId = `stellar:${STELLAR_CONFIG.networkType}`;
+const x402SchemeId = `stellar:${STELLAR_CONFIG.networkType}` as `${string}:${string}`;
 const x402Fetch = isMockNetwork()
   ? fetch
   : wrapFetchWithPayment(
@@ -629,6 +629,45 @@ function truncateError(message: string): string {
   return message.replace(/<[^>]*>/g, '').slice(0, MAX_ERROR_LENGTH);
 }
 
+function formatServiceConnectionError(
+  serviceName: string,
+  serviceUrl: string,
+  err: any,
+): Error {
+  const docsHint = 'See docs/setup/services.md for local service setup.';
+  const message =
+    typeof err?.message === 'string' ? err.message : 'Unknown network error';
+  const code = err?.cause?.code || err?.code;
+
+  if (code === 'ECONNREFUSED') {
+    return new Error(
+      `${serviceName} connection refused (ECONNREFUSED). This is usually a config or startup issue. ` +
+        `Ensure the service URL points to a running service (currently ${serviceUrl}). ${docsHint}`,
+    );
+  }
+
+  if (
+    code === 'ETIMEDOUT' ||
+    code === 'UND_ERR_CONNECT_TIMEOUT' ||
+    code === 'UND_ERR_SOCKET'
+  ) {
+    return new Error(
+      `${serviceName} request timed out. This is often transient (network hiccup or cold start). ` +
+        `Try again; if it persists, verify the service at ${serviceUrl} is reachable. ${docsHint}`,
+    );
+  }
+
+  if (code === 'ENOTFOUND') {
+    return new Error(
+      `${serviceName} hostname not found (ENOTFOUND). Check the service URL (currently ${serviceUrl}). ${docsHint}`,
+    );
+  }
+
+  return new Error(
+    `${serviceName} unreachable. ${message}. Verify the service is reachable at ${serviceUrl}. ${docsHint}`,
+  );
+}
+
 function recordServiceFee(
   amount: number,
   description: string,
@@ -825,7 +864,12 @@ export async function comparePharmacyPrices(
     return data;
   }
 
-  const response = await x402Fetch(url);
+  let response: Response;
+  try {
+    response = await x402Fetch(url);
+  } catch (err: any) {
+    throw formatServiceConnectionError('Pharmacy API', PHARMACY_API, err);
+  }
 
   if (!response.ok) {
     const error = await response.text();
@@ -1097,9 +1141,18 @@ export async function checkDrugInteractions(medications: string[]) {
     return data;
   }
 
-  const response = await x402Fetch(
-    `${DRUG_INTERACTION_API}/drug/interactions?meds=${encodeURIComponent(medsParam)}`,
-  );
+  let response: Response;
+  try {
+    response = await x402Fetch(
+      `${DRUG_INTERACTION_API}/drug/interactions?meds=${encodeURIComponent(medsParam)}`,
+    );
+  } catch (err: any) {
+    throw formatServiceConnectionError(
+      'Drug Interaction API',
+      DRUG_INTERACTION_API,
+      err,
+    );
+  }
 
   if (!response.ok) {
     const error = await response.text();

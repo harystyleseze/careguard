@@ -7,6 +7,8 @@ const { mockDecode } = vi.hoisted(() => {
 
 vi.mock("@x402/fetch", () => ({
   decodePaymentResponseHeader: mockDecode,
+  wrapFetchWithPayment: vi.fn((fetchImpl) => fetchImpl),
+  x402Client: vi.fn().mockReturnValue({ register: vi.fn().mockReturnThis() }),
 }));
 
 vi.mock("dotenv/config", () => ({}));
@@ -26,7 +28,7 @@ vi.mock("@stellar/stellar-sdk", () => ({
 }));
 vi.mock("@x402/stellar", () => ({ createEd25519Signer: vi.fn(), ExactStellarScheme: vi.fn() }));
 vi.mock("@stellar/mpp/charge/client", () => ({ stellar: vi.fn() }));
-vi.mock("mppx/client", () => ({ Mppx: { create: vi.fn() } }));
+vi.mock("mppx/client", () => ({ Mppx: { create: vi.fn().mockReturnValue({ fetch: vi.fn() }) } }));
 
 import { extractX402TxHash } from "../tools.ts";
 
