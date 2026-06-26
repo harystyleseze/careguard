@@ -85,6 +85,16 @@ describe("PolicyTab — rendering (Issue #47)", () => {
     render(<PolicyTab {...buildProps()} />);
     expect(screen.getByText(/Rosa Garcia/)).toBeTruthy();
   });
+
+  it("renders the accurate server-side enforcement copy", () => {
+    const { container } = render(<PolicyTab {...buildProps()} />);
+    const policyCopy = screen.getByText(/Enforced server-side by the agent/i);
+
+    expect(policyCopy.textContent).toMatchInlineSnapshot(
+      `"Enforced server-side by the agent before every payment. See docs/SPENDING-POLICY.md for how."`,
+    );
+    expect(container.textContent).not.toMatch(/Soroban smart contracts/i);
+  });
 });
 
 describe("PolicyTab — form interaction (Issue #47)", () => {
