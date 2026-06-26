@@ -156,8 +156,12 @@ WARN: LLM token usage exceeds 50% of budget threshold
 Check token consumption in metrics:
 ```
 agent_llm_tokens_total{kind="prompt"} / agent_llm_tokens_total{kind="completion"}
-agentLlmContextUsageRatio (warns at 80% of context window)
+agent_llm_context_usage_ratio (warns at 80% of context window)
+agent_llm_calls_total{model="llama-3.3-70b-versatile",status="success|error"}
+agent_llm_latency_seconds_bucket{model="llama-3.3-70b-versatile",status="success|error"}
 ```
+
+Prometheus also evaluates `CareGuardHighLlmErrorRate` from `docker/prometheus/alerts.yml`, which fires when `agent_llm_error_total / agent_llm_calls_total` stays above 5% for 10 minutes.
 
 Run token analysis:
 ```bash

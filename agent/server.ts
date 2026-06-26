@@ -31,6 +31,9 @@ import {
   agentLlmTokensTotal,
   agentLlmIterationTokens,
   agentLlmContextUsageRatio,
+  agentLlmCallsTotal,
+  agentLlmLatencySeconds,
+  agentLlmErrorTotal,
 } from "../shared/metrics.ts";
 import {
   comparePharmacyPrices,
@@ -280,6 +283,16 @@ function calculateMaxTokens(iteration: number, toolCallCount: number, previousTo
   return LLM_MAX_TOKENS_SIMPLE; // 1024
 }
 
+function serializeLlmError(error: unknown): { name?: string; message: string } {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message };
+  }
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return { message: String((error as { message: unknown }).message) };
+  }
+  return { message: String(error) };
+}
+
 // Run the agent with a task — full agentic loop
 async function runAgent(task: string) {
   const userTask = _scrubSession ? scrubText(task, _scrubSession) : task;
@@ -298,6 +311,7 @@ async function runAgent(task: string) {
 
   for (let iteration = 0; iteration < 15; iteration++) {
     let response;
+    const llmStartedAt = Date.now();
     try {
       // Determine temperature based on whether this is a tool-call round or final summary
       // Tool-call rounds use temperature=0 for deterministic tool selection
@@ -315,33 +329,36 @@ async function runAgent(task: string) {
         tools: LLM_TOOLS,
         messages,
       });
-    } catch (llmErr: any) {
-      logger.error({ err: llmErr.message, iteration }, "LLM API error");
+      const latencyMs = Date.now() - llmStartedAt;
+      agentLlmCallsTotal.inc({ model: LLM_MODEL, status: "success" });
+      agentLlmLatencySeconds.observe({ model: LLM_MODEL, status: "success" }, latencyMs / 1000);
+    } catch (llmErr: unknown) {
+      const latencyMs = Date.now() - llmStartedAt;
+      const error = serializeLlmError(llmErr);
+      agentLlmCallsTotal.inc({ model: LLM_MODEL, status: "error" });
+      agentLlmLatencySeconds.observe({ model: LLM_MODEL, status: "error" }, latencyMs / 1000);
+      logger.error(
+        {
+          event: "llm_error",
+          model: LLM_MODEL,
+          latency_ms: latencyMs,
+          requestId: getRequestId(),
+          iteration,
+          error,
+        },
+        "LLM API error",
+      );
       agentLlmErrorTotal.inc();
       finalResponse = JSON.stringify({
         status: "llm_error",
         toolCallsCompleted: toolCalls.length,
-        message: `LLM API error: ${llmErr.message}. Agent run was interrupted — not all tool calls may have completed.`,
+        message: `LLM API error: ${error.message}. Agent run was interrupted — not all tool calls may have completed.`,
         toolCalls: toolCalls.map(tc => ({
           tool: tc.tool,
           input: tc.input,
           result: tc.result,
         })),
       });
-      if (toolCalls.length > 0 && !finalResponse) {
-        finalResponse = toolCalls.map(tc => {
-          if (tc.result?.error) return `${tc.tool}: ${tc.result.error}`;
-          if (tc.result?.ok === false && tc.result?.reason) return `${tc.tool}: ${tc.result.reason}`;
-          if (tc.tool === "compare_pharmacy_prices" && (tc.result as any)?.cheapest) return `${(tc.result as any).drug}: cheapest at $${(tc.result as any).cheapest.price} (${(tc.result as any).cheapest.pharmacyName}), save $${(tc.result as any).potentialSavings}/mo`;
-          if (tc.tool === "audit_medical_bill" && (tc.result as any)?.totalOvercharge) return `Bill audit: $${(tc.result as any).totalOvercharge} in overcharges found (${(tc.result as any).errorCount} errors)`;
-          if (tc.tool === "check_drug_interactions" && (tc.result as any)?.summary) return (tc.result as any).summary;
-          if (tc.tool === "pay_for_medication" && (tc.result as any)?.success) return `Paid $${(tc.result as any).transaction.amount} for ${(tc.result as any).transaction.description}`;
-          if (tc.tool === "pay_bill" && (tc.result as any)?.success) return `Paid bill: $${(tc.result as any).transaction.amount}`;
-          return `${tc.tool}: completed`;
-        }).join("\n");
-      } else if (!finalResponse) {
-        finalResponse = `LLM error: ${llmErr.message}`;
-      }
       break;
     }
 

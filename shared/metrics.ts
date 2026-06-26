@@ -8,7 +8,7 @@
  * use vm.Module, as that would create a second Registry instance.
  */
 
-import { Registry, Counter, Gauge, collectDefaultMetrics } from "prom-client";
+import { Registry, Counter, Gauge, Histogram, collectDefaultMetrics } from "prom-client";
 import type { RequestHandler } from "express";
 
 export const registry = new Registry();
@@ -74,6 +74,21 @@ export const agentLlmIterationTokens = new Gauge({
 export const agentLlmContextUsageRatio = new Gauge({
   name: "agent_llm_context_usage_ratio",
   help: "Latest agent LLM iteration token usage ratio versus model context window",
+  registers: [registry],
+});
+
+export const agentLlmCallsTotal = new Counter({
+  name: "agent_llm_calls_total",
+  help: "Total LLM API calls made by the agent",
+  labelNames: ["model", "status"] as const,
+  registers: [registry],
+});
+
+export const agentLlmLatencySeconds = new Histogram({
+  name: "agent_llm_latency_seconds",
+  help: "LLM API call latency in seconds",
+  labelNames: ["model", "status"] as const,
+  buckets: [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
   registers: [registry],
 });
 

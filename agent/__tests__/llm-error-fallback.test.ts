@@ -23,4 +23,19 @@ describe("LLM error handling — no fabricated summaries", () => {
   it("imports agentLlmErrorTotal from metrics", () => {
     expect(serverSource).toContain("agentLlmErrorTotal");
   });
+
+  it("logs LLM errors with queryable structured fields", () => {
+    expect(serverSource).toContain('event: "llm_error"');
+    expect(serverSource).toContain("model: LLM_MODEL");
+    expect(serverSource).toContain("latency_ms");
+    expect(serverSource).toContain("requestId: getRequestId()");
+    expect(serverSource).toContain("error,");
+  });
+
+  it("records per-call LLM count and latency metrics", () => {
+    expect(serverSource).toContain("agentLlmCallsTotal.inc");
+    expect(serverSource).toContain("agentLlmLatencySeconds.observe");
+    expect(serverSource).toContain('status: "success"');
+    expect(serverSource).toContain('status: "error"');
+  });
 });
