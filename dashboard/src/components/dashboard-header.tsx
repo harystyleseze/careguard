@@ -3,6 +3,10 @@
 import type { RecipientProfile } from "../lib/types";
 import type { AgentInfo } from "./types";
 import { EXPLORER_ACCOUNT_URL } from "../lib/stellar-network";
+import {
+  buildFetchHealthSummary,
+  type FetchSourceHealth,
+} from "../hooks/fetch-health";
 
 export interface DashboardHeaderProps {
   recipient: RecipientProfile;
@@ -11,6 +15,7 @@ export interface DashboardHeaderProps {
   agentConnected: boolean;
   agentPaused: boolean;
   walletBalance: string | null;
+  fetchHealthSources: FetchSourceHealth[];
   onTogglePause: () => void;
 }
 
@@ -21,8 +26,11 @@ export function DashboardHeader({
   agentConnected,
   agentPaused,
   walletBalance,
+  fetchHealthSources,
   onTogglePause,
 }: DashboardHeaderProps) {
+  const fetchHealth = buildFetchHealthSummary(fetchHealthSources);
+
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
       <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -56,6 +64,16 @@ export function DashboardHeader({
               {agentPaused ? "Resume" : "Pause"}
             </button>
           )}
+          <div
+            aria-label="Data source health"
+            title={fetchHealth.title}
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs ${fetchHealth.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}
+          >
+            <div
+              className={`w-1.5 h-1.5 rounded-full ${fetchHealth.ok ? "bg-green-500" : "bg-red-500"}`}
+            />
+            {fetchHealth.label}
+          </div>
         </div>
         <div className="flex items-center gap-4">
           {walletBalance && agentInfo?.agentWallet && (

@@ -19,6 +19,8 @@ import type {
 } from '../components/types';
 import { usePoll } from './use-poll';
 import { AGENT_URL } from '../lib/agent-url';
+import { useFetch } from './use-fetch';
+import type { FetchSourceHealth } from './fetch-health';
 
 
 const DEFAULT_POLICY = {
@@ -34,6 +36,12 @@ export type PolicyForm = typeof DEFAULT_POLICY;
 
 export interface UseAgentStateOptions {
   activeTab: Tab;
+}
+
+interface TransactionsFetchData {
+  transactions: Transaction[];
+  pagination: PaginationData | null;
+  auditEvents: AuditLogEvent[] | null;
 }
 
 export function useAgentState({ activeTab }: UseAgentStateOptions) {
@@ -65,6 +73,9 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const [loadingAgentInfo, setLoadingAgentInfo] = useState(false);
   const [loadingSpending, setLoadingSpending] = useState(false);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
+  const agentInfoFetch = useFetch<AgentInfo>();
+  const spendingFetch = useFetch<SpendingData>();
+  const transactionsFetch = useFetch<TransactionsFetchData>();
 
   const activeTabRef = useRef(activeTab);
   const policyDirtyRef = useRef(policyDirty);
@@ -107,13 +118,13 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const fetchAgentInfo = useCallback(async () => {
     setLoadingAgentInfo(true);
     try {
-      const res = await fetch(`${AGENT_URL}/`);
-      if (!res.ok) {
-        setAgentConnected(false);
-        setLoadingAgentInfo(false);
-        return;
-      }
-      const data = await res.json();
+      const data = await agentInfoFetch.run(async () => {
+        const res = await fetch(`${AGENT_URL}/`);
+        if (!res.ok) {
+          throw new Error(`Agent info failed (${res.status})`);
+        }
+        return (await res.json()) as AgentInfo;
+      });
       setAgentInfo(data);
       setAgentConnected(true);
       setAgentPaused(Boolean(data.paused));
@@ -136,18 +147,19 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     } finally {
       setLoadingAgentInfo(false);
     }
-  }, []);
+  }, [agentInfoFetch.run]);
 
   const fetchSpending = useCallback(
     async (opts?: { forcePolicySync?: boolean }) => {
       setLoadingSpending(true);
       try {
-        const res = await fetch(`${AGENT_URL}/agent/spending`);
-        if (!res.ok) {
-          setLoadingSpending(false);
-          return;
-        }
-        const data = SpendingDataSchema.parse(await res.json());
+        const data = await spendingFetch.run(async () => {
+          const res = await fetch(`${AGENT_URL}/agent/spending`);
+          if (!res.ok) {
+            throw new Error(`Spending failed (${res.status})`);
+          }
+          return SpendingDataSchema.parse(await res.json());
+        });
         setSpending(data);
         const forcePolicySync = Boolean(opts?.forcePolicySync);
         const shouldSyncPolicy =
@@ -161,42 +173,49 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         setLoadingSpending(false);
       }
     },
-    [],
+    [spendingFetch.run],
   );
 
   const fetchTransactions = useCallback(
     async (limit?: number, offset?: number) => {
       setLoadingTransactions(true);
       try {
-        const params = new URLSearchParams();
-        if (limit) params.append('limit', limit.toString());
-        if (offset) params.append('offset', offset.toString());
-        const res = await fetch(`${AGENT_URL}/agent/transactions?${params}`);
-        if (!res.ok) {
-          setLoadingTransactions(false);
-          return;
-        }
-        const data = await res.json();
-        const txs = Array.isArray(data.transactions)
-          ? data.transactions.map((t: unknown) => TransactionSchema.parse(t))
-          : [];
-        setAllTransactions(txs);
-        if (data.pagination) setPagination(data.pagination);
-
-        // Fetch audit events independently (don't block on this)
-        const auditRes = await fetch(`${AGENT_URL}/agent/audit?limit=100`);
-        if (auditRes.ok) {
-          const auditData = await auditRes.json();
-          const logs = Array.isArray(auditData.data)
-            ? auditData.data.map((l: unknown) => AuditLogSchema.parse(l))
+        const data = await transactionsFetch.run(async () => {
+          const params = new URLSearchParams();
+          if (limit) params.append('limit', limit.toString());
+          if (offset) params.append('offset', offset.toString());
+          const res = await fetch(`${AGENT_URL}/agent/transactions?${params}`);
+          if (!res.ok) {
+            throw new Error(`Transactions failed (${res.status})`);
+          }
+          const payload = await res.json();
+          const txs = Array.isArray(payload.transactions)
+            ? payload.transactions.map((t: unknown) => TransactionSchema.parse(t))
             : [];
-          setAuditEvents(logs);
-        }
+
+          let auditEventsData: AuditLogEvent[] | null = null;
+          const auditRes = await fetch(`${AGENT_URL}/agent/audit?limit=100`);
+          if (auditRes.ok) {
+            const auditData = await auditRes.json();
+            auditEventsData = Array.isArray(auditData.data)
+              ? auditData.data.map((l: unknown) => AuditLogSchema.parse(l))
+              : [];
+          }
+
+          return {
+            transactions: txs,
+            pagination: payload.pagination ?? null,
+            auditEvents: auditEventsData,
+          };
+        });
+        setAllTransactions(data.transactions);
+        if (data.pagination) setPagination(data.pagination);
+        if (data.auditEvents) setAuditEvents(data.auditEvents);
       } catch {} finally {
         setLoadingTransactions(false);
       }
     },
-    [],
+    [transactionsFetch.run],
   );
 
   // Poll spending and transactions every 3s with backoff
@@ -274,6 +293,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         const data: AgentResult = await res.json();
         setAgentResult(data);
         setSpending(data.spending);
+        spendingFetch.setData(data.spending);
         setLiveMessage(`Task complete — ${data.toolCalls.length} tool calls`);
         for (const tc of data.toolCalls) {
           const resultPreview = tc.result?.error
@@ -306,7 +326,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         setAbortController(null);
       }
     },
-    [agentConnected, addLogEntry, fetchAgentInfo, fetchTransactions, pageSize],
+    [agentConnected, addLogEntry, fetchAgentInfo, fetchTransactions, pageSize, spendingFetch.setData],
   );
 
   const cancelAgentTask = useCallback(() => {
@@ -336,6 +356,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       if (spendingRes.ok) {
         const data = SpendingDataSchema.parse(await spendingRes.json());
         setSpending(data);
+        spendingFetch.setData(data);
         setPolicyForm(data.policy);
         setPolicyDirty(false);
       }
@@ -352,7 +373,28 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       );
       return { ok: false, error: err.message };
     }
-  }, [addLogEntry, policyForm]);
+  }, [addLogEntry, policyForm, spendingFetch.setData]);
+
+  const fetchHealthSources: FetchSourceHealth[] = [
+    {
+      id: 'agent-info',
+      label: 'Agent info',
+      error: agentInfoFetch.error,
+      lastSuccessAt: agentInfoFetch.lastSuccessAt,
+    },
+    {
+      id: 'spending',
+      label: 'Spending',
+      error: spendingFetch.error,
+      lastSuccessAt: spendingFetch.lastSuccessAt,
+    },
+    {
+      id: 'transactions',
+      label: 'Transactions',
+      error: transactionsFetch.error,
+      lastSuccessAt: transactionsFetch.lastSuccessAt,
+    },
+  ];
 
   const resetAgent = useCallback(async () => {
     await fetch(`${AGENT_URL}/agent/reset`, { method: 'POST' });
@@ -411,6 +453,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     policyDirty,
     setPolicyDirty,
     policySaved,
+    fetchHealthSources,
     // individual loading states (Issue #283)
     loadingAgentInfo,
     loadingSpending,
