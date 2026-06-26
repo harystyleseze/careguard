@@ -17,9 +17,38 @@ import { SettingsTab } from "../components/tabs/settings-tab";
 import { WalletTab } from "../components/tabs/wallet-tab";
 import { DASHBOARD_TABS, type Tab } from "../components/types";
 import { useAgentState } from "../hooks/use-agent-state";
+import { agentUrlConfig } from "../lib/agent-url";
 import { useProfile } from "../lib/useProfile";
 
+function AgentConfigurationError({ message }: { message: string }) {
+  return (
+    <main className="min-h-screen flex items-center justify-center bg-slate-950 px-6 text-slate-100">
+      <section className="max-w-2xl rounded-2xl border border-red-500/40 bg-red-950/30 p-8 shadow-2xl">
+        <p className="text-sm font-semibold uppercase tracking-wide text-red-300">
+          Configuration required
+        </p>
+        <h1 className="mt-3 text-3xl font-bold">CareGuard API URL is not configured</h1>
+        <p className="mt-4 text-slate-200">{message}</p>
+        <p className="mt-4 rounded-lg bg-slate-900 p-4 font-mono text-sm text-slate-100">
+          NEXT_PUBLIC_API_URL=https://your-careguard-api.example.com
+        </p>
+        <p className="mt-4 text-sm text-slate-300">
+          Local development still falls back to http://localhost:3004, but production builds must set the deployed API URL explicitly.
+        </p>
+      </section>
+    </main>
+  );
+}
+
 export default function Dashboard() {
+  if (agentUrlConfig.missingRequiredEnv) {
+    return <AgentConfigurationError message={agentUrlConfig.message} />;
+  }
+
+  return <DashboardContent agentUrl={agentUrlConfig.agentUrl} />;
+}
+
+function DashboardContent({ agentUrl }: { agentUrl: string }) {
   const { recipient, caregiver, updateProfile } = useProfile();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -38,7 +67,7 @@ export default function Dashboard() {
       : "overview";
   }, [searchParams]);
 
-  const state = useAgentState({ activeTab });
+  const state = useAgentState({ activeTab, agentUrl });
 
   const ariaLogRef = useRef<number | null>(null);
   const [debouncedAriaLog, setDebouncedAriaLog] = useState<string[]>([]);

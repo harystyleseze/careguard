@@ -19,8 +19,6 @@ import type {
 } from '../components/types';
 import { usePoll } from './use-poll';
 
-const AGENT_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3004';
-
 const DEFAULT_POLICY = {
   dailyLimit: 100,
   monthlyLimit: 800,
@@ -34,9 +32,10 @@ export type PolicyForm = typeof DEFAULT_POLICY;
 
 export interface UseAgentStateOptions {
   activeTab: Tab;
+  agentUrl: string;
 }
 
-export function useAgentState({ activeTab }: UseAgentStateOptions) {
+export function useAgentState({ activeTab, agentUrl }: UseAgentStateOptions) {
   const [spending, setSpending] = useState<SpendingData | null>(null);
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditLogEvent[]>([]);
@@ -101,7 +100,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
 
   const fetchAgentInfo = useCallback(async () => {
     try {
-      const res = await fetch(`${AGENT_URL}/`);
+      const res = await fetch(`${agentUrl}/`);
       if (!res.ok) return;
       const data = await res.json();
       setAgentInfo(data);
@@ -113,7 +112,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       // Fetch wallet balance from server (Issue #134 - server-side cache)
       if (data.agentWallet) {
         try {
-          const wres = await fetch(`${AGENT_URL}/agent/wallet`);
+          const wres = await fetch(`${agentUrl}/agent/wallet`);
           if (wres.ok) {
             const wdata = await wres.json();
             setWalletBalance(wdata.usdc || '0.00');
@@ -124,12 +123,12 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     } catch {
       setAgentConnected(false);
     }
-  }, []);
+  }, [agentUrl]);
 
   const fetchSpending = useCallback(
     async (opts?: { forcePolicySync?: boolean }) => {
       try {
-        const res = await fetch(`${AGENT_URL}/agent/spending`);
+        const res = await fetch(`${agentUrl}/agent/spending`);
         if (!res.ok) return;
         const data = SpendingDataSchema.parse(await res.json());
         setSpending(data);
@@ -143,7 +142,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         }
       } catch {}
     },
-    [],
+    [agentUrl],
   );
 
   const fetchTransactions = useCallback(
@@ -152,7 +151,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         const params = new URLSearchParams();
         if (limit) params.append('limit', limit.toString());
         if (offset) params.append('offset', offset.toString());
-        const res = await fetch(`${AGENT_URL}/agent/transactions?${params}`);
+        const res = await fetch(`${agentUrl}/agent/transactions?${params}`);
         if (!res.ok) return;
         const data = await res.json();
         const txs = Array.isArray(data.transactions)
@@ -161,7 +160,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         setAllTransactions(txs);
         if (data.pagination) setPagination(data.pagination);
 
-        const auditRes = await fetch(`${AGENT_URL}/agent/audit?limit=100`);
+        const auditRes = await fetch(`${agentUrl}/agent/audit?limit=100`);
         if (auditRes.ok) {
           const auditData = await auditRes.json();
           const logs = Array.isArray(auditData.data)
@@ -171,7 +170,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         }
       } catch {}
     },
-    [],
+    [agentUrl],
   );
 
   // Poll spending and transactions every 3s with backoff
@@ -225,7 +224,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       }, 60000);
       
       try {
-        const res = await fetch(`${AGENT_URL}/agent/run`, {
+        const res = await fetch(`${agentUrl}/agent/run`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ task }),
@@ -281,7 +280,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         setAbortController(null);
       }
     },
-    [agentConnected, addLogEntry, fetchAgentInfo, fetchTransactions, pageSize],
+    [agentConnected, addLogEntry, agentUrl, fetchAgentInfo, fetchTransactions, pageSize],
   );
 
   const cancelAgentTask = useCallback(() => {
@@ -295,7 +294,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     error?: string;
   }> => {
     try {
-      const res = await fetch(`${AGENT_URL}/agent/policy`, {
+      const res = await fetch(`${agentUrl}/agent/policy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(policyForm),
@@ -307,7 +306,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         );
         return { ok: false, error: errText || 'Failed to update policy' };
       }
-      const spendingRes = await fetch(`${AGENT_URL}/agent/spending`);
+      const spendingRes = await fetch(`${agentUrl}/agent/spending`);
       if (spendingRes.ok) {
         const data = SpendingDataSchema.parse(await spendingRes.json());
         setSpending(data);
@@ -327,10 +326,10 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       );
       return { ok: false, error: err.message };
     }
-  }, [addLogEntry, policyForm]);
+  }, [addLogEntry, agentUrl, policyForm]);
 
   const resetAgent = useCallback(async () => {
-    await fetch(`${AGENT_URL}/agent/reset`, { method: 'POST' });
+    await fetch(`${agentUrl}/agent/reset`, { method: 'POST' });
     setAllTransactions([]);
     setPagination(null);
     setCurrentPage(0);
@@ -339,12 +338,12 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     fetchSpending();
     addLogEntry(`[${new Date().toLocaleTimeString()}] Reset by caregiver`);
     setLiveMessage('All transactions and logs cleared');
-  }, [addLogEntry, fetchSpending]);
+  }, [addLogEntry, agentUrl, fetchSpending]);
 
   const togglePause = useCallback(async () => {
     const endpoint = agentPaused ? '/agent/resume' : '/agent/pause';
     try {
-      const res = await fetch(`${AGENT_URL}${endpoint}`, { method: 'POST' });
+      const res = await fetch(`${agentUrl}${endpoint}`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         setAgentPaused(data.paused);
@@ -356,7 +355,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         );
       }
     } catch {}
-  }, [addLogEntry, agentPaused]);
+  }, [addLogEntry, agentPaused, agentUrl]);
 
   return {
     // state
