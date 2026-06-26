@@ -104,6 +104,27 @@ export const SpendingDataSchema = z.object({
 
 export type SpendingData = z.infer<typeof SpendingDataSchema>;
 
+export const PaginationDataSchema = z.object({
+  total: z.number(),
+  limit: z.number(),
+  offset: z.number(),
+  hasMore: z.boolean(),
+  hasPrevious: z.boolean(),
+});
+
+export const AgentStreamSnapshotSchema = z.object({
+  agent: z.object({
+    paused: z.boolean(),
+    pausedReason: z.string().nullable().optional(),
+    pausedAt: z.string().nullable().optional(),
+  }),
+  spending: SpendingDataSchema,
+  transactions: z.array(TransactionSchema),
+  pagination: PaginationDataSchema,
+});
+
+export type AgentStreamSnapshot = z.infer<typeof AgentStreamSnapshotSchema>;
+
 export type RecipientProfile = {
   name: string;
   age?: number;
