@@ -625,8 +625,35 @@ let spendingTracker = loadSpending();
 const MAX_PAYMENT = 1000;
 const MAX_ERROR_LENGTH = 500;
 
+function countsTowardDailyLimit(tx: Transaction): boolean {
+  return !['blocked', 'rejected', 'cancelled'].includes(tx.status);
+}
+
 function truncateError(message: string): string {
   return message.replace(/<[^>]*>/g, '').slice(0, MAX_ERROR_LENGTH);
+}
+
+function recordBlockedPayment(
+  type: 'medication' | 'bill',
+  description: string,
+  amount: number,
+  recipient: string,
+  category: PaymentCategory,
+): Transaction {
+  const tx: Transaction = {
+    id: `tx-${Date.now()}`,
+    timestamp: new Date().toISOString(),
+    type,
+    description,
+    amount,
+    recipient,
+    status: 'blocked',
+    category,
+  };
+  spendingTracker.transactions.push(tx);
+  agentTransactionsTotal.inc({ status: 'blocked' });
+  appendTransaction(tx);
+  return tx;
 }
 
 function recordServiceFee(
@@ -1191,7 +1218,8 @@ export function checkSpendingPolicy(
           Number.isFinite(txTimestamp) &&
           txTimestamp >= dayStartMs &&
           txTimestamp < dayEndMs &&
-          t.category === category
+          t.category === category &&
+          countsTowardDailyLimit(t)
         );
       },
     )
@@ -1209,7 +1237,7 @@ export function checkSpendingPolicy(
 
   return {
     allowed: true,
-    requiresApproval: amount > policy.approvalThreshold,
+    requiresApproval: amount >= policy.approvalThreshold,
     currentSpending,
     budgetRemaining: remaining - amount,
   };
@@ -1501,9 +1529,17 @@ export async function payForMedication(
       ? 'daily_limit'
       : 'budget';
     policyBlocksTotal.inc({ reason });
+    const tx = recordBlockedPayment(
+      'medication',
+      `${drugName} from ${pharmacyName}`,
+      amount,
+      pharmacyId,
+      TRANSACTION_CATEGORY.MEDICATIONS,
+    );
     return {
       success: false,
       error: `BLOCKED BY SPENDING POLICY: ${policyCheck.reason}`,
+      transaction: tx,
     };
   }
   if (policyCheck.requiresApproval && !skipApproval) {
@@ -1531,7 +1567,7 @@ export async function payForMedication(
     appendTransaction(tx);
     return {
       success: false,
-      error: `REQUIRES CAREGIVER APPROVAL: $${amount.toFixed(2)} exceeds the $${currentPolicy.approvalThreshold} approval threshold.`,
+      error: `REQUIRES CAREGIVER APPROVAL: $${amount.toFixed(2)} meets or exceeds the $${currentPolicy.approvalThreshold} approval threshold.`,
       transaction: tx,
     };
   }
@@ -1580,7 +1616,7 @@ export async function payForMedication(
   });
 
   // Notify on significant payment (Issue #265)
-  if (amount > currentPolicy.approvalThreshold) {
+  if (amount >= currentPolicy.approvalThreshold) {
     notify({
       level: "info",
       title: "Medication Payment Made",
@@ -1613,9 +1649,17 @@ export async function payBill(
       ? 'daily_limit'
       : 'budget';
     policyBlocksTotal.inc({ reason });
+    const tx = recordBlockedPayment(
+      'bill',
+      `${description} — ${providerName}`,
+      amount,
+      providerId,
+      TRANSACTION_CATEGORY.BILLS,
+    );
     return {
       success: false,
       error: `BLOCKED BY SPENDING POLICY: ${policyCheck.reason}`,
+      transaction: tx,
     };
   }
   if (policyCheck.requiresApproval && !skipApproval) {
@@ -1643,7 +1687,7 @@ export async function payBill(
     appendTransaction(tx);
     return {
       success: false,
-      error: `REQUIRES CAREGIVER APPROVAL: $${amount.toFixed(2)} exceeds the $${currentPolicy.approvalThreshold} approval threshold.`,
+      error: `REQUIRES CAREGIVER APPROVAL: $${amount.toFixed(2)} meets or exceeds the $${currentPolicy.approvalThreshold} approval threshold.`,
       transaction: tx,
     };
   }
@@ -1730,7 +1774,7 @@ export async function payBill(
   appendTransaction(tx);
 
   // Notify on significant payment (Issue #265)
-  if (amount > currentPolicy.approvalThreshold) {
+  if (amount >= currentPolicy.approvalThreshold) {
     notify({
       level: "info",
       title: "Bill Payment Made",

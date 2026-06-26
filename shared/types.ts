@@ -64,7 +64,7 @@ export interface SpendingPolicy {
   monthlyLimit: number;
   medicationMonthlyBudget: number;
   billMonthlyBudget: number;
-  approvalThreshold: number; // require caregiver approval above this amount
+  approvalThreshold: number; // require caregiver approval at or above this amount
   holdTimeSeconds: number; // time before pending approvals auto-approve
   /**
    * IANA timezone string for the caregiver's local day (Issue #207).
