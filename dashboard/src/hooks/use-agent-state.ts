@@ -92,12 +92,13 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       setLiveMessage('Agent disconnected');
   }, [agentConnected, agentPaused]);
 
-  const addLogEntry = useCallback((message: string) => {
+  const addLogEntry = useCallback((message: string, details?: string) => {
     setAgentLog((prev) => {
       const entry: AgentLogEntry = {
         id: `${Date.now()}-${Math.random()}`,
         timestamp: Date.now(),
         message,
+        details,
       };
       const next = [...prev, entry];
       return next.length > 200 ? next.slice(-200) : next;
@@ -276,10 +277,16 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         setSpending(data.spending);
         setLiveMessage(`Task complete — ${data.toolCalls.length} tool calls`);
         for (const tc of data.toolCalls) {
-          const resultPreview = tc.result?.error
-            ? `ERROR: ${String(tc.result.error).slice(0, 60)}`
-            : 'OK';
-          addLogEntry(`  -> ${tc.tool} ${resultPreview}`);
+          const fullError = tc.result?.error ? String(tc.result.error) : '';
+          if (fullError) {
+            const shortError =
+              fullError.length > 60
+                ? `${fullError.slice(0, 60)}...`
+                : fullError;
+            addLogEntry(`  -> ${tc.tool} ERROR: ${shortError}`, fullError);
+          } else {
+            addLogEntry(`  -> ${tc.tool} OK`);
+          }
         }
         addLogEntry(
           `[${new Date().toLocaleTimeString()}] Done: ${data.toolCalls.length} tool calls`,

@@ -24,6 +24,7 @@ export interface AgentLogEntry {
   id: string;
   timestamp: number;
   message: string;
+  details?: string;
 }
 
 export interface PaginationData {
