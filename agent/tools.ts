@@ -28,6 +28,8 @@
 
 import 'dotenv/config';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, renameSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { z } from 'zod';
 import { logger } from '../shared/logger.ts';
 import { resolveStellarNetwork, validateSignerKeyForNetwork } from '../shared/stellar-network.ts';
@@ -320,7 +322,7 @@ export function getMppClient(): MppClientInstance {
 }
 
 // --- Per-recipient data directories (Issue #261) ---
-const DATA_DIR = new URL('../data', import.meta.url).pathname;
+const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '../data');
 
 let currentRecipientId = 'rosa';
 
@@ -1991,33 +1993,20 @@ const TOOL_INPUT_SCHEMAS = {
   }).strict(),
 } as const;
 
-export function validateToolInput(
-  name: string,
-  input: unknown,
-): Record<string, unknown> {
-  const schema = TOOL_INPUT_SCHEMAS[name as keyof typeof TOOL_INPUT_SCHEMAS];
-  if (!schema) {
-    throw new Error(`Unknown tool: ${name}`);
-  }
+export class ToolInputValidationError extends Error {
+  readonly reason: 'INVALID_TOOL_ARGUMENTS' | 'UNKNOWN_TOOL';
+  readonly issues: string[];
 
-  const result = schema.safeParse(input ?? {});
-  if (result.success) {
-    return result.data as Record<string, unknown>;
+  constructor(
+    message: string,
+    issues: string[] = [],
+    reason: 'INVALID_TOOL_ARGUMENTS' | 'UNKNOWN_TOOL' = 'INVALID_TOOL_ARGUMENTS',
+  ) {
+    super(message);
+    this.name = 'ToolInputValidationError';
+    this.reason = reason;
+    this.issues = issues;
   }
-
-  const unknownKeys = result.error.issues
-    .filter((issue) => issue.code === 'unrecognized_keys')
-    .flatMap((issue) => (issue as z.ZodUnrecognizedKeysIssue).keys);
-  if (unknownKeys.length > 0) {
-    throw new Error(
-      `Invalid tool input for ${name}: unknown field(s) not allowed: ${unknownKeys.join(', ')}`,
-    );
-  }
-
-  const details = result.error.issues
-    .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
-    .join('; ');
-  throw new Error(`Invalid tool input for ${name}: ${details}`);
 }
 
 function strictInputSchema<
@@ -2030,10 +2019,12 @@ function strictInputSchema<
   return { ...schema, additionalProperties: false };
 }
 
-// Claude API tool definitions
-export const TOOL_DEFINITIONS = [
+// Claude API tool definitions are generated from this registry so validation
+// and provider-facing schemas cannot drift into separate tool lists.
+const TOOL_REGISTRY = [
   {
     name: 'compare_pharmacy_prices',
+    schema: TOOL_INPUT_SCHEMAS.compare_pharmacy_prices,
     description:
       'Compare medication prices across multiple pharmacies. Pays $0.002 USDC per query via x402 on Stellar. Pass the medication dosage exactly as known; the returned dosage field is reliable and echoed from the request for safety. Returns prices sorted cheapest to most expensive, with potential savings. Each pharmacy has an inStock field: "unknown" means real-time inventory is unavailable (proceed with caution), true means in stock. Never assume a medication is in stock if inStock is "unknown" — confirm with the pharmacy before ordering.',
     input_schema: strictInputSchema({
@@ -2049,6 +2040,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'audit_medical_bill',
+    schema: TOOL_INPUT_SCHEMAS.audit_medical_bill,
     description:
       'Audit a medical bill for errors (duplicates, upcoding, overcharges). 80% of medical bills contain errors. Pays $0.01 USDC per audit via x402 on Stellar. Pass line_items_json as a JSON string array of line items. Each line item must include description, cptCode, quantity, and chargedAmount. cptCode must match /^(?:\\d{5}|J\\d{4})$/, quantity must be > 0, and chargedAmount must be > 0.',
     input_schema: strictInputSchema({
@@ -2065,6 +2057,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'check_drug_interactions',
+    schema: TOOL_INPUT_SCHEMAS.check_drug_interactions,
     description:
       'Check for drug-drug interactions. Pays $0.001 USDC per check via x402 on Stellar. Requires at least 2 medications; if fewer are supplied, the tool returns NEED_AT_LEAST_TWO_MEDS instead of claiming there are no interactions. Returns severity levels and clinical recommendations.',
     input_schema: strictInputSchema({
@@ -2082,6 +2075,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'fetch_tool_result',
+    schema: TOOL_INPUT_SCHEMAS.fetch_tool_result,
     description:
       'Fetch the remainder of a previously truncated tool result by result_id. Use this when a tool response includes resultId, summary, or hasMore=true and you need the full data before concluding.',
     input_schema: strictInputSchema({
@@ -2096,6 +2090,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'pay_for_medication',
+    schema: TOOL_INPUT_SCHEMAS.pay_for_medication,
     description:
       'Pay a pharmacy for a medication order via MPP Charge on Stellar (real USDC payment). Subject to spending policy limits. Amount must be between $0.01 and $10,000.',
     input_schema: strictInputSchema({
@@ -2113,6 +2108,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'pay_bill',
+    schema: TOOL_INPUT_SCHEMAS.pay_bill,
     description:
       'Pay a medical bill via direct Stellar USDC transfer. Subject to spending policy limits. If the bill has been audited and errors found, pay only the corrected amount. Amount must be between $0.01 and $10,000.',
     input_schema: strictInputSchema({
@@ -2129,6 +2125,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'check_spending_policy',
+    schema: TOOL_INPUT_SCHEMAS.check_spending_policy,
     description:
       'Check if a payment amount is within the caregiver-set spending policy limits before attempting payment.',
     input_schema: strictInputSchema({
@@ -2143,6 +2140,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'fetch_rosa_bill',
+    schema: TOOL_INPUT_SCHEMAS.fetch_rosa_bill,
     description:
       "Fetch the current care recipient's hospital bill. Returns the bill with line items including CPT codes and charged amounts.",
     input_schema: strictInputSchema({
@@ -2153,6 +2151,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'fetch_and_audit_bill',
+    schema: TOOL_INPUT_SCHEMAS.fetch_and_audit_bill,
     description:
       "Fetch the care recipient's hospital bill AND audit it for errors in one step. Pays $0.01 USDC via x402. Returns the audit results with errors found, overcharges, and corrected total. Use this instead of calling fetch_bill + audit_medical_bill separately.",
     input_schema: strictInputSchema({
@@ -2165,6 +2164,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'get_spending_summary',
+    schema: TOOL_INPUT_SCHEMAS.get_spending_summary,
     description:
       'Get current spending summary: total spent, budget remaining per category, recent transactions with Stellar tx hashes for the current care recipient.',
     input_schema: strictInputSchema({
@@ -2177,6 +2177,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'get_wallet_balance',
+    schema: TOOL_INPUT_SCHEMAS.get_wallet_balance,
     description:
       'Get the current on-chain wallet balance (USDC and XLM) from Stellar Horizon. Returns real-time balance data. If usdcTrustlineMissing is true, the agent wallet lacks a USDC trustline — instruct the caregiver to fund the wallet at https://faucet.circle.com.',
     input_schema: strictInputSchema({
@@ -2187,6 +2188,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'generate_dispute_letter',
+    schema: TOOL_INPUT_SCHEMAS.generate_dispute_letter,
     description:
       'Generate a dispute letter PDF and email body for a billing error. Use after audit finds overcharges. Letter includes audit findings, CPT codes, fair-market rates, and caregiver contact info.',
     input_schema: strictInputSchema({
@@ -2206,6 +2208,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'get_adherence_status',
+    schema: TOOL_INPUT_SCHEMAS.get_adherence_status,
     description:
       'Get medication adherence status for a recipient — pending reminders, confirmed doses, skipped doses, and flagged persistent skips.',
     input_schema: strictInputSchema({
@@ -2218,6 +2221,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'confirm_adherence',
+    schema: TOOL_INPUT_SCHEMAS.confirm_adherence,
     description:
       'Confirm that a medication dose was taken. Call this when the caregiver reports the recipient took their medication.',
     input_schema: strictInputSchema({
@@ -2228,7 +2232,48 @@ export const TOOL_DEFINITIONS = [
       required: ['record_id'],
     }),
   },
-];
+] as const;
+
+export const TOOL_DEFINITIONS = TOOL_REGISTRY.map(({ schema: _schema, ...tool }) => tool);
+
+const TOOL_INPUT_SCHEMA_BY_NAME = new Map<string, z.ZodTypeAny>(
+  TOOL_REGISTRY.map((tool) => [tool.name, tool.schema]),
+);
+
+export function validateToolInput(
+  name: string,
+  input: unknown,
+): Record<string, unknown> {
+  const schema = TOOL_INPUT_SCHEMA_BY_NAME.get(name);
+  if (!schema) {
+    throw new ToolInputValidationError(
+      `Unknown tool: ${name}`,
+      [],
+      'UNKNOWN_TOOL',
+    );
+  }
+
+  const result = schema.safeParse(input ?? {});
+  if (result.success) {
+    return result.data as Record<string, unknown>;
+  }
+
+  const unknownKeys = result.error.issues
+    .filter((issue) => issue.code === 'unrecognized_keys')
+    .flatMap((issue) => (issue as z.ZodUnrecognizedKeysIssue).keys);
+  if (unknownKeys.length > 0) {
+    const issue = `unknown field(s) not allowed: ${unknownKeys.join(', ')}`;
+    throw new ToolInputValidationError(`Invalid tool input for ${name}: ${issue}`, [issue]);
+  }
+
+  const issues = result.error.issues.map(
+    (issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`,
+  );
+  throw new ToolInputValidationError(
+    `Invalid tool input for ${name}: ${issues.join('; ')}`,
+    issues,
+  );
+}
 
 // Start scanner (runs in-process). Interval is conservative (5s).
 const pendingTransactionScanner = setInterval(() => {

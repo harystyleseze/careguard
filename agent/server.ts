@@ -165,6 +165,34 @@ const LLM_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = TOOL_DEFINITIONS
 
 type ToolResult = Record<string, unknown>;
 
+function invalidToolArgumentsResult(
+  tool: string,
+  message: string,
+  details: Record<string, unknown> = {},
+): ToolResult {
+  return {
+    ok: false,
+    reason: "INVALID_TOOL_ARGUMENTS",
+    tool,
+    message,
+    ...details,
+  };
+}
+
+function toolErrorResult(tool: string, err: any): ToolResult {
+  if (err?.reason === "INVALID_TOOL_ARGUMENTS" || err?.reason === "UNKNOWN_TOOL") {
+    return {
+      ok: false,
+      reason: err.reason,
+      tool,
+      message: err.message,
+      issues: Array.isArray(err.issues) ? err.issues : [],
+    };
+  }
+
+  return { error: err?.message || String(err) };
+}
+
 async function executeTool(name: string, input: Record<string, unknown>): Promise<ToolResult> {
   try {
     input = validateToolInput(name, input);
@@ -400,23 +428,43 @@ async function runAgent(task: string) {
     for (const toolCall of message.tool_calls) {
       if (toolCall.type !== "function") continue;
       const fnName = toolCall.function.name;
-      let fnArgs: any;
+      let fnArgs: Record<string, unknown> = {};
+      let parseErrorResult: ToolResult | undefined;
       try {
-        fnArgs = JSON.parse(toolCall.function.arguments);
-      } catch {
-        fnArgs = {};
+        const parsedArgs = JSON.parse(toolCall.function.arguments || "{}");
+        if (!parsedArgs || typeof parsedArgs !== "object" || Array.isArray(parsedArgs)) {
+          parseErrorResult = invalidToolArgumentsResult(
+            fnName,
+            "Tool arguments must be a JSON object.",
+            { receivedType: Array.isArray(parsedArgs) ? "array" : typeof parsedArgs },
+          );
+        } else {
+          fnArgs = parsedArgs as Record<string, unknown>;
+        }
+      } catch (err: any) {
+        parseErrorResult = invalidToolArgumentsResult(
+          fnName,
+          "Tool arguments must be valid JSON.",
+          { error: err?.message || String(err) },
+        );
       }
 
       logger.info({ tool: fnName, args: JSON.stringify(fnArgs).slice(0, 100) }, "tool call");
 
       let result: ToolResult;
-      try {
-        result = await executeTool(fnName, fnArgs);
+      if (parseErrorResult) {
+        result = parseErrorResult;
+        agentToolCallsTotal.inc({ tool: fnName, status: "error" });
         toolCalls.push({ tool: fnName, input: fnArgs, result });
-      } catch (err: any) {
-        logger.error({ tool: fnName, err: err.message }, "tool error");
-        result = { error: err.message };
-        toolCalls.push({ tool: fnName, input: fnArgs, result });
+      } else {
+        try {
+          result = await executeTool(fnName, fnArgs);
+          toolCalls.push({ tool: fnName, input: fnArgs, result });
+        } catch (err: any) {
+          logger.error({ tool: fnName, err: err?.message || err }, "tool error");
+          result = toolErrorResult(fnName, err);
+          toolCalls.push({ tool: fnName, input: fnArgs, result });
+        }
       }
 
       appendAuditEntry({
