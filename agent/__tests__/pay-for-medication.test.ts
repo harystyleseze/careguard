@@ -60,14 +60,16 @@ vi.mock("mppx/client", () => ({
   Mppx: { create: vi.fn().mockReturnValue({ fetch: mockMppFetch }) },
 }));
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   payForMedication,
   payBill,
   checkSpendingPolicy,
+  loadSpending,
   resetSpendingTracker,
   setSpendingPolicy,
 } from "../tools.ts";
+import { TRANSACTION_CATEGORY } from "../../shared/types.ts";
 
 const DEFAULT_POLICY = {
   dailyLimit: 100,
@@ -82,6 +84,10 @@ beforeEach(() => {
   mockMppFetch.mockReset();
   resetSpendingTracker("rosa");
   setSpendingPolicy("rosa", { ...DEFAULT_POLICY });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 // --- Input validation ---
@@ -317,5 +323,143 @@ describe("checkSpendingPolicy — basic rules (Issue #35)", () => {
         billMonthlyBudget: 40,
       }),
     ).toThrow(/monthlyLimit/);
+  });
+});
+
+describe("checkSpendingPolicy — branch coverage (Issue #34)", () => {
+  function seedCompletedTransaction(
+    category: "medications" | "bills",
+    amount: number,
+    timestamp = new Date().toISOString(),
+  ) {
+    const tracker = loadSpending("rosa");
+    tracker.transactions.push({
+      id: `tx-${category}-${tracker.transactions.length + 1}`,
+      timestamp,
+      type: category === TRANSACTION_CATEGORY.MEDICATIONS ? "medication" : "bill",
+      description: `${category} payment`,
+      amount,
+      recipient: `${category}-recipient`,
+      status: "completed",
+      category,
+    });
+    if (category === TRANSACTION_CATEGORY.MEDICATIONS) {
+      tracker.medications += amount;
+    } else {
+      tracker.bills += amount;
+    }
+  }
+
+  it("allows a payment when remaining budget and daily limit both permit it", () => {
+    setSpendingPolicy("rosa", {
+      ...DEFAULT_POLICY,
+      dailyLimit: 100,
+      medicationMonthlyBudget: 200,
+      approvalThreshold: 75,
+    });
+    seedCompletedTransaction(TRANSACTION_CATEGORY.MEDICATIONS, 20);
+
+    const result = checkSpendingPolicy(30, TRANSACTION_CATEGORY.MEDICATIONS);
+
+    expect(result.allowed).toBe(true);
+    expect(result.requiresApproval).toBe(false);
+    expect(result.currentSpending).toBe(20);
+    expect(result.budgetRemaining).toBe(150);
+  });
+
+  it("blocks with a monthly budget reason when the category budget is exhausted", () => {
+    setSpendingPolicy("rosa", {
+      ...DEFAULT_POLICY,
+      monthlyLimit: 800,
+      medicationMonthlyBudget: 60,
+    });
+    seedCompletedTransaction(TRANSACTION_CATEGORY.MEDICATIONS, 55);
+
+    const result = checkSpendingPolicy(10, TRANSACTION_CATEGORY.MEDICATIONS);
+
+    expect(result.allowed).toBe(false);
+    expect(result.requiresApproval).toBe(false);
+    expect(result.reason).toContain("exceeds medications monthly budget");
+    expect(result.budgetRemaining).toBe(5);
+  });
+
+  it("blocks with a daily limit reason when today's category total would exceed the cap", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-26T12:00:00.000Z"));
+    setSpendingPolicy("rosa", {
+      ...DEFAULT_POLICY,
+      dailyLimit: 50,
+      medicationMonthlyBudget: 300,
+    });
+    seedCompletedTransaction(
+      TRANSACTION_CATEGORY.MEDICATIONS,
+      40,
+      "2026-06-26T08:00:00.000Z",
+    );
+
+    const result = checkSpendingPolicy(15, TRANSACTION_CATEGORY.MEDICATIONS);
+
+    expect(result.allowed).toBe(false);
+    expect(result.requiresApproval).toBe(false);
+    expect(result.reason).toContain("daily limit");
+    expect(result.reason).toContain("Already spent today: $40.00");
+  });
+
+  it("marks an otherwise allowed payment as requiring approval above the threshold", () => {
+    setSpendingPolicy("rosa", {
+      ...DEFAULT_POLICY,
+      approvalThreshold: 25,
+    });
+
+    const result = checkSpendingPolicy(30, TRANSACTION_CATEGORY.BILLS);
+
+    expect(result.allowed).toBe(true);
+    expect(result.requiresApproval).toBe(true);
+  });
+
+  it("uses the policy timezone so adjacent UTC timestamps can land on different local days", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-15T19:00:00.000Z")); // Jan 15 noon in Phoenix
+    setSpendingPolicy("rosa", {
+      ...DEFAULT_POLICY,
+      dailyLimit: 50,
+      monthlyLimit: 800,
+      medicationMonthlyBudget: 300,
+      approvalThreshold: 500,
+      timezone: "America/Phoenix",
+    });
+    seedCompletedTransaction(
+      TRANSACTION_CATEGORY.MEDICATIONS,
+      40,
+      "2026-01-15T06:30:00.000Z", // Jan 14 23:30 in Phoenix
+    );
+    seedCompletedTransaction(
+      TRANSACTION_CATEGORY.MEDICATIONS,
+      35,
+      "2026-01-15T07:30:00.000Z", // Jan 15 00:30 in Phoenix
+    );
+
+    const result = checkSpendingPolicy(20, TRANSACTION_CATEGORY.MEDICATIONS);
+
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("daily limit");
+    expect(result.reason).toContain("Already spent today: $35.00");
+  });
+
+  it("keeps medication spending from consuming the bills category budget", () => {
+    setSpendingPolicy("rosa", {
+      ...DEFAULT_POLICY,
+      dailyLimit: 200,
+      monthlyLimit: 800,
+      medicationMonthlyBudget: 80,
+      billMonthlyBudget: 100,
+    });
+    seedCompletedTransaction(TRANSACTION_CATEGORY.MEDICATIONS, 80);
+
+    const result = checkSpendingPolicy(50, TRANSACTION_CATEGORY.BILLS);
+
+    expect(result.allowed).toBe(true);
+    expect(result.currentSpending).toBe(0);
+    expect(result.budgetRemaining).toBe(50);
   });
 });
