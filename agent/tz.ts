@@ -83,3 +83,13 @@ export function getLocalDayBounds(tz: string, date: Date = new Date()) {
     dayEnd: getLocalMidnightUtc(tz, year, month, day + 1),
   };
 }
+
+export function getLocalMonthBounds(tz: string, date: Date = new Date()) {
+  const year = getDatePart(tz, date, "year");
+  const month = getDatePart(tz, date, "month");
+
+  return {
+    monthStart: getLocalMidnightUtc(tz, year, month, 1),
+    monthEnd: getLocalMidnightUtc(tz, year, month + 1, 1),
+  };
+}

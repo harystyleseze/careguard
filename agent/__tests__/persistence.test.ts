@@ -115,7 +115,7 @@ vi.mock("../../shared/logger.ts", () => ({
   logger: { info: vi.fn(), warn: warnSpy, error: vi.fn(), debug: vi.fn() },
 }));
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 // Mirrors the DATA_DIR computation in agent/tools.ts so the fake fs paths
 // we seed/inspect line up regardless of where the repo is checked out.
@@ -126,23 +126,53 @@ function freshTracker(transactionCount: number) {
     medications: 30,
     bills: 20,
     serviceFees: 0,
-    transactions: Array.from({ length: transactionCount }, (_, i) => ({
-      id: `tx-${i + 1}`,
-      timestamp: new Date().toISOString(),
-      type: "medication" as const,
-      description: `Medication ${i + 1}`,
-      amount: 10,
-      recipient: "pharm-1",
-      status: "completed" as const,
-      category: TRANSACTION_CATEGORY.MEDICATIONS,
-    })),
+    transactions: Array.from({ length: transactionCount }, (_, i) => {
+      const isBill = transactionCount >= 3 && i === 0;
+      return {
+        id: `tx-${i + 1}`,
+        timestamp: new Date().toISOString(),
+        type: isBill ? "bill" as const : "medication" as const,
+        description: isBill ? "Medical bill" : `Medication ${i + 1}`,
+        amount: isBill ? 20 : transactionCount >= 3 ? 15 : 10,
+        recipient: isBill ? "provider-1" : "pharm-1",
+        status: "completed" as const,
+        category: isBill
+          ? TRANSACTION_CATEGORY.BILLS
+          : TRANSACTION_CATEGORY.MEDICATIONS,
+      };
+    }),
   };
+}
+
+function tx(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "tx-default",
+    timestamp: "2026-04-15T12:00:00.000Z",
+    type: "medication" as const,
+    description: "Persisted transaction",
+    amount: 10,
+    recipient: "pharm-1",
+    status: "completed" as const,
+    category: TRANSACTION_CATEGORY.MEDICATIONS,
+    ...overrides,
+  };
+}
+
+function seedTransactionLog(recipientId: string, transactions: unknown[]) {
+  fsState.files.set(
+    `${DATA_DIR}/recipients/${recipientId}/transactions.jsonl`,
+    transactions.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+  );
 }
 
 beforeEach(() => {
   fsState.files.clear();
   fsState.readOnlyPaths.clear();
   warnSpy.mockClear();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("Spending tracker persistence across restart (#44)", () => {
@@ -181,6 +211,91 @@ describe("Spending tracker persistence across restart (#44)", () => {
     expect(summary.policy.dailyLimit).toBe(123);
     expect(summary.policy.monthlyLimit).toBe(500);
     expect(summary.policy.approvalThreshold).toBe(90);
+  });
+});
+
+describe("Month-to-date and daily totals survive restart (#208)", () => {
+  it("rebuilds current-month spending from transactions.jsonl after a mid-month restart", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-15T12:00:00.000Z"));
+
+    seedTransactionLog("rosa", [
+      tx({
+        id: "tx-current-med",
+        timestamp: "2026-04-15T10:00:00.000Z",
+        amount: 70,
+        category: TRANSACTION_CATEGORY.MEDICATIONS,
+      }),
+      tx({
+        id: "tx-current-bill",
+        timestamp: "2026-04-03T10:00:00.000Z",
+        type: "bill",
+        amount: 20,
+        category: TRANSACTION_CATEGORY.BILLS,
+      }),
+      tx({
+        id: "tx-previous-month",
+        timestamp: "2026-03-31T23:00:00.000Z",
+        amount: 200,
+        category: TRANSACTION_CATEGORY.MEDICATIONS,
+      }),
+    ]);
+
+    vi.resetModules();
+    const tools = await import("../tools.ts");
+    tools.setSpendingPolicy({
+      dailyLimit: 100,
+      monthlyLimit: 800,
+      medicationMonthlyBudget: 300,
+      billMonthlyBudget: 500,
+      approvalThreshold: 75,
+      timezone: "UTC",
+    });
+
+    const summary = tools.getSpendingSummary();
+
+    expect(summary.transactionCount).toBe(3);
+    expect(summary.spending.medications).toBe(70);
+    expect(summary.spending.bills).toBe(20);
+    expect(summary.spending.total).toBe(90);
+    expect(summary.budgetRemaining.medications).toBe(230);
+  });
+
+  it("uses restored transactions for daily-limit checks after restart", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-15T12:00:00.000Z"));
+
+    seedTransactionLog("rosa", [
+      tx({
+        id: "tx-today",
+        timestamp: "2026-04-15T10:00:00.000Z",
+        amount: 80,
+        category: TRANSACTION_CATEGORY.MEDICATIONS,
+      }),
+      tx({
+        id: "tx-yesterday",
+        timestamp: "2026-04-14T10:00:00.000Z",
+        amount: 80,
+        category: TRANSACTION_CATEGORY.MEDICATIONS,
+      }),
+    ]);
+
+    vi.resetModules();
+    const tools = await import("../tools.ts");
+    tools.setSpendingPolicy({
+      dailyLimit: 100,
+      monthlyLimit: 800,
+      medicationMonthlyBudget: 300,
+      billMonthlyBudget: 500,
+      approvalThreshold: 75,
+      timezone: "UTC",
+    });
+
+    const result = tools.checkSpendingPolicy(30, "medications");
+
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("daily limit");
+    expect(result.reason).toContain("Already spent today: $80.00");
   });
 });
 
@@ -367,8 +482,9 @@ describe("Append-only JSONL transaction log (#205)", () => {
     fsState.files.set(logKey, jsonlContent);
 
     const loaded = tools.loadSpending("merge-recipient");
-    // Invalidate the 5s cache by resetting modules, which re-runs the loader
+    // The loader should include the JSONL tail in both transactions and counters.
     expect(loaded.transactions).toHaveLength(3);
     expect(loaded.transactions[2].id).toBe("tx-tail-0");
+    expect(loaded.medications).toBe(17);
   });
 });

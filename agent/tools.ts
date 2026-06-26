@@ -59,8 +59,8 @@ import {
   type SpendingPolicy,
   type Transaction,
 } from '../shared/types.ts';
-import { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds } from './tz.ts';
-export { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds };
+import { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds, getLocalMonthBounds } from './tz.ts';
+export { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds, getLocalMonthBounds };
 import { appendAuditEntry } from '../shared/audit-log.ts';
 import { notify } from '../shared/notifications.ts';
 import {
@@ -438,6 +438,111 @@ function createEmptySpendingTracker(): SpendingTracker {
   return { medications: 0, bills: 0, serviceFees: 0, transactions: [] };
 }
 
+function buildSpendingTrackerFromTransactions(transactions: Transaction[]): SpendingTracker {
+  return transactions.reduce<SpendingTracker>((tracker, tx) => {
+    tracker.transactions.push(tx);
+    if (tx.status !== 'completed') return tracker;
+
+    if (tx.category === TRANSACTION_CATEGORY.MEDICATIONS) {
+      tracker.medications += tx.amount;
+    } else if (tx.category === TRANSACTION_CATEGORY.BILLS) {
+      tracker.bills += tx.amount;
+    } else if (tx.category === TRANSACTION_CATEGORY.SERVICE_FEES) {
+      tracker.serviceFees += tx.amount;
+    }
+
+    return tracker;
+  }, createEmptySpendingTracker());
+}
+
+function readTransactionLog(logFile: string, startLine = 0): Transaction[] {
+  if (!existsSync(logFile)) return [];
+
+  const raw = readFileSync(logFile, 'utf-8');
+  return raw
+    .split('\n')
+    .filter((line) => line.trim().length > 0)
+    .slice(startLine)
+    .flatMap((line, index) => {
+      try {
+        return [JSON.parse(line) as Transaction];
+      } catch {
+        logger.warn(
+          { line: startLine + index },
+          '[Persistence] Skipping malformed JSONL line',
+        );
+        return [];
+      }
+    });
+}
+
+type SpendingTotals = {
+  medications: number;
+  bills: number;
+  serviceFees: number;
+};
+
+function totalSpending(totals: SpendingTotals): number {
+  return totals.medications + totals.bills + totals.serviceFees;
+}
+
+function getTransactionWindowTotals(
+  transactions: Transaction[],
+  startMs: number,
+  endMs: number,
+  completedOnly: boolean,
+): SpendingTotals {
+  return transactions.reduce<SpendingTotals>(
+    (totals, tx) => {
+      if (completedOnly && tx.status !== 'completed') return totals;
+
+      const txTimestamp = new Date(tx.timestamp).getTime();
+      if (
+        !Number.isFinite(txTimestamp) ||
+        txTimestamp < startMs ||
+        txTimestamp >= endMs
+      ) {
+        return totals;
+      }
+
+      if (tx.category === TRANSACTION_CATEGORY.MEDICATIONS) {
+        totals.medications += tx.amount;
+      } else if (tx.category === TRANSACTION_CATEGORY.BILLS) {
+        totals.bills += tx.amount;
+      } else if (tx.category === TRANSACTION_CATEGORY.SERVICE_FEES) {
+        totals.serviceFees += tx.amount;
+      }
+
+      return totals;
+    },
+    { medications: 0, bills: 0, serviceFees: 0 },
+  );
+}
+
+function getPolicyTimezone(policy: SpendingPolicy): string {
+  return policy.timezone ?? SPENDING_TIMEZONE;
+}
+
+function getMonthToDateTotals(policy: SpendingPolicy): SpendingTotals {
+  const { monthStart, monthEnd } = getLocalMonthBounds(getPolicyTimezone(policy));
+  return getTransactionWindowTotals(
+    spendingTracker.transactions,
+    monthStart.getTime(),
+    monthEnd.getTime(),
+    true,
+  );
+}
+
+function getTodayTotals(policy: SpendingPolicy): SpendingTotals {
+  const { dayStart, dayEnd } = getLocalDayBounds(getPolicyTimezone(policy));
+  return getTransactionWindowTotals(
+    spendingTracker.transactions,
+    dayStart.getTime(),
+    dayEnd.getTime(),
+    false,
+  );
+}
+
 function normalizeTransactionCategories(
   data: SpendingTracker,
   recipientId?: string,
@@ -475,9 +580,9 @@ function normalizeTransactionCategories(
  * Read spending state from disk using the snapshot + JSONL tail strategy (Issue #205).
  *
  * Load order:
- *  1. spending.snapshot.json  — compacted base state
- *  2. transactions.jsonl tail — lines appended after the snapshot was written
- *  3. spending.json fallback   — legacy full-file for backward compatibility
+ *  1. spending.snapshot.json  — compacted base state, plus the JSONL tail
+ *  2. transactions.jsonl      — source of truth if no snapshot exists yet
+ *  3. spending.json fallback  — legacy full-file for backward compatibility
  */
 function readSpendingFromDisk(recipientId?: string): SpendingTracker {
   const snapshotFile = getSnapshotFile(recipientId);
@@ -490,27 +595,13 @@ function readSpendingFromDisk(recipientId?: string): SpendingTracker {
       const snapshot = JSON.parse(readFileSync(snapshotFile, 'utf-8')) as SpendingTracker & { _snapshotTxCount?: number };
       const snapshotTxCount = snapshot._snapshotTxCount ?? snapshot.transactions.length;
 
-      // Replay transactions from the JSONL tail that came after the snapshot
-      const tailTxs: Transaction[] = [];
-      if (existsSync(logFile)) {
-        const raw = readFileSync(logFile, 'utf-8');
-        const lines = raw.split('\n').filter((l) => l.trim().length > 0);
-        // Skip the lines already captured in the snapshot
-        for (let i = snapshotTxCount; i < lines.length; i++) {
-          try {
-            tailTxs.push(JSON.parse(lines[i]) as Transaction);
-          } catch {
-            logger.warn({ line: i }, '[Persistence] Skipping malformed JSONL line');
-          }
-        }
-      }
+      // Replay transactions from the JSONL tail that came after the snapshot.
+      const tailTxs = readTransactionLog(logFile, snapshotTxCount);
 
-      const merged: SpendingTracker = {
-        medications: snapshot.medications,
-        bills: snapshot.bills,
-        serviceFees: snapshot.serviceFees,
-        transactions: [...snapshot.transactions, ...tailTxs],
-      };
+      const merged = buildSpendingTrackerFromTransactions([
+        ...snapshot.transactions,
+        ...tailTxs,
+      ]);
       const normalized = normalizeTransactionCategories(merged, recipientId);
       if (normalized.migrated) {
         saveSpending(normalized.data, recipientId);
@@ -521,6 +612,21 @@ function readSpendingFromDisk(recipientId?: string): SpendingTracker {
         { file: snapshotFile, error: err.message },
         '[Persistence] spending.snapshot.json is corrupted; falling back to legacy file',
       );
+    }
+  }
+
+  // --- JSONL-only fallback: a process can restart before the first snapshot ---
+  if (existsSync(logFile)) {
+    const transactions = readTransactionLog(logFile);
+    if (transactions.length > 0) {
+      const normalized = normalizeTransactionCategories(
+        buildSpendingTrackerFromTransactions(transactions),
+        recipientId,
+      );
+      if (normalized.migrated) {
+        saveSpending(normalized.data, recipientId);
+      }
+      return normalized.data;
     }
   }
 
@@ -1137,6 +1243,7 @@ export function checkSpendingPolicy(
   amount: number,
   category: PaymentCategory,
 ) {
+  spendingTracker = loadSpending();
   // Always load the latest policy from disk so multi-instance deployments
   // pick up caregiver updates performed via POST /agent/policy.
   const policy = loadPolicy();
@@ -1144,15 +1251,13 @@ export function checkSpendingPolicy(
     category === TRANSACTION_CATEGORY.MEDICATIONS
       ? policy.medicationMonthlyBudget
       : policy.billMonthlyBudget;
+  const monthToDate = getMonthToDateTotals(policy);
   const currentSpending =
     category === TRANSACTION_CATEGORY.MEDICATIONS
-      ? spendingTracker.medications
-      : spendingTracker.bills;
+      ? monthToDate.medications
+      : monthToDate.bills;
   const remaining = budget - currentSpending;
-  const totalMonthlySpending =
-    spendingTracker.medications +
-    spendingTracker.bills +
-    spendingTracker.serviceFees;
+  const totalMonthlySpending = totalSpending(monthToDate);
   const globalRemaining = policy.monthlyLimit - totalMonthlySpending;
 
   if (amount > globalRemaining) {
@@ -1179,23 +1284,11 @@ export function checkSpendingPolicy(
   // Use the policy's per-recipient timezone if set; fall back to the global
   // SPENDING_TIMEZONE env var so caregivers in non-UTC locales see the correct
   // "today" boundary for their wall clock (Issue #207).
-  const effectiveTz = policy.timezone ?? SPENDING_TIMEZONE;
-  const { dayStart, dayEnd } = getLocalDayBounds(effectiveTz);
-  const dayStartMs = dayStart.getTime();
-  const dayEndMs = dayEnd.getTime();
-  const totalToday = spendingTracker.transactions
-    .filter(
-      (t) => {
-        const txTimestamp = new Date(t.timestamp).getTime();
-        return (
-          Number.isFinite(txTimestamp) &&
-          txTimestamp >= dayStartMs &&
-          txTimestamp < dayEndMs &&
-          t.category === category
-        );
-      },
-    )
-    .reduce((sum, t) => sum + t.amount, 0);
+  const todayTotals = getTodayTotals(policy);
+  const totalToday =
+    category === TRANSACTION_CATEGORY.MEDICATIONS
+      ? todayTotals.medications
+      : todayTotals.bills;
 
   if (totalToday + amount > policy.dailyLimit) {
     return {
@@ -1744,24 +1837,23 @@ export async function payBill(
 
 // --- Tool: Get spending summary ---
 export function getSpendingSummary() {
+  spendingTracker = loadSpending();
   const policy = loadPolicy();
-  const total =
-    spendingTracker.medications +
-    spendingTracker.bills +
-    spendingTracker.serviceFees;
+  const monthToDate = getMonthToDateTotals(policy);
+  const total = totalSpending(monthToDate);
   return {
     policy,
     spending: {
-      medications: +spendingTracker.medications.toFixed(2),
-      bills: +spendingTracker.bills.toFixed(2),
-      serviceFees: +spendingTracker.serviceFees.toFixed(4),
+      medications: +monthToDate.medications.toFixed(2),
+      bills: +monthToDate.bills.toFixed(2),
+      serviceFees: +monthToDate.serviceFees.toFixed(4),
       total: +total.toFixed(2),
     },
     budgetRemaining: {
       medications: +(
-        policy.medicationMonthlyBudget - spendingTracker.medications
+        policy.medicationMonthlyBudget - monthToDate.medications
       ).toFixed(2),
-      bills: +(policy.billMonthlyBudget - spendingTracker.bills).toFixed(2),
+      bills: +(policy.billMonthlyBudget - monthToDate.bills).toFixed(2),
     },
     transactionCount: spendingTracker.transactions.length,
     recentTransactions: spendingTracker.transactions.slice(-5),
