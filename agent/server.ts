@@ -58,6 +58,12 @@ import {
   fetchToolResult,
   serializeToolResultForPrompt,
 } from "./tool-result.ts";
+import {
+  createAgentStreamSignature,
+  createAgentStreamSnapshot,
+  formatSseEvent,
+  formatSseRetry,
+} from "./stream.ts";
 import { getPendingAdherences } from "../shared/adherence.ts";
 import { notify } from "../shared/notifications.ts";
 import { resolveStellarNetwork, validateSignerKeyForNetwork } from "../shared/stellar-network.ts";
@@ -484,6 +490,59 @@ let toolCallCapHitsTotal = 0;
 
 let agentPaused = false;
 
+interface AgentStreamClient {
+  res: express.Response;
+  recipientId: string;
+  limit: unknown;
+  offset: unknown;
+  lastSignature: string | null;
+  heartbeat?: ReturnType<typeof setInterval>;
+}
+
+const agentStreamClients = new Set<AgentStreamClient>();
+
+function buildAgentStreamSnapshotForClient(client: AgentStreamClient) {
+  setCurrentRecipient(client.recipientId);
+  return createAgentStreamSnapshot({
+    agent: { paused: agentPaused },
+    spending: getSpendingSummary(),
+    tracker: getSpendingTracker(),
+    limit: client.limit,
+    offset: client.offset,
+  });
+}
+
+function writeAgentStreamEvent(
+  client: AgentStreamClient,
+  event: string,
+  data: unknown,
+): boolean {
+  if (client.res.destroyed || client.res.writableEnded) return false;
+  try {
+    client.res.write(formatSseEvent(event, data));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sendAgentStreamSnapshot(
+  client: AgentStreamClient,
+  force = false,
+): void {
+  const snapshot = buildAgentStreamSnapshotForClient(client);
+  const signature = createAgentStreamSignature(snapshot);
+  if (!force && signature === client.lastSignature) return;
+  client.lastSignature = signature;
+  writeAgentStreamEvent(client, "snapshot", snapshot);
+}
+
+function broadcastAgentStreamSnapshot(): void {
+  for (const client of agentStreamClients) {
+    sendAgentStreamSnapshot(client);
+  }
+}
+
 // In-memory cache for wallet balances (5s TTL)
 interface WalletCacheEntry {
   data: { usdc: string; xlm: string; address: string };
@@ -539,6 +598,7 @@ app.post("/agent/approvals/:txId", async (req, res) => {
   if (!approve) {
     (tx as any).status = "rejected";
     saveSpending(tracker);
+    broadcastAgentStreamSnapshot();
     return res.json({ success: true, status: "rejected" });
   }
 
@@ -565,10 +625,12 @@ app.post("/agent/approvals/:txId", async (req, res) => {
       tx.stellarTxHash = result.transaction?.stellarTxHash;
       tracker.transactions[txIndex] = tx;
       saveSpending(tracker);
+      broadcastAgentStreamSnapshot();
       return res.json({ success: true, status: "completed", transaction: result.transaction });
     } else {
       (tx as any).status = "rejected";
       saveSpending(tracker);
+      broadcastAgentStreamSnapshot();
       return res.status(400).json({ success: false, error: result.error, status: "rejected" });
     }
   } catch (err: any) {
@@ -589,17 +651,58 @@ app.get("/", (_req, res) => {
   });
 });
 
+app.get("/agent/stream", (req, res) => {
+  const client: AgentStreamClient = {
+    res,
+    recipientId: (req.query.recipient_id as string) || "rosa",
+    limit: req.query.limit,
+    offset: req.query.offset,
+    lastSignature: null,
+  };
+
+  req.socket.setTimeout(0);
+  req.socket.setNoDelay(true);
+  req.socket.setKeepAlive(true);
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  agentStreamClients.add(client);
+  res.write(formatSseRetry(3000));
+  sendAgentStreamSnapshot(client, true);
+
+  client.heartbeat = setInterval(() => {
+    const ok = writeAgentStreamEvent(client, "heartbeat", {
+      timestamp: new Date().toISOString(),
+    });
+    if (!ok) {
+      agentStreamClients.delete(client);
+      if (client.heartbeat) clearInterval(client.heartbeat);
+    }
+  }, 25000);
+
+  req.on("close", () => {
+    agentStreamClients.delete(client);
+    if (client.heartbeat) clearInterval(client.heartbeat);
+  });
+});
+
 app.get("/agent/status", (_req, res) => { res.json({ paused: agentPaused }); });
 app.post("/agent/pause", (_req, res) => {
   agentPaused = true;
   logger.info("agent paused by caregiver");
   notify({ level: "warning", title: "Agent Paused", description: "CareGuard agent has been paused by the caregiver. No payments or actions will be processed until resumed." });
+  broadcastAgentStreamSnapshot();
   res.json({ paused: true });
 });
 app.post("/agent/resume", (_req, res) => {
   agentPaused = false;
   logger.info("agent resumed by caregiver");
   notify({ level: "info", title: "Agent Resumed", description: "CareGuard agent has been resumed and is now processing actions." });
+  broadcastAgentStreamSnapshot();
   res.json({ paused: false });
 });
 
@@ -615,6 +718,7 @@ app.post("/agent/run", async (req, res) => {
     const result = await agentQueue.enqueue(() => runAgent(task));
     agentRunsTotal.inc({ status: "success" });
     logger.info({ toolCalls: result.toolCalls.length, truncated: result.truncated, promptTokens: result.llmUsage.promptTokens, completionTokens: result.llmUsage.completionTokens }, "agent task complete");
+    broadcastAgentStreamSnapshot();
     res.json(result);
   } catch (err: any) {
     if (err.status === 429) {
@@ -671,12 +775,14 @@ app.post("/agent/policy", (req, res) => {
   const recipientId = (req.query.recipient_id as string) || "rosa";
   setCurrentRecipient(recipientId);
   setSpendingPolicy(result.policy);
+  broadcastAgentStreamSnapshot();
   res.json({ success: true, policy: result.policy, recipientId });
 });
 app.post("/agent/reset", (req, res) => {
   const recipientId = (req.query.recipient_id as string) || "rosa";
   setCurrentRecipient(recipientId);
   resetSpendingTracker();
+  broadcastAgentStreamSnapshot();
   res.json({ success: true, recipientId });
 });
 

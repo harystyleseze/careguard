@@ -1,6 +1,7 @@
 # Load Testing
 
-This document covers the load test for concurrent `/agent/run` requests (Issue #55).
+This document covers the load tests for concurrent `/agent/run` requests (Issue #55)
+and dashboard Server-Sent Events (SSE) streams (Issue #274).
 
 ## Goal
 
@@ -37,7 +38,31 @@ To target a different server:
 BASE_URL=https://your-app.onrender.com k6 run load/agent-run.js
 ```
 
+### Dashboard SSE streams
+
+Issue #274 replaces the dashboard's repeated spending and transaction polling
+with a long-lived `GET /agent/stream` connection. Use the stream load smoke test
+to verify the agent can hold dashboard-scale concurrency without reopening HTTP
+poll requests:
+
+```bash
+# From the careguard/ root
+BASE_URL=http://localhost:3004 CONNECTIONS=1000 HOLD_MS=30000 npm run load:stream
+```
+
+For a quick local smoke test:
+
+```bash
+BASE_URL=http://localhost:3004 CONNECTIONS=50 HOLD_MS=3000 npm run load:stream
+```
+
+The script opens `CONNECTIONS` SSE connections, waits until every connection
+receives the initial `snapshot` event, holds them open for `HOLD_MS`, and exits
+non-zero if any stream fails to open or misses its snapshot.
+
 ## What it checks
+
+### `/agent/run`
 
 | Check | Threshold |
 |---|---|
@@ -51,6 +76,18 @@ After all runs complete, the script fetches `/agent/spending` and compares:
 - **Actual** service fees from the tracker
 
 A mismatch indicates a lost write or double-count from a race condition.
+
+### `/agent/stream`
+
+| Check | Threshold |
+|---|---|
+| Opened SSE connections | equals `CONNECTIONS` |
+| Initial `snapshot` events | equals `CONNECTIONS` |
+| Stream failures | `0` |
+
+Because `/agent/stream` only broadcasts snapshots when state changes, an idle
+dashboard population should settle at open sockets plus periodic heartbeat
+events rather than repeated spending/transaction HTTP polling.
 
 ## CI
 

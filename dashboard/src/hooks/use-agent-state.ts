@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
+  AgentStreamSnapshotSchema,
   SpendingDataSchema,
   TransactionSchema,
   AuditLogSchema,
@@ -59,6 +60,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const [policyForm, setPolicyForm] = useState<PolicyForm>(DEFAULT_POLICY);
   const [policyDirty, setPolicyDirty] = useState(false);
   const [policySaved, setPolicySaved] = useState(false);
+  const [streamFallbackEnabled, setStreamFallbackEnabled] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   // Individual loading states for each data source (Issue #283)
@@ -104,7 +106,26 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     });
   }, []);
 
+  const syncSpending = useCallback(
+    (data: SpendingData, opts?: { forcePolicySync?: boolean }) => {
+      setSpending(data);
+      const forcePolicySync = Boolean(opts?.forcePolicySync);
+      const shouldSyncPolicy =
+        forcePolicySync ||
+        (activeTabRef.current !== 'policy' && !policyDirtyRef.current);
+      if (shouldSyncPolicy) {
+        setPolicyForm(data.policy);
+        setPolicyDirty(false);
+      }
+    },
+    [],
+  );
+
   const fetchAgentInfo = useCallback(async () => {
+    if (!AGENT_URL) {
+      setAgentConnected(false);
+      return;
+    }
     setLoadingAgentInfo(true);
     try {
       const res = await fetch(`${AGENT_URL}/`);
@@ -140,6 +161,10 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
 
   const fetchSpending = useCallback(
     async (opts?: { forcePolicySync?: boolean }) => {
+      if (!AGENT_URL) {
+        setLoadingSpending(false);
+        return;
+      }
       setLoadingSpending(true);
       try {
         const res = await fetch(`${AGENT_URL}/agent/spending`);
@@ -148,24 +173,20 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
           return;
         }
         const data = SpendingDataSchema.parse(await res.json());
-        setSpending(data);
-        const forcePolicySync = Boolean(opts?.forcePolicySync);
-        const shouldSyncPolicy =
-          forcePolicySync ||
-          (activeTabRef.current !== 'policy' && !policyDirtyRef.current);
-        if (shouldSyncPolicy) {
-          setPolicyForm(data.policy);
-          setPolicyDirty(false);
-        }
+        syncSpending(data, opts);
       } catch {} finally {
         setLoadingSpending(false);
       }
     },
-    [],
+    [syncSpending],
   );
 
   const fetchTransactions = useCallback(
     async (limit?: number, offset?: number) => {
+      if (!AGENT_URL) {
+        setLoadingTransactions(false);
+        return;
+      }
       setLoadingTransactions(true);
       try {
         const params = new URLSearchParams();
@@ -199,10 +220,82 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     [],
   );
 
-  // Poll spending and transactions every 3s with backoff
-  const spendingPoll = usePoll({
+  useEffect(() => {
+    if (
+      !AGENT_URL ||
+      typeof window === 'undefined' ||
+      typeof window.EventSource === 'undefined'
+    ) {
+      setStreamFallbackEnabled(true);
+      return;
+    }
+
+    let opened = false;
+    let closed = false;
+    const streamUrl = new URL(`${AGENT_URL.replace(/\/$/, '')}/agent/stream`);
+    streamUrl.searchParams.set('limit', String(pageSize));
+    streamUrl.searchParams.set('offset', String(currentPage * pageSize));
+    const source = new window.EventSource(streamUrl.toString());
+    const openTimeout = window.setTimeout(() => {
+      if (opened || closed) return;
+      closed = true;
+      source.close();
+      setAgentConnected(false);
+      setStreamFallbackEnabled(true);
+    }, 5000);
+
+    source.onopen = () => {
+      opened = true;
+      setAgentConnected(true);
+      setStreamFallbackEnabled(false);
+      window.clearTimeout(openTimeout);
+    };
+
+    source.addEventListener('snapshot', (event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data);
+        const snapshot = AgentStreamSnapshotSchema.parse(payload);
+        syncSpending(snapshot.spending);
+        setAllTransactions(snapshot.transactions);
+        setPagination(snapshot.pagination);
+        setAgentConnected(true);
+        setAgentPaused(snapshot.agent.paused);
+        setAgentPausedReason(
+          typeof snapshot.agent.pausedReason === 'string'
+            ? snapshot.agent.pausedReason
+            : null,
+        );
+        setLoadingSpending(false);
+        setLoadingTransactions(false);
+      } catch (error) {
+        console.error('[AgentStream] Invalid stream snapshot:', error);
+        closed = true;
+        source.close();
+        setStreamFallbackEnabled(true);
+      }
+    });
+
+    source.onerror = () => {
+      if (!opened) {
+        closed = true;
+        source.close();
+        setAgentConnected(false);
+        setStreamFallbackEnabled(true);
+        window.clearTimeout(openTimeout);
+      }
+    };
+
+    return () => {
+      closed = true;
+      source.close();
+      window.clearTimeout(openTimeout);
+    };
+  }, [currentPage, pageSize, syncSpending]);
+
+  // Poll spending and transactions only when SSE is unavailable.
+  usePoll({
     intervalMs: 3000,
-    enabled: true,
+    enabled: streamFallbackEnabled,
     onPoll: async () => {
       await fetchSpending();
       await fetchTransactions(pageSize, currentPage * pageSize);
@@ -213,9 +306,9 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   });
 
   // Poll agent info every 10s with backoff
-  const agentInfoPoll = usePoll({
+  usePoll({
     intervalMs: 10000,
-    enabled: true,
+    enabled: streamFallbackEnabled,
     onPoll: fetchAgentInfo,
     onError: (error) => {
       console.error('[Poll] Agent info poll error:', error.message);
@@ -273,7 +366,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         }
         const data: AgentResult = await res.json();
         setAgentResult(data);
-        setSpending(data.spending);
+        syncSpending(data.spending);
         setLiveMessage(`Task complete — ${data.toolCalls.length} tool calls`);
         for (const tc of data.toolCalls) {
           const resultPreview = tc.result?.error
@@ -306,7 +399,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         setAbortController(null);
       }
     },
-    [agentConnected, addLogEntry, fetchAgentInfo, fetchTransactions, pageSize],
+    [agentConnected, addLogEntry, fetchAgentInfo, fetchTransactions, pageSize, syncSpending],
   );
 
   const cancelAgentTask = useCallback(() => {
@@ -335,9 +428,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       const spendingRes = await fetch(`${AGENT_URL}/agent/spending`);
       if (spendingRes.ok) {
         const data = SpendingDataSchema.parse(await spendingRes.json());
-        setSpending(data);
-        setPolicyForm(data.policy);
-        setPolicyDirty(false);
+        syncSpending(data, { forcePolicySync: true });
       }
       addLogEntry(
         `[${new Date().toLocaleTimeString()}] Policy updated: daily=$${policyForm.dailyLimit}, monthly=$${policyForm.monthlyLimit}, meds=$${policyForm.medicationMonthlyBudget}, bills=$${policyForm.billMonthlyBudget}, approval=$${policyForm.approvalThreshold}`,
@@ -352,7 +443,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       );
       return { ok: false, error: err.message };
     }
-  }, [addLogEntry, policyForm]);
+  }, [addLogEntry, policyForm, syncSpending]);
 
   const resetAgent = useCallback(async () => {
     await fetch(`${AGENT_URL}/agent/reset`, { method: 'POST' });
