@@ -17,7 +17,10 @@ vi.mock("fs", () => ({
   writeFileSync: vi.fn((filePath: string, data: string) => {
     mockFiles.set(String(filePath), String(data));
   }),
-  appendFileSync: vi.fn(),
+  appendFileSync: vi.fn((filePath: string, data: string) => {
+    const key = String(filePath);
+    mockFiles.set(key, (mockFiles.get(key) ?? "") + String(data));
+  }),
   unlinkSync: vi.fn(),
   existsSync: vi.fn((filePath: string) => mockFiles.has(String(filePath))),
   mkdirSync: vi.fn(),
@@ -76,6 +79,17 @@ const DEFAULT_POLICY = {
   billMonthlyBudget: 500,
   approvalThreshold: 75,
 };
+
+function getPersistedTransactions() {
+  const jsonl = [...mockFiles.entries()].find(([filePath]) =>
+    filePath.endsWith("transactions.jsonl"),
+  )?.[1] ?? "";
+
+  return jsonl
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
 
 beforeEach(() => {
   mockFiles.clear();
@@ -209,6 +223,20 @@ describe("payForMedication — success path (Issue #35)", () => {
     const tx = (r as any).transaction;
     expect(tx.mppOrderId).toBe("order-999");
     expect(tx.stellarTxHash).toBeUndefined();
+  });
+
+  it("persists mppOrderId separately from stellarTxHash in the transaction log", async () => {
+    mockMppFetch.mockResolvedValueOnce({
+      json: async () => ({ success: true, order: { id: "order-persisted" } }),
+      headers: { get: () => null },
+    });
+
+    const r = await payForMedication("p1", "Pharma", "Drug", 50);
+    expect(r.success).toBe(true);
+
+    const [persistedTx] = getPersistedTransactions();
+    expect(persistedTx.mppOrderId).toBe("order-persisted");
+    expect(persistedTx).not.toHaveProperty("stellarTxHash");
   });
 
   it("sets stellarTxHash from Payment-Receipt header when no progress event fired", async () => {
