@@ -1,0 +1,15 @@
+groups:
+  - name: careguard-agent-llm
+    rules:
+      - alert: CareGuardHighLlmErrorRate
+        expr: |
+          sum(rate(agent_llm_error_total[10m]))
+            /
+          clamp_min(sum(rate(agent_llm_calls_total[10m])), 1) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: careguard-agent
+        annotations:
+          summary: CareGuard LLM error rate is above 5%
+          description: More than 5% of agent LLM calls have failed over the last 10 minutes.

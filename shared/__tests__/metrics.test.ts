@@ -42,6 +42,13 @@ describe("/metrics endpoint", () => {
     expect(res.text).toContain("agent_runs_total");
   });
 
+  it("output contains LLM call and latency metrics", async () => {
+    const app = buildApp();
+    const res = await supertest(app).get("/metrics");
+    expect(res.text).toContain("agent_llm_calls_total");
+    expect(res.text).toContain("agent_llm_latency_seconds");
+  });
+
   it("output contains nodejs_eventloop_lag_seconds from default metrics", async () => {
     const app = buildApp();
     const res = await supertest(app).get("/metrics");

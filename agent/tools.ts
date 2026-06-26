@@ -1691,7 +1691,7 @@ export async function payBill(
     };
 
     let stellarTx = await buildStellarTx();
-    console.log(`  [Stellar] Signer verified: ${agentKeypair.publicKey().slice(0, 8)}...`);
+    logger.info({ signerPrefix: agentKeypair.publicKey().slice(0, 8) }, "[Stellar] Signer verified");
 
     const result = await submitTransactionWithRetry(horizonServer, stellarTx, 2, 35000, buildStellarTx);
 
