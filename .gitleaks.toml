@@ -1,0 +1,51 @@
+title = "CareGuard gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "stellar-secret-seed"
+description = "Stellar secret seed"
+regex = '''\bS[A-Z2-7]{55}\b'''
+keywords = ["S"]
+
+[[rules.allowlists]]
+description = "Deterministic fake Stellar seeds used by tests"
+regexes = [
+  '''SBWWZYCAFDDJXNRRMKSFNRB6OTVZHTCMPUCVZ4FBZLSPHFKHYLPRTJCD''',
+  '''SBZVMB74Z76QZ3ZZW2JXWLRVDVUUTWB4OJ5BNQSQVZYCWPVXFZ5GMQKJ''',
+]
+
+[[rules]]
+id = "groq-api-key"
+description = "Groq API key"
+regex = '''\bgsk_[A-Za-z0-9_-]{20,}\b'''
+keywords = ["gsk_"]
+
+[[rules]]
+id = "openai-api-key"
+description = "OpenAI API key"
+regex = '''\bsk-[A-Za-z0-9_-]{20,}\b'''
+keywords = ["sk-"]
+
+[[rules]]
+id = "careguard-env-secret"
+description = "CareGuard sensitive environment variable assignment"
+regex = '''(?im)^\s*(?:export\s+)?(AGENT_SECRET_KEY|OZ_FACILITATOR_API_KEY|LLM_API_KEY|MPP_SECRET_KEY)\s*=\s*["']?[^\s"'#]{8,}'''
+keywords = [
+  "AGENT_SECRET_KEY",
+  "OZ_FACILITATOR_API_KEY",
+  "LLM_API_KEY",
+  "MPP_SECRET_KEY",
+]
+
+[[rules.allowlists]]
+description = "Documented placeholder env values"
+regexes = [
+  '''LLM_API_KEY=gsk_\.\.\.''',
+  '''LLM_API_KEY=sk-or-\.\.\.''',
+  '''LLM_API_KEY=sk-\.\.\.''',
+  '''LLM_API_KEY=<your-api-key>''',
+  '''AGENT_SECRET_KEY=\.\.\.''',
+  '''MPP_SECRET_KEY=\.\.\.''',
+]

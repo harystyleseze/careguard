@@ -10,6 +10,7 @@ Operational runbooks for on-call engineers. Each runbook follows the template:
 | Runbook | Summary |
 |---------|---------|
 | [rotate-secrets.md](rotate-secrets.md) | Quarterly and emergency rotation of all secrets (agent wallet, OZ API key, LLM key, MPP secret) |
+| [leaked-secret.md](leaked-secret.md) | Emergency response when gitleaks or review finds a committed secret |
 | [wallet-low.md](wallet-low.md) | Agent auto-paused due to low USDC or XLM balance — how to fund and resume |
 | [csp-changes.md](csp-changes.md) | Content-Security-Policy changes — how to update without breaking the dashboard |
 | [oz-facilitator-outage.md](oz-facilitator-outage.md) | OZ facilitator unreachable — recognise, communicate, fail-open vs fail-closed decision |

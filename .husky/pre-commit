@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+set -eu
+
+if command -v pre-commit >/dev/null 2>&1; then
+  pre-commit run gitleaks --hook-stage pre-commit
+elif command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --pre-commit --staged --redact --verbose --config .gitleaks.toml
+else
+  echo "gitleaks or pre-commit is required for CareGuard secret scanning."
+  echo "Install gitleaks: https://github.com/gitleaks/gitleaks#installing"
+  echo "Or install pre-commit and run: pre-commit install"
+  exit 1
+fi
