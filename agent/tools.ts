@@ -624,9 +624,18 @@ let spendingTracker = loadSpending();
 
 const MAX_PAYMENT = 1000;
 const MAX_ERROR_LENGTH = 500;
+const POLICY_MONEY_DECIMALS = 4;
 
 function truncateError(message: string): string {
   return message.replace(/<[^>]*>/g, '').slice(0, MAX_ERROR_LENGTH);
+}
+
+function normalizePolicyMoney(value: number): number {
+  if (!Number.isFinite(value)) return value;
+  // Budget comparisons use 4 decimal places so tiny floating-point underflows
+  // such as -0.0000000001 are treated as the human-facing value: $0.00.
+  const rounded = Number(value.toFixed(POLICY_MONEY_DECIMALS));
+  return Object.is(rounded, -0) ? 0 : rounded;
 }
 
 function recordServiceFee(
@@ -1148,14 +1157,17 @@ export function checkSpendingPolicy(
     category === TRANSACTION_CATEGORY.MEDICATIONS
       ? spendingTracker.medications
       : spendingTracker.bills;
-  const remaining = budget - currentSpending;
+  const policyAmount = normalizePolicyMoney(amount);
+  const remaining = normalizePolicyMoney(budget - currentSpending);
   const totalMonthlySpending =
     spendingTracker.medications +
     spendingTracker.bills +
     spendingTracker.serviceFees;
-  const globalRemaining = policy.monthlyLimit - totalMonthlySpending;
+  const globalRemaining = normalizePolicyMoney(
+    policy.monthlyLimit - totalMonthlySpending,
+  );
 
-  if (amount > globalRemaining) {
+  if (policyAmount > globalRemaining) {
     return {
       allowed: false,
       reason: `Payment of $${amount.toFixed(2)} would exceed overall monthly limit. Monthly limit: $${policy.monthlyLimit}, spent: $${totalMonthlySpending.toFixed(2)}, remaining: $${globalRemaining.toFixed(2)}`,
@@ -1166,7 +1178,7 @@ export function checkSpendingPolicy(
     };
   }
 
-  if (amount > remaining) {
+  if (policyAmount > remaining) {
     return {
       allowed: false,
       reason: `Payment of $${amount.toFixed(2)} exceeds ${category} monthly budget. Budget: $${budget}, spent: $${currentSpending.toFixed(2)}, remaining: $${remaining.toFixed(2)}`,
@@ -1196,11 +1208,12 @@ export function checkSpendingPolicy(
       },
     )
     .reduce((sum, t) => sum + t.amount, 0);
+  const normalizedTotalToday = normalizePolicyMoney(totalToday);
 
-  if (totalToday + amount > policy.dailyLimit) {
+  if (normalizePolicyMoney(normalizedTotalToday + policyAmount) > policy.dailyLimit) {
     return {
       allowed: false,
-      reason: `Payment of $${amount.toFixed(2)} would exceed daily limit of $${policy.dailyLimit}. Already spent today: $${totalToday.toFixed(2)}`,
+      reason: `Payment of $${amount.toFixed(2)} would exceed daily limit of $${policy.dailyLimit}. Already spent today: $${normalizedTotalToday.toFixed(2)}`,
       requiresApproval: false,
       currentSpending,
       budgetRemaining: remaining,
@@ -1211,7 +1224,7 @@ export function checkSpendingPolicy(
     allowed: true,
     requiresApproval: amount > policy.approvalThreshold,
     currentSpending,
-    budgetRemaining: remaining - amount,
+    budgetRemaining: normalizePolicyMoney(remaining - policyAmount),
   };
 }
 
@@ -1758,10 +1771,12 @@ export function getSpendingSummary() {
       total: +total.toFixed(2),
     },
     budgetRemaining: {
-      medications: +(
-        policy.medicationMonthlyBudget - spendingTracker.medications
+      medications: +normalizePolicyMoney(
+        policy.medicationMonthlyBudget - spendingTracker.medications,
       ).toFixed(2),
-      bills: +(policy.billMonthlyBudget - spendingTracker.bills).toFixed(2),
+      bills: +normalizePolicyMoney(
+        policy.billMonthlyBudget - spendingTracker.bills,
+      ).toFixed(2),
     },
     transactionCount: spendingTracker.transactions.length,
     recentTransactions: spendingTracker.transactions.slice(-5),
