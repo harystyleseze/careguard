@@ -255,7 +255,7 @@ async function waitForStellarSettlement(
 
 // --- x402 Client: Auto-handles 402 Payment Required for API queries ---
 // Use stellar:testnet or stellar:public scheme based on STELLAR_NETWORK env
-const x402SchemeId = `stellar:${STELLAR_CONFIG.networkType}`;
+const x402SchemeId = `stellar:${STELLAR_CONFIG.networkType}` as `${string}:${string}`;
 const x402Fetch = isMockNetwork()
   ? fetch
   : wrapFetchWithPayment(
@@ -624,9 +624,28 @@ let spendingTracker = loadSpending();
 
 const MAX_PAYMENT = 1000;
 const MAX_ERROR_LENGTH = 500;
+const MAX_SINGLE_TX_USDC = parsePositiveNumberEnv("MAX_SINGLE_TX_USDC", 100);
+
+function parsePositiveNumberEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive finite number`);
+  }
+
+  return value;
+}
 
 function truncateError(message: string): string {
   return message.replace(/<[^>]*>/g, '').slice(0, MAX_ERROR_LENGTH);
+}
+
+function platformCapError(amount: number): string | undefined {
+  if (amount <= MAX_SINGLE_TX_USDC) return undefined;
+
+  return `BLOCKED BY PLATFORM CAP: Payment of $${amount.toFixed(2)} exceeds the platform MAX_SINGLE_TX_USDC cap of $${MAX_SINGLE_TX_USDC.toFixed(2)}. This cap is configured by environment variable and cannot be changed through the caregiver policy API.`;
 }
 
 function recordServiceFee(
@@ -1492,6 +1511,13 @@ export async function payForMedication(
       error: `Invalid payment amount: $${amount}. Amount must be a positive finite number <= $${MAX_PAYMENT}.`,
     };
   }
+
+  const platformCapBlock = platformCapError(amount);
+  if (platformCapBlock) {
+    policyBlocksTotal.inc({ reason: 'platform_cap' });
+    return { success: false, error: platformCapBlock };
+  }
+
   const policyCheck = checkSpendingPolicy(
     amount,
     TRANSACTION_CATEGORY.MEDICATIONS,
@@ -1607,6 +1633,13 @@ export async function payBill(
       error: `Invalid payment amount: $${amount}. Amount must be a positive finite number <= $${MAX_PAYMENT}.`,
     };
   }
+
+  const platformCapBlock = platformCapError(amount);
+  if (platformCapBlock) {
+    policyBlocksTotal.inc({ reason: 'platform_cap' });
+    return { success: false, error: platformCapBlock };
+  }
+
   const policyCheck = checkSpendingPolicy(amount, TRANSACTION_CATEGORY.BILLS);
   if (!policyCheck.allowed) {
     const reason = policyCheck.reason!.includes('daily')

@@ -61,6 +61,8 @@ services:
         value: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
       - key: USDC_SAC
         value: CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA
+      - key: MAX_SINGLE_TX_USDC
+        value: "100"
       - key: PHARMACY_API_URL
         value: http://localhost:3004
       - key: BILL_AUDIT_API_URL

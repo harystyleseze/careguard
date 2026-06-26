@@ -7,6 +7,7 @@
 const { mockMppFetch, onProgressHolder, mockFiles, MOCK_HINT } = vi.hoisted(() => {
   process.env.AGENT_SECRET_KEY = "SBWWZYCAFDDJXNRRMKSFNRB6OTVZHTCMPUCVZ4FBZLSPHFKHYLPRTJCD";
   process.env.BILL_PROVIDER_PUBLIC_KEY = "GBILLPROVIDER";
+  process.env.MAX_SINGLE_TX_USDC = "100";
   const onProgressHolder: { fn?: (event: any) => void } = {};
   return { mockMppFetch: vi.fn(), onProgressHolder, mockFiles: new Map<string, string>(), MOCK_HINT: Buffer.from([0xca, 0xfe, 0xba, 0xbe]) };
 });
@@ -137,6 +138,42 @@ describe("payForMedication — policy-blocked (Issue #35)", () => {
     expect(r.success).toBe(false);
     expect(r.error).toContain("BLOCKED BY SPENDING POLICY");
     expect(mockMppFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("platform transaction cap (Issue #83)", () => {
+  const permissivePolicy = {
+    ...DEFAULT_POLICY,
+    dailyLimit: 1000,
+    monthlyLimit: 1000,
+    medicationMonthlyBudget: 500,
+    billMonthlyBudget: 500,
+    approvalThreshold: 1000,
+  };
+
+  it("blocks medication payments above MAX_SINGLE_TX_USDC before policy approval", async () => {
+    setSpendingPolicy("rosa", permissivePolicy);
+
+    const result = await payForMedication("p1", "Pharma", "Drug", 150);
+
+    expect(result).toEqual({
+      success: false,
+      error: expect.stringContaining("BLOCKED BY PLATFORM CAP"),
+    });
+    expect(result.error).toContain("MAX_SINGLE_TX_USDC");
+    expect(mockMppFetch).not.toHaveBeenCalled();
+  });
+
+  it("blocks bill payments above MAX_SINGLE_TX_USDC even when policy allows them", async () => {
+    setSpendingPolicy("rosa", permissivePolicy);
+
+    const result = await payBill("provider-1", "Hospital", "Visit", 150, true);
+
+    expect(result).toEqual({
+      success: false,
+      error: expect.stringContaining("BLOCKED BY PLATFORM CAP"),
+    });
+    expect(result.error).toContain("MAX_SINGLE_TX_USDC");
   });
 });
 
