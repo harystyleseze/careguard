@@ -7,8 +7,17 @@ export const LineItemSchema = z
     cptCode: z
       .string()
       .regex(/^(?:\d{5}|J\d{4})$/, "cptCode must match /^(?:\\d{5}|J\\d{4})$/"),
-    quantity: z.number().positive("quantity must be positive"),
-    chargedAmount: z.number().positive("chargedAmount must be positive"),
+    quantity: z
+      .number()
+      .finite("quantity must be finite")
+      .int("quantity must be an integer")
+      .min(1, "quantity must be at least 1")
+      .max(999, "quantity must be at most 999"),
+    chargedAmount: z
+      .number()
+      .finite("chargedAmount must be finite")
+      .min(0, "chargedAmount must be at least 0")
+      .max(1_000_000, "chargedAmount must be at most 1000000"),
   })
   .strict();
 
