@@ -4,9 +4,11 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync, statSync, unlinkSync, renameSync, readFileSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 import { Router, Request, Response } from "express";
 
-const DATA_DIR = new URL("../data", import.meta.url).pathname;
+const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), "../data");
 const AUDIT_FILE = `${DATA_DIR}/audit.log.jsonl`;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_ARCHIVES = 12;

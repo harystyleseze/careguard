@@ -17,6 +17,8 @@ import { Mppx, Store } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 import { z } from "zod";
 
 // x402 middleware
@@ -765,7 +767,7 @@ app.get("/drug/interactions", (req, res) => {
 // MPP PHARMACY PAYMENT (was port 3005)
 // ============================================================
 
-const DATA_DIR = new URL("./data", import.meta.url).pathname;
+const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), "data");
 const ORDERS_FILE = `${DATA_DIR}/orders.json`;
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
@@ -896,6 +898,34 @@ const LLM_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] =
     },
   }));
 
+function invalidToolArgumentsResult(
+  tool: string,
+  message: string,
+  details: Record<string, unknown> = {},
+) {
+  return {
+    ok: false,
+    reason: "INVALID_TOOL_ARGUMENTS",
+    tool,
+    message,
+    ...details,
+  };
+}
+
+function toolErrorResult(tool: string, err: any) {
+  if (err?.reason === "INVALID_TOOL_ARGUMENTS" || err?.reason === "UNKNOWN_TOOL") {
+    return {
+      ok: false,
+      reason: err.reason,
+      tool,
+      message: err.message,
+      issues: Array.isArray(err.issues) ? err.issues : [],
+    };
+  }
+
+  return { error: err?.message || String(err) };
+}
+
 async function executeTool(name: string, input: any): Promise<any> {
   let result: any;
   try {
@@ -1019,21 +1049,41 @@ async function runAgent(task: string) {
 
     for (const tc of choice.message.tool_calls) {
       if (tc.type !== "function") continue;
-      let args: any;
+      let args: Record<string, unknown> = {};
+      let parseErrorResult: Record<string, unknown> | undefined;
       try {
-        args = JSON.parse(tc.function.arguments);
-      } catch {
-        args = {};
+        const parsedArgs = JSON.parse(tc.function.arguments || "{}");
+        if (!parsedArgs || typeof parsedArgs !== "object" || Array.isArray(parsedArgs)) {
+          parseErrorResult = invalidToolArgumentsResult(
+            tc.function.name,
+            "Tool arguments must be a JSON object.",
+            { receivedType: Array.isArray(parsedArgs) ? "array" : typeof parsedArgs },
+          );
+        } else {
+          args = parsedArgs as Record<string, unknown>;
+        }
+      } catch (err: any) {
+        parseErrorResult = invalidToolArgumentsResult(
+          tc.function.name,
+          "Tool arguments must be valid JSON.",
+          { error: err?.message || String(err) },
+        );
       }
       logger.info({ tool: tc.function.name, args: JSON.stringify(args).slice(0, 100) }, "tool call");
       let result: any;
-      try {
-        result = await executeTool(tc.function.name, args);
+      if (parseErrorResult) {
+        result = parseErrorResult;
+        agentToolCallsTotal.inc({ tool: tc.function.name, status: "error" });
         toolCalls.push({ tool: tc.function.name, input: args, result });
-      } catch (err: any) {
-        logger.error({ tool: tc.function.name, err: err.message }, "tool error");
-        result = { error: err.message };
-        toolCalls.push({ tool: tc.function.name, input: args, result });
+      } else {
+        try {
+          result = await executeTool(tc.function.name, args);
+          toolCalls.push({ tool: tc.function.name, input: args, result });
+        } catch (err: any) {
+          logger.error({ tool: tc.function.name, err: err?.message || err }, "tool error");
+          result = toolErrorResult(tc.function.name, err);
+          toolCalls.push({ tool: tc.function.name, input: args, result });
+        }
       }
 
       appendAuditEntry({
@@ -1103,20 +1153,40 @@ app.get("/agent/transactions", (req, res) => {
     },
   });
 });
-app.post("/agent/policy", (req, res) => {
-  const body = req.body;
-  if (!body || typeof body !== "object") {
-    return res.status(400).json({ error: "Invalid policy" });
-  }
-  const fields = ["dailyLimit", "monthlyLimit", "medicationMonthlyBudget", "billMonthlyBudget", "approvalThreshold"] as const;
+
+function validatePolicyPayload(body: any): { ok: true; policy: any } | { ok: false; errors: string[] } {
   const errors: string[] = [];
+  if (!body || typeof body !== "object") return { ok: false, errors: ["body must be a JSON object"] };
+  const fields = ["dailyLimit", "monthlyLimit", "medicationMonthlyBudget", "billMonthlyBudget", "approvalThreshold"] as const;
   for (const f of fields) {
     const v = body[f];
-    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) errors.push(`${f} must be a positive finite number`);
+    if (typeof v !== "number" || !Number.isFinite(v)) errors.push(`${f} must be a finite number`);
+    else if (v <= 0) errors.push(`${f} must be greater than 0`);
   }
-  if (errors.length > 0) return res.status(400).json({ error: "Invalid policy", details: errors });
-  setSpendingPolicy(body);
-  res.json({ success: true, policy: body });
+  if (typeof body.dailyLimit === "number" && typeof body.monthlyLimit === "number" && body.dailyLimit > body.monthlyLimit) {
+    errors.push("dailyLimit cannot exceed monthlyLimit");
+  }
+  if (typeof body.approvalThreshold === "number" && typeof body.dailyLimit === "number" && body.approvalThreshold > body.dailyLimit) {
+    errors.push("approvalThreshold cannot exceed dailyLimit");
+  }
+  if (
+    typeof body.medicationMonthlyBudget === "number" &&
+    typeof body.billMonthlyBudget === "number" &&
+    typeof body.monthlyLimit === "number" &&
+    body.medicationMonthlyBudget + body.billMonthlyBudget > body.monthlyLimit
+  ) {
+    errors.push("medicationMonthlyBudget + billMonthlyBudget cannot exceed monthlyLimit");
+  }
+  if (errors.length > 0) return { ok: false, errors };
+  const policy = Object.fromEntries(fields.map((f) => [f, body[f]]));
+  return { ok: true, policy };
+}
+
+app.post("/agent/policy", (req, res) => {
+  const result = validatePolicyPayload(req.body);
+  if (!result.ok) return res.status(400).json({ error: "Invalid policy", details: result.errors });
+  setSpendingPolicy(result.policy);
+  res.json({ success: true, policy: result.policy });
 });
 app.post("/agent/reset", (_req, res) => {
   resetSpendingTracker();

@@ -57,6 +57,19 @@ vi.mock("../../shared/x402-middleware.ts", () => ({
   DEFAULT_FACILITATOR_URL: "https://channels.openzeppelin.com/x402/testnet",
 }));
 
+vi.mock("../../shared/rate-limit.ts", () => {
+  const passThrough = (_req: any, _res: any, next: any) => next();
+  return {
+    rateLimiters: {
+      agent: passThrough,
+      x402: passThrough,
+      health: passThrough,
+      default: passThrough,
+    },
+    rateLimitHitsTotal: { inc: vi.fn() },
+  };
+});
+
 vi.mock("@stellar/stellar-sdk", () => ({
   Keypair: { fromSecret: vi.fn(() => ({ publicKey: () => "GMOCKAGENTWALLETPUBKEY123456" })) },
   Horizon: { Server: vi.fn(() => ({ loadAccount: vi.fn() })) },
@@ -189,6 +202,48 @@ describe("POST /agent/run — validation (Issue #42)", () => {
     expect(res.body.toolCalls).toHaveLength(1);
     expect(res.body.toolCalls[0].tool).toBe("get_spending_summary");
     expect(res.body.response).toBe("Task complete.");
+  });
+
+  it("returns a typed tool error when LLM tool arguments are malformed JSON", async () => {
+    createMock.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call-bad-json",
+                type: "function",
+                function: { name: "get_spending_summary", arguments: "{bad-json" },
+              },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+    });
+    createMock.mockResolvedValueOnce({
+      choices: [
+        {
+          message: { role: "assistant", content: "Retried after tool error.", tool_calls: undefined },
+          finish_reason: "stop",
+        },
+      ],
+    });
+
+    const res = await auth(request(app).post("/agent/run"))
+      .send({ task: "What is the current spending summary?" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.toolCalls).toHaveLength(1);
+    expect(res.body.toolCalls[0].result).toMatchObject({
+      ok: false,
+      reason: "INVALID_TOOL_ARGUMENTS",
+      tool: "get_spending_summary",
+      message: "Tool arguments must be valid JSON.",
+    });
+    expect(res.body.response).toBe("Retried after tool error.");
   });
 });
 
