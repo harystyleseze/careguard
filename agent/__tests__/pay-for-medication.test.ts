@@ -65,6 +65,8 @@ import {
   payForMedication,
   payBill,
   checkSpendingPolicy,
+  getSpendingSummary,
+  loadSpending,
   resetSpendingTracker,
   setSpendingPolicy,
 } from "../tools.ts";
@@ -306,6 +308,76 @@ describe("checkSpendingPolicy — basic rules (Issue #35)", () => {
     const r = checkSpendingPolicy(10, "bills");
     expect(r.allowed).toBe(false);
     expect(r.reason).toContain("overall monthly limit");
+  });
+
+  it("normalizes tiny negative category remaining values to zero (#287)", () => {
+    setSpendingPolicy("rosa", {
+      ...DEFAULT_POLICY,
+      dailyLimit: 500,
+      medicationMonthlyBudget: 300,
+    });
+    const tracker = loadSpending("rosa");
+    tracker.medications = 300.0000000001;
+
+    const r = checkSpendingPolicy(0.01, "medications");
+
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toContain("remaining: $0.00");
+    expect(r.budgetRemaining).toBe(0);
+    expect(Object.is(r.budgetRemaining, -0)).toBe(false);
+  });
+
+  it("normalizes tiny negative global and summary remaining values to zero (#287)", () => {
+    setSpendingPolicy("rosa", {
+      ...DEFAULT_POLICY,
+      dailyLimit: 500,
+      monthlyLimit: 800,
+      medicationMonthlyBudget: 300,
+      billMonthlyBudget: 500,
+    });
+    const tracker = loadSpending("rosa");
+    tracker.medications = 300.0000000001;
+    tracker.bills = 500.0000000001;
+
+    const r = checkSpendingPolicy(0.01, "bills");
+    const summary = getSpendingSummary();
+
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toContain("remaining: $0.00");
+    expect(r.budgetRemaining).toBe(0);
+    expect(r.globalBudgetRemaining).toBe(0);
+    expect(summary.budgetRemaining.medications).toBe(0);
+    expect(summary.budgetRemaining.bills).toBe(0);
+    expect(Object.is(summary.budgetRemaining.medications, -0)).toBe(false);
+    expect(Object.is(summary.budgetRemaining.bills, -0)).toBe(false);
+  });
+
+  it("normalizes daily-limit arithmetic before comparison and messaging (#287)", () => {
+    setSpendingPolicy("rosa", {
+      ...DEFAULT_POLICY,
+      dailyLimit: 100,
+      monthlyLimit: 1500,
+      medicationMonthlyBudget: 1000,
+    });
+    const tracker = loadSpending("rosa");
+    tracker.transactions = [
+      {
+        id: "tx-daily-underflow",
+        timestamp: new Date().toISOString(),
+        type: "payment",
+        description: "Daily underflow medication",
+        amount: 100.0000000001,
+        recipient: "pharmacy-1",
+        status: "completed",
+        category: "medications",
+      },
+    ] as any;
+
+    const r = checkSpendingPolicy(0.01, "medications");
+
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toContain("daily limit");
+    expect(r.reason).toContain("Already spent today: $100.00");
   });
 
   it("rejects policy saves where category budgets exceed monthlyLimit", () => {
