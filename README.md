@@ -112,6 +112,10 @@ cd dashboard && npm run dev
 # 6. Open http://localhost:3000
 ```
 
+### Local runtime data
+
+CareGuard writes development runtime state under `data/`, including local order history and spending ledgers. Treat this directory as machine-local working data: JSON files under `data/` are ignored by git, and only placeholder/documentation files should be committed.
+
 ### Docker dev (one command)
 
 For a single-command boot of the full stack — server, dashboard, redis, prometheus, grafana — use Docker Compose. See [issue #111](https://github.com/harystyleseze/careguard/issues/111).
@@ -217,7 +221,7 @@ careguard/
 │   └── types.ts           # Shared TypeScript types
 ├── scripts/
 │   └── setup-wallets.ts   # Testnet wallet creation + USDC trustlines
-├── data/                  # Persisted spending data + orders
+├── data/                  # Local runtime data (JSON ignored by git)
 ├── .env.example           # Environment variable template
 ├── QUICKSTART.md          # Setup guide
 ```

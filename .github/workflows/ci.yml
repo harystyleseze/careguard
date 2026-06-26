@@ -40,7 +40,7 @@ jobs:
 
       - name: Check for committed sensitive data files
         run: |
-          if git diff --name-only origin/main...HEAD 2>/dev/null | grep -qE '^data/(spending|orders)\.json$'; then
+          if git diff --name-only --diff-filter=ACMR origin/main...HEAD 2>/dev/null | grep -qE '^data/(spending|orders)\.json$'; then
             echo "::error::Sensitive data file detected in PR diff (data/spending.json or data/orders.json). Remove it before merging."
             exit 1
           fi
