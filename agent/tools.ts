@@ -121,7 +121,7 @@ async function getRecommendedFee(): Promise<string> {
 }
 
 // Helper: extract real Stellar tx hash from x402 PAYMENT-RESPONSE header
-function extractX402TxHash(response: Response): string | undefined {
+export function extractX402TxHash(response: Response): string | undefined {
   const header =
     response.headers.get('PAYMENT-RESPONSE') ||
     response.headers.get('payment-response') ||
