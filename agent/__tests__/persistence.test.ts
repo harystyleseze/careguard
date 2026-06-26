@@ -104,15 +104,17 @@ vi.mock("@stellar/mpp/charge/client", () => ({
 vi.mock("mppx/client", () => ({
   Mppx: { create: vi.fn().mockReturnValue({ fetch: vi.fn() }) },
 }));
-// Persistence behavior is the thing under test — audit logging and
-// notifications are unrelated collaborators, so they're stubbed out.
+// Persistence behavior is the thing under test — audit logging is an unrelated
+// collaborator, and notifications are observed only for critical alerts.
 vi.mock("../../shared/audit-log.ts", () => ({ appendAuditEntry: vi.fn() }));
-vi.mock("../../shared/notifications.ts", () => ({ notify: vi.fn().mockResolvedValue(undefined) }));
+const notifySpy = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("../../shared/notifications.ts", () => ({ notify: notifySpy }));
 // Spying directly on the real pino instance is unreliable, so mock the
 // logger module the same way shared/__tests__/request-logger.test.ts does.
 const warnSpy = vi.hoisted(() => vi.fn());
+const errorSpy = vi.hoisted(() => vi.fn());
 vi.mock("../../shared/logger.ts", () => ({
-  logger: { info: vi.fn(), warn: warnSpy, error: vi.fn(), debug: vi.fn() },
+  logger: { info: vi.fn(), warn: warnSpy, error: errorSpy, debug: vi.fn() },
 }));
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -143,6 +145,8 @@ beforeEach(() => {
   fsState.files.clear();
   fsState.readOnlyPaths.clear();
   warnSpy.mockClear();
+  errorSpy.mockClear();
+  notifySpy.mockClear();
 });
 
 describe("Spending tracker persistence across restart (#44)", () => {
@@ -184,13 +188,14 @@ describe("Spending tracker persistence across restart (#44)", () => {
   });
 });
 
-describe("Corrupted data falls back to defaults without throwing (#44)", () => {
-  it("loadSpending falls back to an empty tracker and logs a warning on malformed JSON", async () => {
+describe("Corrupted data falls back to defaults without throwing (#44, #204)", () => {
+  it("loadSpending rotates malformed spending.json, alerts, and starts fresh", async () => {
     vi.resetModules();
     const tools = await import("../tools.ts");
 
+    const spendingFile = `${DATA_DIR}/recipients/corrupt-recipient/spending.json`;
     fsState.files.set(
-      `${DATA_DIR}/recipients/corrupt-recipient/spending.json`,
+      spendingFile,
       "{not valid json",
     );
 
@@ -200,7 +205,53 @@ describe("Corrupted data falls back to defaults without throwing (#44)", () => {
     }).not.toThrow();
 
     expect(result).toEqual({ medications: 0, bills: 0, serviceFees: 0, transactions: [] });
-    expect(warnSpy).toHaveBeenCalled();
+    expect(fsState.files.has(spendingFile)).toBe(false);
+    const rotatedKey = [...fsState.files.keys()].find((key) =>
+      key.includes("/recipients/corrupt-recipient/spending.json.corrupt-"),
+    );
+    expect(rotatedKey).toBeDefined();
+    expect(fsState.files.get(rotatedKey!)).toBe("{not valid json");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        file: spendingFile,
+        rotatedFile: rotatedKey,
+        error: expect.any(String),
+      }),
+      expect.stringContaining("critical"),
+    );
+    expect(notifySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "critical",
+        title: "Spending data recovered from corruption",
+        context: expect.objectContaining({
+          file: spendingFile,
+          rotatedFile: rotatedKey,
+          recipientId: "corrupt-recipient",
+        }),
+      }),
+    );
+  });
+
+  it("loadSpending treats invalid spending schema as corruption", async () => {
+    vi.resetModules();
+    const tools = await import("../tools.ts");
+
+    const spendingFile = `${DATA_DIR}/recipients/invalid-schema/spending.json`;
+    fsState.files.set(
+      spendingFile,
+      JSON.stringify({ medications: "not-a-number", bills: 0, serviceFees: 0, transactions: [] }),
+    );
+
+    const result = tools.loadSpending("invalid-schema");
+
+    expect(result).toEqual({ medications: 0, bills: 0, serviceFees: 0, transactions: [] });
+    expect(fsState.files.has(spendingFile)).toBe(false);
+    expect([...fsState.files.keys()].some((key) =>
+      key.includes("/recipients/invalid-schema/spending.json.corrupt-"),
+    )).toBe(true);
+    expect(notifySpy).toHaveBeenCalledWith(
+      expect.objectContaining({ level: "critical" }),
+    );
   });
 
   it("a corrupt policy.json on disk does not throw and yields the default policy", async () => {

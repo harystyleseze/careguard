@@ -411,6 +411,44 @@ interface SpendingTracker {
   transactions: Transaction[];
 }
 
+const TransactionRecordSchema = z.object({
+  id: z.string(),
+  timestamp: z.string(),
+  type: z.enum(['medication', 'bill', 'service_fee']),
+  description: z.string(),
+  amount: z.number().finite(),
+  recipient: z.string(),
+  stellarTxHash: z.string().optional(),
+  mppOrderId: z.string().optional(),
+  status: z.enum([
+    'pending',
+    'approved',
+    'completed',
+    'blocked',
+    'disputed',
+    'cancelled',
+    'rejected',
+  ]),
+  category: z.enum([
+    TRANSACTION_CATEGORY.MEDICATIONS,
+    TRANSACTION_CATEGORY.BILLS,
+    TRANSACTION_CATEGORY.SERVICE_FEES,
+  ]),
+  pendingUntil: z.string().optional(),
+  submittedAt: z.string().optional(),
+}).passthrough();
+
+const SpendingTrackerSchema = z.object({
+  medications: z.number().finite(),
+  bills: z.number().finite(),
+  serviceFees: z.number().finite(),
+  transactions: z.array(TransactionRecordSchema),
+});
+
+const SpendingSnapshotSchema = SpendingTrackerSchema.extend({
+  _snapshotTxCount: z.number().int().nonnegative().optional(),
+});
+
 type PaymentCategory =
   | typeof TRANSACTION_CATEGORY.MEDICATIONS
   | typeof TRANSACTION_CATEGORY.BILLS;
@@ -436,6 +474,40 @@ const spendingCache = new Map<string, SpendingCacheEntry>();
 
 function createEmptySpendingTracker(): SpendingTracker {
   return { medications: 0, bills: 0, serviceFees: 0, transactions: [] };
+}
+
+function rotateCorruptSpendingFile(file: string): string | null {
+  const rotatedFile = `${file}.corrupt-${Date.now()}`;
+  try {
+    renameSync(file, rotatedFile);
+    return rotatedFile;
+  } catch (err: any) {
+    logger.error(
+      { file, rotatedFile, error: err.message },
+      '[Persistence] failed to rotate corrupt spending.json',
+    );
+    return null;
+  }
+}
+
+function alertCorruptSpendingFile(
+  file: string,
+  rotatedFile: string | null,
+  error: string,
+  recipientId?: string,
+) {
+  void notify({
+    level: 'critical',
+    title: 'Spending data recovered from corruption',
+    description:
+      'CareGuard detected a corrupted spending.json file, rotated it aside, and restarted spending tracking from defaults.',
+    context: {
+      file,
+      rotatedFile,
+      error,
+      recipientId: recipientId || currentRecipientId,
+    },
+  });
 }
 
 function normalizeTransactionCategories(
@@ -487,7 +559,9 @@ function readSpendingFromDisk(recipientId?: string): SpendingTracker {
   // --- Try new snapshot + JSONL tail path first ---
   if (existsSync(snapshotFile)) {
     try {
-      const snapshot = JSON.parse(readFileSync(snapshotFile, 'utf-8')) as SpendingTracker & { _snapshotTxCount?: number };
+      const snapshot = SpendingSnapshotSchema.parse(
+        JSON.parse(readFileSync(snapshotFile, 'utf-8')),
+      );
       const snapshotTxCount = snapshot._snapshotTxCount ?? snapshot.transactions.length;
 
       // Replay transactions from the JSONL tail that came after the snapshot
@@ -527,17 +601,21 @@ function readSpendingFromDisk(recipientId?: string): SpendingTracker {
   // --- Legacy fallback: spending.json (full JSON blob) ---
   if (!existsSync(legacyFile)) return createEmptySpendingTracker();
   try {
-    const parsed = JSON.parse(readFileSync(legacyFile, 'utf-8')) as SpendingTracker;
+    const parsed = SpendingTrackerSchema.parse(
+      JSON.parse(readFileSync(legacyFile, 'utf-8')),
+    );
     const normalized = normalizeTransactionCategories(parsed, recipientId);
     if (normalized.migrated) {
       saveSpending(normalized.data, recipientId);
     }
     return normalized.data;
   } catch (err: any) {
-    logger.warn(
-      { file: legacyFile, error: err.message },
-      '[Persistence] spending.json is corrupted; falling back to an empty tracker',
+    const rotatedFile = rotateCorruptSpendingFile(legacyFile);
+    logger.error(
+      { file: legacyFile, rotatedFile, error: err.message },
+      '[Persistence] critical: spending.json is corrupted; rotated and reset to defaults',
     );
+    alertCorruptSpendingFile(legacyFile, rotatedFile, err.message, recipientId);
     return createEmptySpendingTracker();
   }
 }
