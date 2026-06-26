@@ -16,6 +16,7 @@ import type {
   PaginationData,
   Tab,
   AuditLogEvent,
+  WalletBalanceStatus,
 } from '../components/types';
 import { usePoll } from './use-poll';
 import { AGENT_URL } from '../lib/agent-url';
@@ -55,6 +56,11 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   );
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletXlm, setWalletXlm] = useState<string | null>(null);
+  const [walletBalanceStatus, setWalletBalanceStatus] =
+    useState<WalletBalanceStatus>('loading');
+  const [walletBalanceError, setWalletBalanceError] = useState<string | null>(
+    null,
+  );
   const [liveMessage, setLiveMessage] = useState('');
   const [policyForm, setPolicyForm] = useState<PolicyForm>(DEFAULT_POLICY);
   const [policyDirty, setPolicyDirty] = useState(false);
@@ -69,6 +75,11 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const activeTabRef = useRef(activeTab);
   const policyDirtyRef = useRef(policyDirty);
   const lastConnectionStateRef = useRef<string | null>(null);
+  const walletStatusRef = useRef<WalletBalanceStatus>('loading');
+  const walletRetryAttemptRef = useRef(0);
+  const walletRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -104,6 +115,60 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     });
   }, []);
 
+  const setWalletStatus = useCallback((status: WalletBalanceStatus) => {
+    walletStatusRef.current = status;
+    setWalletBalanceStatus(status);
+  }, []);
+
+  const clearWalletRetry = useCallback(() => {
+    if (walletRetryTimeoutRef.current) {
+      clearTimeout(walletRetryTimeoutRef.current);
+      walletRetryTimeoutRef.current = null;
+    }
+  }, []);
+
+  const fetchWalletBalance = useCallback(
+    async (opts?: { showLoading?: boolean }) => {
+      clearWalletRetry();
+      if (opts?.showLoading ?? walletStatusRef.current !== 'ok') {
+        setWalletStatus('loading');
+      }
+      setWalletBalanceError(null);
+
+      try {
+        const wres = await fetch(`${AGENT_URL}/agent/wallet`);
+        if (!wres.ok) {
+          throw new Error(`Balance unavailable (${wres.status})`);
+        }
+        const wdata = await wres.json();
+        setWalletBalance(wdata.usdc || '0.00');
+        setWalletXlm(wdata.xlm || '0.00');
+        walletRetryAttemptRef.current = 0;
+        setWalletStatus('ok');
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Balance unavailable';
+        setWalletBalance(null);
+        setWalletXlm(null);
+        setWalletBalanceError(message);
+        setWalletStatus('error');
+
+        const delayMs = Math.min(
+          30000,
+          1000 * 2 ** Math.min(walletRetryAttemptRef.current, 5),
+        );
+        walletRetryAttemptRef.current += 1;
+        walletRetryTimeoutRef.current = setTimeout(() => {
+          walletRetryTimeoutRef.current = null;
+          void fetchWalletBalance({ showLoading: true });
+        }, delayMs);
+      }
+    },
+    [clearWalletRetry, setWalletStatus],
+  );
+
+  useEffect(() => clearWalletRetry, [clearWalletRetry]);
+
   const fetchAgentInfo = useCallback(async () => {
     setLoadingAgentInfo(true);
     try {
@@ -120,23 +185,24 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       setAgentPausedReason(
         typeof data.pausedReason === 'string' ? data.pausedReason : null,
       );
-      // Fetch wallet balance from server (Issue #134 - server-side cache)
       if (data.agentWallet) {
-        try {
-          const wres = await fetch(`${AGENT_URL}/agent/wallet`);
-          if (wres.ok) {
-            const wdata = await wres.json();
-            setWalletBalance(wdata.usdc || '0.00');
-            setWalletXlm(wdata.xlm || '0.00');
-          }
-        } catch {}
+        void fetchWalletBalance({
+          showLoading: walletStatusRef.current !== 'ok',
+        });
+      } else {
+        clearWalletRetry();
+        walletRetryAttemptRef.current = 0;
+        setWalletBalance(null);
+        setWalletXlm(null);
+        setWalletBalanceError(null);
+        setWalletStatus('ok');
       }
     } catch {
       setAgentConnected(false);
     } finally {
       setLoadingAgentInfo(false);
     }
-  }, []);
+  }, [clearWalletRetry, fetchWalletBalance, setWalletStatus]);
 
   const fetchSpending = useCallback(
     async (opts?: { forcePolicySync?: boolean }) => {
@@ -404,6 +470,8 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     agentPausedReason,
     walletBalance,
     walletXlm,
+    walletBalanceStatus,
+    walletBalanceError,
     liveMessage,
     setLiveMessage,
     policyForm,
@@ -417,6 +485,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     loadingTransactions,
     // actions
     fetchSpending,
+    fetchWalletBalance,
     runAgentTask,
     cancelAgentTask,
     updatePolicy,

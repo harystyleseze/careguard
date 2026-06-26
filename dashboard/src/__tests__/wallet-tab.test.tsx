@@ -20,6 +20,10 @@ function buildProps(overrides: Partial<WalletTabProps> = {}): WalletTabProps {
     } as any,
     walletBalance: "42.50",
     walletXlm: "10.20",
+    walletBalanceStatus: "ok",
+    walletBalanceError: null,
+    onRetryWalletBalance: vi.fn(),
+    loadingAgentInfo: false,
     ...overrides,
   };
 }
@@ -52,9 +56,49 @@ describe("WalletTab — balance display (Issue #49)", () => {
     expect(screen.getByText("$0")).toBeTruthy();
   });
 
-  it("Horizon error (both null) shows $0.00 placeholder for USDC", () => {
+  it("ok state with both balances null shows zero placeholders", () => {
     render(<WalletTab {...buildProps({ walletBalance: null, walletXlm: null })} />);
     expect(screen.getByText("$0.00")).toBeTruthy();
+    expect(screen.getByText("0.00")).toBeTruthy();
+  });
+
+  it("loading state shows a distinct balance loading UI", () => {
+    render(<WalletTab {...buildProps({ walletBalanceStatus: "loading" })} />);
+    expect(screen.getByText("Loading wallet balances")).toBeTruthy();
+    expect(screen.queryByText("$42.50")).toBeNull();
+  });
+
+  it("error state shows balance unavailable with retry", () => {
+    render(
+      <WalletTab
+        {...buildProps({
+          walletBalanceStatus: "error",
+          walletBalanceError: "Balance unavailable (503)",
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("alert").textContent).toContain("Balance unavailable");
+    expect(screen.getByText("Balance unavailable (503)")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Try again/i })).toBeTruthy();
+    expect(screen.queryByText("$42.50")).toBeNull();
+  });
+
+  it("Try again calls the wallet balance retry handler", async () => {
+    const user = userEvent.setup();
+    const onRetryWalletBalance = vi.fn();
+
+    render(
+      <WalletTab
+        {...buildProps({
+          walletBalanceStatus: "error",
+          onRetryWalletBalance,
+        })}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Try again/i }));
+    expect(onRetryWalletBalance).toHaveBeenCalledTimes(1);
   });
 });
 

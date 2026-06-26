@@ -133,6 +133,11 @@ export default function Dashboard() {
             agentInfo={state.agentInfo}
             walletBalance={state.walletBalance}
             walletXlm={state.walletXlm}
+            walletBalanceStatus={state.walletBalanceStatus}
+            walletBalanceError={state.walletBalanceError}
+            onRetryWalletBalance={() =>
+              state.fetchWalletBalance({ showLoading: true })
+            }
             loadingAgentInfo={state.loadingAgentInfo}
           />
         )}
