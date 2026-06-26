@@ -56,7 +56,10 @@ import {
   TRANSACTION_CATEGORY,
   isTransactionCategory,
   normalizeTransactionCategory,
+  parseSpendingPolicyInput,
   type SpendingPolicy,
+  type SpendingPolicyInput,
+  SpendingPolicyValidationError,
   type Transaction,
 } from '../shared/types.ts';
 import { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds } from './tz.ts';
@@ -415,14 +418,6 @@ type PaymentCategory =
   | typeof TRANSACTION_CATEGORY.MEDICATIONS
   | typeof TRANSACTION_CATEGORY.BILLS;
 
-type SpendingPolicyInput = Partial<SpendingPolicy> & {
-  dailyLimit: number;
-  monthlyLimit: number;
-  medicationMonthlyBudget: number;
-  billMonthlyBudget: number;
-  approvalThreshold: number;
-};
-
 const SPENDING_CACHE_TTL_MS = 5000;
 /** Compact the JSONL log into a snapshot every this many transactions (Issue #205). */
 export const SNAPSHOT_INTERVAL = 100;
@@ -677,20 +672,13 @@ function savePolicy(policy: SpendingPolicy, recipientId?: string) {
 }
 
 function assertValidSpendingPolicy(policy: SpendingPolicy) {
-  if (
-    policy.medicationMonthlyBudget + policy.billMonthlyBudget >
-    policy.monthlyLimit
-  ) {
-    throw new Error(
-      'Invalid spending policy: medicationMonthlyBudget + billMonthlyBudget cannot exceed monthlyLimit',
-    );
-  }
+  parseSpendingPolicyInput(policy);
 }
 
 let currentPolicy: SpendingPolicy = loadPolicy();
 
-export function setSpendingPolicy(policy: SpendingPolicyInput): void;
-export function setSpendingPolicy(recipientId: string, policy: SpendingPolicyInput): void;
+export function setSpendingPolicy(policy: SpendingPolicyInput): SpendingPolicy;
+export function setSpendingPolicy(recipientId: string, policy: SpendingPolicyInput): SpendingPolicy;
 export function setSpendingPolicy(
   policyOrRecipientId: SpendingPolicyInput | string,
   maybePolicy?: SpendingPolicyInput,
@@ -701,16 +689,23 @@ export function setSpendingPolicy(
   const policy =
     typeof policyOrRecipientId === 'string' ? maybePolicy : policyOrRecipientId;
   if (!policy) {
-    throw new Error('Spending policy required');
+    throw new SpendingPolicyValidationError([
+      {
+        field: 'policy',
+        code: 'required',
+        message: 'Spending policy required',
+      },
+    ]);
   }
+  const parsedPolicy = parseSpendingPolicyInput(policy);
   const normalizedPolicy: SpendingPolicy = {
     ...DEFAULT_POLICY,
-    ...policy,
+    ...parsedPolicy,
     notifications: {
       ...DEFAULT_POLICY.notifications,
-      ...(policy.notifications || {}),
-      email: policy.notifications?.email ?? false,
-      sms: policy.notifications?.sms ?? false,
+      ...(parsedPolicy.notifications || {}),
+      email: parsedPolicy.notifications?.email ?? false,
+      sms: parsedPolicy.notifications?.sms ?? false,
     },
   };
   assertValidSpendingPolicy(normalizedPolicy);
@@ -730,6 +725,7 @@ export function setSpendingPolicy(
     title: "Spending Policy Updated",
     description: `Daily: $${normalizedPolicy.dailyLimit}, Monthly: $${normalizedPolicy.monthlyLimit}, Meds: $${normalizedPolicy.medicationMonthlyBudget}, Bills: $${normalizedPolicy.billMonthlyBudget}, Approval: $${normalizedPolicy.approvalThreshold}`,
   });
+  return normalizedPolicy;
 }
 export function getSpendingTracker(): any {
   // Return the latest disk-backed policy rather than the potentially stale
