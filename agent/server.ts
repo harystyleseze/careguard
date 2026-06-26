@@ -58,6 +58,7 @@ import {
   fetchToolResult,
   serializeToolResultForPrompt,
 } from "./tool-result.ts";
+import { buildToolCallLogFields } from "./tool-log-redaction.ts";
 import { getPendingAdherences } from "../shared/adherence.ts";
 import { notify } from "../shared/notifications.ts";
 import { resolveStellarNetwork, validateSignerKeyForNetwork } from "../shared/stellar-network.ts";
@@ -407,7 +408,7 @@ async function runAgent(task: string) {
         fnArgs = {};
       }
 
-      logger.info({ tool: fnName, args: JSON.stringify(fnArgs).slice(0, 100) }, "tool call");
+      logger.info(buildToolCallLogFields(fnName, fnArgs), "tool call");
 
       let result: ToolResult;
       try {
