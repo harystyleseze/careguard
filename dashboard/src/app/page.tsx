@@ -79,6 +79,7 @@ export default function Dashboard() {
         agentConnected={state.agentConnected}
         agentPaused={state.agentPaused}
         walletBalance={state.walletBalance}
+        fetchHealthSources={state.fetchHealthSources}
         onTogglePause={state.togglePause}
       />
       <div className="max-w-7xl mx-auto px-4 py-6">
