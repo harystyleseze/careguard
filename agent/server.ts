@@ -58,6 +58,7 @@ import {
   fetchToolResult,
   serializeToolResultForPrompt,
 } from "./tool-result.ts";
+import { buildAgentTaskLogFields } from "./task-log.ts";
 import { getPendingAdherences } from "../shared/adherence.ts";
 import { notify } from "../shared/notifications.ts";
 import { resolveStellarNetwork, validateSignerKeyForNetwork } from "../shared/stellar-network.ts";
@@ -609,7 +610,9 @@ app.post("/agent/run", async (req, res) => {
   if (agentPaused) { res.status(409).json({ error: "Agent is paused. Resume from the dashboard to continue.", paused: true }); return; }
 
   const task = validation.task!;
-  logger.info({ task, suspicious: validation.suspicious }, "agent task received");
+  const taskLog = buildAgentTaskLogFields(task, validation.suspicious);
+  logger.info(taskLog.info, "agent task received");
+  logger.debug(taskLog.debug, "agent task received");
 
   try {
     const result = await agentQueue.enqueue(() => runAgent(task));
