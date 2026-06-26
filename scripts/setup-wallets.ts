@@ -17,6 +17,7 @@ import { logger } from "../shared/logger.ts";
 const HORIZON_URL = "https://horizon-testnet.stellar.org";
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
 const USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+export const FRIENDBOT_RETRY_BACKOFF_MS = [1000, 2000, 4000, 8000, 16000] as const;
 export const DEV_SEED_FILE = ".dev-seed";
 export const WALLET_NAMES = [
   "AGENT",
@@ -34,6 +35,13 @@ export interface WalletInfo {
   name: string;
   publicKey: string;
   secretKey: string;
+}
+
+export interface FundAccountOptions {
+  fetchFn?: typeof fetch;
+  server?: Pick<Horizon.Server, "loadAccount">;
+  sleep?: (ms: number) => Promise<void>;
+  backoffMs?: readonly number[];
 }
 
 function normalizeSeedMaterial(seedMaterial: string) {
@@ -162,15 +170,65 @@ export async function resolveSetupSeed(options: {
   return { seed, source: "generated", path: seedPath };
 }
 
-async function fundAccount(publicKey: string): Promise<void> {
-  const response = await fetch(`${FRIENDBOT_URL}?addr=${publicKey}`);
-  if (!response.ok) {
-    const text = await response.text();
-    // Friendbot returns an error if already funded, which is fine
-    if (!text.includes("createAccountAlreadyExist")) {
-      throw new Error(`Friendbot failed for ${publicKey}: ${text}`);
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function hasNativeBalance(
+  publicKey: string,
+  server: Pick<Horizon.Server, "loadAccount">,
+): Promise<boolean> {
+  const account = await server.loadAccount(publicKey);
+  return account.balances.some(
+    (balance: any) =>
+      balance.asset_type === "native" &&
+      Number.parseFloat(balance.balance ?? "0") > 0,
+  );
+}
+
+export async function fundAccount(
+  publicKey: string,
+  options: FundAccountOptions = {},
+): Promise<void> {
+  const fetchFn = options.fetchFn || fetch;
+  const server = options.server || new Horizon.Server(HORIZON_URL);
+  const sleepFn = options.sleep || sleep;
+  const backoffMs = options.backoffMs || FRIENDBOT_RETRY_BACKOFF_MS;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= backoffMs.length; attempt++) {
+    try {
+      const response = await fetchFn(`${FRIENDBOT_URL}?addr=${publicKey}`);
+      if (!response.ok) {
+        const text = await response.text();
+        // Friendbot returns an error if already funded, which is fine as long
+        // as Horizon confirms the account has native XLM before we continue.
+        if (!text.includes("createAccountAlreadyExist")) {
+          throw new Error(`Friendbot failed for ${publicKey}: ${text}`);
+        }
+      }
+
+      if (await hasNativeBalance(publicKey, server)) {
+        return;
+      }
+
+      throw new Error(`Friendbot did not fund ${publicKey}: native XLM balance missing`);
+    } catch (err) {
+      lastError = err;
+      const delay = backoffMs[attempt];
+      if (delay === undefined) break;
+      logger.warn(
+        { wallet: publicKey.slice(0, 8), attempt: attempt + 1, retryInMs: delay },
+        "Friendbot funding attempt failed; retrying",
+      );
+      await sleepFn(delay);
     }
   }
+
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(
+    `Friendbot failed for ${publicKey} after ${backoffMs.length + 1} attempts: ${detail}`,
+  );
 }
 
 async function addUsdcTrustline(keypair: Keypair): Promise<void> {
