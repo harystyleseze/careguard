@@ -32,7 +32,7 @@ The goal is to override the LLM's SYSTEM_PROMPT and trigger an unauthorized paym
 
 - **Indirect prompt injection via fetched data**: A malicious hospital bill could contain injected LLM instructions in line-item descriptions. The `auditBill()` tool fetches external content that becomes part of the LLM context. This is mitigated by the spending policy (payments still require policy approval) but not fully prevented at the input layer.
 - **Blocklist bypass**: The blocklist in `task-validation.ts` operates on lowercased substring matching. It catches common jailbreak phrases but can be defeated by novel phrasings. The spending policy is the real guard.
-- **Caregiver session hijacking**: If the caregiver dashboard is compromised, an attacker can submit any task. Mitigation: CORS allowlist, HTTPS/HSTS, session token security on the dashboard side.
+- **Caregiver session hijacking**: If the caregiver dashboard is compromised, an attacker can submit any task. Mitigation: CORS allowlist, HTTPS/HSTS, session token security on the dashboard side. See `docs/security/cors.md` for the CORS origin policy.
 
 ---
 
@@ -49,6 +49,8 @@ Helmet is mounted on all Express apps via `shared/security-middleware.ts`.
 | `Cross-Origin-Resource-Policy` | `cross-origin` | Allows dashboard to call API cross-origin |
 
 See `docs/runbooks/csp-changes.md` for how to update the CSP when adding integrations.
+
+The API CORS allowlist is configured separately from CSP. See `docs/security/cors.md` for dashboard origin configuration and verification.
 
 ---
 
