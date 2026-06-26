@@ -27,6 +27,12 @@ import { logger } from "../../shared/logger.ts";
 import { requestContextMiddleware } from "../../shared/request-context.ts";
 import { requestLoggerMiddleware } from "../../shared/request-logger.ts";
 import { sanitizeUserString } from "../../shared/sanitize.ts";
+import {
+  getBillAuditChargeStatus,
+  getBillAuditSuggestedAmount,
+  readBillAuditThresholds,
+  type BillAuditThresholds,
+} from "../../shared/bill-audit-thresholds.ts";
 
 const PORT = parseInt(process.env.BILL_AUDIT_API_PORT || "3002");
 const PAY_TO = process.env.BILL_PROVIDER_PUBLIC_KEY;
@@ -71,26 +77,29 @@ process.on('SIGHUP', () => {
 });
 
 // Audit threshold configuration
-interface AuditThresholdConfig {
-  default: number;
+interface AuditThresholdOverrides {
   byCpt: Record<string, number>;
 }
 
-let auditThresholds: AuditThresholdConfig = { default: 1.5, byCpt: {} };
+let auditThresholds: BillAuditThresholds = readBillAuditThresholds();
+let auditThresholdOverrides: AuditThresholdOverrides = { byCpt: {} };
 
 function loadAuditThresholds() {
+  auditThresholds = readBillAuditThresholds();
+
   try {
     const thresholdsPath = new URL('./audit_thresholds.json', import.meta.url).pathname;
-    auditThresholds = JSON.parse(readFileSync(thresholdsPath, 'utf-8')) as AuditThresholdConfig;
-    logger.info({ default: auditThresholds.default, cptCount: Object.keys(auditThresholds.byCpt).length }, 'Loaded audit thresholds configuration');
+    auditThresholdOverrides = JSON.parse(readFileSync(thresholdsPath, 'utf-8')) as AuditThresholdOverrides;
+    logger.info({
+      overchargeMultiplier: auditThresholds.overchargeMultiplier,
+      suggestedMultiplier: auditThresholds.suggestedMultiplier,
+      upcodedMultiplier: auditThresholds.upcodedMultiplier,
+      cptCount: Object.keys(auditThresholdOverrides.byCpt ?? {}).length,
+    }, 'Loaded audit thresholds configuration');
   } catch (err: any) {
-    logger.error({ err: err.message }, 'Failed to load audit_thresholds.json, using default threshold of 1.5');
-    auditThresholds = { default: 1.5, byCpt: {} };
+    logger.error({ err: err.message }, 'Failed to load audit_thresholds.json, using env/default audit thresholds');
+    auditThresholdOverrides = { byCpt: {} };
   }
-}
-
-function getAuditThreshold(cptCode: string): number {
-  return auditThresholds.byCpt[cptCode] ?? auditThresholds.default;
 }
 
 // Load thresholds at boot
@@ -148,7 +157,6 @@ function auditBill(lineItems: BillItem[]) {
     totalCharged += item.chargedAmount;
     const fairRate = FAIR_MARKET_RATES[item.cptCode];
     const fairAmount = fairRate !== undefined ? fairRate.fairRate * item.quantity : null;
-    const threshold = getAuditThreshold(item.cptCode);
 
     seenCodes[item.cptCode] = (seenCodes[item.cptCode] || 0) + 1;
     if (seenCodes[item.cptCode] > 1 && !duplicateAllowlist.has(item.cptCode)) {
@@ -157,15 +165,31 @@ function auditBill(lineItems: BillItem[]) {
       continue;
     }
 
-    if (fairAmount !== null && item.chargedAmount > fairAmount * threshold) {
+    const auditStatus = getBillAuditChargeStatus({
+      cptCode: item.cptCode,
+      chargedAmount: item.chargedAmount,
+      fairAmount,
+      thresholds: auditThresholds,
+      overchargeMultiplierByCpt: auditThresholdOverrides.byCpt,
+    });
+    if (auditStatus !== "valid") {
       errorCount++;
-      const suggestedAmount = +(fairAmount * 1.2).toFixed(2);
+      const suggestedAmount = getBillAuditSuggestedAmount({
+        fairAmount,
+        chargedAmount: item.chargedAmount,
+        thresholds: auditThresholds,
+        capAtCharged: false,
+      });
       totalCorrect += suggestedAmount;
-      results.push({ description: item.description, cptCode: item.cptCode, quantity: item.quantity, chargedAmount: item.chargedAmount, fairMarketRate: fairAmount, status: item.chargedAmount > fairAmount * 3 ? "upcoded" : "overcharged", errorDescription: `Charged $${item.chargedAmount} — CMS fair market rate is $${fairAmount}. Overcharged by $${(item.chargedAmount - fairAmount).toFixed(2)}.`, suggestedAmount });
+      results.push({ description: item.description, cptCode: item.cptCode, quantity: item.quantity, chargedAmount: item.chargedAmount, fairMarketRate: fairAmount, status: auditStatus, errorDescription: `Charged $${item.chargedAmount} — CMS fair market rate is $${fairAmount}. Overcharged by $${(item.chargedAmount - fairAmount!).toFixed(2)}.`, suggestedAmount });
       continue;
     }
 
-    const suggested = fairAmount !== null ? Math.min(item.chargedAmount, +(fairAmount * 1.2).toFixed(2)) : item.chargedAmount;
+    const suggested = getBillAuditSuggestedAmount({
+      fairAmount,
+      chargedAmount: item.chargedAmount,
+      thresholds: auditThresholds,
+    });
     totalCorrect += suggested;
     results.push({ description: item.description, cptCode: item.cptCode, quantity: item.quantity, chargedAmount: item.chargedAmount, fairMarketRate: fairAmount, status: "valid", errorDescription: null, suggestedAmount: suggested });
   }

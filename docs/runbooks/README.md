@@ -13,6 +13,7 @@ Operational runbooks for on-call engineers. Each runbook follows the template:
 | [wallet-low.md](wallet-low.md) | Agent auto-paused due to low USDC or XLM balance — how to fund and resume |
 | [csp-changes.md](csp-changes.md) | Content-Security-Policy changes — how to update without breaking the dashboard |
 | [oz-facilitator-outage.md](oz-facilitator-outage.md) | OZ facilitator unreachable — recognise, communicate, fail-open vs fail-closed decision |
+| [tune-audit-thresholds.md](tune-audit-thresholds.md) | Bill-audit threshold tuning for overcharge, suggested amount, and upcoded classification |
 | [llm-rate-limit.md](llm-rate-limit.md) | Groq 429 / LLM provider rate-limit hit — behaviour, provider switching mid-incident |
 | [dashboard-disconnected.md](dashboard-disconnected.md) | Dashboard shows "Disconnected" chip — diagnosing API connectivity issues |
 

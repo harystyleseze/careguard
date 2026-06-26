@@ -31,6 +31,11 @@ import {
   validateBillAuditRequest,
 } from "./shared/bill-audit.ts";
 import { sanitizeUserString } from "./shared/sanitize.ts";
+import {
+  getBillAuditChargeStatus,
+  getBillAuditSuggestedAmount,
+  readBillAuditThresholds,
+} from "./shared/bill-audit-thresholds.ts";
 
 // Sentry (gated by SENTRY_DSN)
 import { initSentry } from "./shared/sentry.ts";
@@ -538,6 +543,8 @@ const FAIR_MARKET_RATES: Record<
   "97110": { description: "Physical therapy", fairRate: 55 },
 };
 
+const BILL_AUDIT_THRESHOLDS = readBillAuditThresholds();
+
 function runBillAudit(lineItems: any[]) {
   const results: any[] = [];
   let totalCharged = 0,
@@ -563,22 +570,35 @@ function runBillAudit(lineItems: any[]) {
       });
       continue;
     }
-    if (fairAmt !== null && item.chargedAmount > fairAmt * 1.5) {
+    const auditStatus = getBillAuditChargeStatus({
+      cptCode: item.cptCode,
+      chargedAmount: item.chargedAmount,
+      fairAmount: fairAmt,
+      thresholds: BILL_AUDIT_THRESHOLDS,
+    });
+    if (auditStatus !== "valid") {
       errorCount++;
-      const suggested = +(fairAmt * 1.2).toFixed(2);
+      const suggested = getBillAuditSuggestedAmount({
+        fairAmount: fairAmt,
+        chargedAmount: item.chargedAmount,
+        thresholds: BILL_AUDIT_THRESHOLDS,
+        capAtCharged: false,
+      });
       totalCorrect += suggested;
       results.push({
         ...item,
         fairMarketRate: fairAmt,
-        status: item.chargedAmount > fairAmt * 3 ? "upcoded" : "overcharged",
-        errorDescription: `Charged $${item.chargedAmount} — fair rate $${fairAmt}. Overcharged $${(item.chargedAmount - fairAmt).toFixed(2)}`,
+        status: auditStatus,
+        errorDescription: `Charged $${item.chargedAmount} — fair rate $${fairAmt}. Overcharged $${(item.chargedAmount - fairAmt!).toFixed(2)}`,
         suggestedAmount: suggested,
       });
       continue;
     }
-    const suggested = fairAmt !== null
-      ? Math.min(item.chargedAmount, +(fairAmt * 1.2).toFixed(2))
-      : item.chargedAmount;
+    const suggested = getBillAuditSuggestedAmount({
+      fairAmount: fairAmt,
+      chargedAmount: item.chargedAmount,
+      thresholds: BILL_AUDIT_THRESHOLDS,
+    });
     totalCorrect += suggested;
     results.push({
       ...item,
