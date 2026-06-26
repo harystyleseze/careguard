@@ -1,5 +1,6 @@
 /**
  * Tests for issue #284 — STELLAR_TIMEBOUNDS_SECONDS env var and tx_too_late retry.
+ * Also covers issue #282 — rebuilding payBill transactions after tx_bad_seq.
  */
 
 const { mockSubmit, mockSetTimeout, mockBuild, mockLoadAccount } = vi.hoisted(() => {
@@ -68,6 +69,7 @@ vi.mock("mppx/client", () => ({
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { payBill } from "../tools.ts";
+import { registry } from "../../shared/metrics.ts";
 
 describe("#284 Stellar timebounds", () => {
   beforeEach(() => {
@@ -92,7 +94,36 @@ describe("#284 Stellar timebounds", () => {
     expect(mockLoadAccount).toHaveBeenCalledTimes(2);
     expect(mockSubmit).toHaveBeenCalledTimes(2);
     expect(result.success).toBe(true);
-    expect(result.transaction.stellarTxHash).toBe("RETRYHASH");
+    expect(result.transaction?.stellarTxHash).toBe("RETRYHASH");
+  });
+
+  it("reloads account and retries on tx_bad_seq", async () => {
+    mockLoadAccount
+      .mockResolvedValueOnce({ id: "GPUB123", sequence: "1", balances: [] })
+      .mockResolvedValueOnce({ id: "GPUB123", sequence: "2", balances: [] });
+    mockSubmit
+      .mockRejectedValueOnce(new Error("tx_bad_seq"))
+      .mockResolvedValueOnce({ hash: "SEQRETRYHASH" });
+
+    const result = await payBill("provider-1", "Hospital", "ER Visit", 5, true);
+
+    expect(mockLoadAccount).toHaveBeenCalledTimes(2);
+    expect(mockBuild).toHaveBeenCalledTimes(2);
+    expect(mockSubmit).toHaveBeenCalledTimes(2);
+    expect(result.success).toBe(true);
+    expect(result.transaction?.stellarTxHash).toBe("SEQRETRYHASH");
+    await expect(registry.metrics()).resolves.toMatch(/paybill_seq_retry_total\s+[1-9]/);
+  });
+
+  it("surfaces tx_bad_seq after retries are exhausted", async () => {
+    mockSubmit.mockRejectedValue(new Error("tx_bad_seq"));
+
+    const result = await payBill("provider-1", "Hospital", "ER Visit", 5, true);
+
+    expect(mockLoadAccount).toHaveBeenCalledTimes(3);
+    expect(mockSubmit).toHaveBeenCalledTimes(3);
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/tx_bad_seq/);
   });
 
   it("gives up after retry if tx_too_late persists", async () => {

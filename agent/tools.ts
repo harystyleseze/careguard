@@ -74,6 +74,7 @@ import {
   x402SettlementsTotal,
   paymentsUsdcTotal,
   stellarTxSubmittedTotal,
+  paybillSeqRetryTotal,
   policyBlocksTotal,
   agentSpendingUsd,
   agentTransactionsTotal,
@@ -153,7 +154,8 @@ async function submitTransactionWithRetry(
   tx: any,
   maxRetries = 2,
   timeoutMs = 35000,
-  rebuildTx?: () => Promise<any>
+  rebuildTx?: () => Promise<any>,
+  onRebuildRetry?: (reason: string, attempt: number) => void,
 ): Promise<any> {
   let lastError: any;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -164,9 +166,16 @@ async function submitTransactionWithRetry(
       lastError = err;
       if (err?.response?.status) throw err;
       const msg = err?.message ?? "";
-      // tx_too_late: timebounds expired — retry once with fresh timebounds if rebuild fn provided
-      if (msg.includes("tx_too_late") && rebuildTx && attempt < maxRetries) {
-        logger.warn({ attempt: attempt + 1 }, "[Stellar] tx_too_late, rebuilding with fresh timebounds");
+      const rebuildReason = msg.includes("tx_bad_seq")
+        ? "tx_bad_seq"
+        : msg.includes("tx_too_late")
+          ? "tx_too_late"
+          : undefined;
+      // tx_bad_seq: sequence stale; tx_too_late: timebounds expired.
+      // Rebuild with a freshly loaded account/timebounds when the caller can do so.
+      if (rebuildReason && rebuildTx && attempt < maxRetries) {
+        logger.warn({ attempt: attempt + 1 }, `[Stellar] ${rebuildReason}, rebuilding transaction`);
+        onRebuildRetry?.(rebuildReason, attempt + 1);
         tx = await rebuildTx();
         continue;
       }
@@ -1693,7 +1702,16 @@ export async function payBill(
     let stellarTx = await buildStellarTx();
     console.log(`  [Stellar] Signer verified: ${agentKeypair.publicKey().slice(0, 8)}...`);
 
-    const result = await submitTransactionWithRetry(horizonServer, stellarTx, 2, 35000, buildStellarTx);
+    const result = await submitTransactionWithRetry(
+      horizonServer,
+      stellarTx,
+      2,
+      35000,
+      buildStellarTx,
+      (reason) => {
+        if (reason === "tx_bad_seq") paybillSeqRetryTotal.inc();
+      },
+    );
 
     stellarTxHash = result.hash;
     logger.info({ txHash: stellarTxHash, fee: result.fee }, '[Stellar] TX confirmed');

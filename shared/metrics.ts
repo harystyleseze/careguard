@@ -50,6 +50,12 @@ export const stellarTxSubmittedTotal = new Counter({
   registers: [registry],
 });
 
+export const paybillSeqRetryTotal = new Counter({
+  name: "paybill_seq_retry_total",
+  help: "Total payBill retries after Horizon tx_bad_seq responses",
+  registers: [registry],
+});
+
 export const policyBlocksTotal = new Counter({
   name: "policy_blocks_total",
   help: "Total spending policy blocks",
