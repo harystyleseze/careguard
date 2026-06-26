@@ -1,5 +1,7 @@
 // CareGuard Shared Types
 
+import { z } from 'zod';
+
 /**
  * Drug Interaction Severity Convention
  * 
@@ -81,6 +83,125 @@ export interface SpendingPolicy {
     emailAddress?: string;
     phoneNumber?: string;
   };
+}
+
+export const SPENDING_POLICY_MAX_VALUE = 50_000;
+
+const moneyPolicyField = (name: string) =>
+  z
+    .number({
+      required_error: `${name} is required`,
+      invalid_type_error: `${name} must be a finite number`,
+    })
+    .finite(`${name} must be a finite number`)
+    .positive(`${name} must be greater than 0`)
+    .max(SPENDING_POLICY_MAX_VALUE, `${name} cannot exceed ${SPENDING_POLICY_MAX_VALUE}`);
+
+export const SpendingPolicyInputSchema = z
+  .object({
+    dailyLimit: moneyPolicyField('dailyLimit'),
+    monthlyLimit: moneyPolicyField('monthlyLimit'),
+    medicationMonthlyBudget: moneyPolicyField('medicationMonthlyBudget'),
+    billMonthlyBudget: moneyPolicyField('billMonthlyBudget'),
+    approvalThreshold: moneyPolicyField('approvalThreshold'),
+    holdTimeSeconds: z
+      .number({
+        invalid_type_error: 'holdTimeSeconds must be a finite number',
+      })
+      .finite('holdTimeSeconds must be a finite number')
+      .nonnegative('holdTimeSeconds cannot be negative')
+      .max(
+        SPENDING_POLICY_MAX_VALUE,
+        `holdTimeSeconds cannot exceed ${SPENDING_POLICY_MAX_VALUE}`,
+      )
+      .optional()
+      .default(0),
+    timezone: z.string().min(1, 'timezone cannot be empty').optional(),
+    toolFees: z
+      .record(
+        z
+          .number({ invalid_type_error: 'tool fee must be a finite number' })
+          .finite('tool fee must be a finite number')
+          .nonnegative('tool fee cannot be negative')
+          .max(SPENDING_POLICY_MAX_VALUE, `tool fee cannot exceed ${SPENDING_POLICY_MAX_VALUE}`),
+      )
+      .optional(),
+    notifications: z
+      .object({
+        email: z.boolean().optional().default(false),
+        sms: z.boolean().optional().default(false),
+        emailAddress: z.string().min(1, 'emailAddress cannot be empty').optional(),
+        phoneNumber: z.string().min(1, 'phoneNumber cannot be empty').optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((policy, ctx) => {
+    if (policy.dailyLimit > policy.monthlyLimit) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['dailyLimit'],
+        message: 'dailyLimit cannot exceed monthlyLimit',
+      });
+    }
+
+    if (policy.approvalThreshold > policy.dailyLimit) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['approvalThreshold'],
+        message: 'approvalThreshold cannot exceed dailyLimit',
+      });
+    }
+
+    if (policy.medicationMonthlyBudget + policy.billMonthlyBudget > policy.monthlyLimit) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['medicationMonthlyBudget'],
+        message: 'medicationMonthlyBudget + billMonthlyBudget cannot exceed monthlyLimit',
+      });
+    }
+  });
+
+export type SpendingPolicyInput = z.input<typeof SpendingPolicyInputSchema>;
+
+export type SpendingPolicyValidationIssue = {
+  field: string;
+  code: string;
+  message: string;
+};
+
+export function formatSpendingPolicyValidationIssues(
+  error: z.ZodError,
+): SpendingPolicyValidationIssue[] {
+  return error.issues.map((issue) => ({
+    field: issue.path.length > 0 ? issue.path.join('.') : 'policy',
+    code: issue.code,
+    message: issue.message,
+  }));
+}
+
+export class SpendingPolicyValidationError extends Error {
+  readonly statusCode = 400;
+  readonly code = 'INVALID_SPENDING_POLICY';
+  readonly issues: SpendingPolicyValidationIssue[];
+
+  constructor(issues: SpendingPolicyValidationIssue[]) {
+    const reason = issues.map((issue) => issue.message).join('; ');
+    super(reason ? `Invalid spending policy: ${reason}` : 'Invalid spending policy');
+    this.name = 'SpendingPolicyValidationError';
+    this.issues = issues;
+  }
+}
+
+export function parseSpendingPolicyInput(input: unknown): SpendingPolicy {
+  const result = SpendingPolicyInputSchema.safeParse(input);
+  if (!result.success) {
+    throw new SpendingPolicyValidationError(
+      formatSpendingPolicyValidationIssues(result.error),
+    );
+  }
+  return result.data as SpendingPolicy;
 }
 
 // A confirmed Stellar transaction hash is always 64 lowercase/uppercase hex chars.

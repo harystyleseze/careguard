@@ -11,7 +11,7 @@
 import "dotenv/config";
 import { createHash } from "crypto";
 import { existsSync, mkdirSync } from "fs";
-import express from "express";
+import express, { type Response } from "express";
 import OpenAI from "openai";
 import { Keypair, Horizon } from "@stellar/stellar-sdk";
 import { createCorsMiddleware } from "../shared/cors.ts";
@@ -61,6 +61,13 @@ import {
 import { getPendingAdherences } from "../shared/adherence.ts";
 import { notify } from "../shared/notifications.ts";
 import { resolveStellarNetwork, validateSignerKeyForNetwork } from "../shared/stellar-network.ts";
+import {
+  SpendingPolicyInputSchema,
+  SpendingPolicyValidationError,
+  formatSpendingPolicyValidationIssues,
+  type SpendingPolicy,
+  type SpendingPolicyValidationIssue,
+} from "../shared/types.ts";
 
 const PORT = parseInt(process.env.AGENT_PORT || "3004");
 
@@ -637,41 +644,41 @@ app.get("/agent/transactions", (req, res) => {
   setCurrentRecipient(recipientId);
   res.json(getSpendingTracker());
 });
-function validatePolicyPayload(body: any): { ok: true; policy: any } | { ok: false; errors: string[] } {
-  const errors: string[] = [];
-  if (!body || typeof body !== "object") return { ok: false, errors: ["body must be a JSON object"] };
-  const fields = ["dailyLimit", "monthlyLimit", "medicationMonthlyBudget", "billMonthlyBudget", "approvalThreshold"] as const;
-  for (const f of fields) {
-    const v = body[f];
-    if (typeof v !== "number" || !Number.isFinite(v)) errors.push(`${f} must be a finite number`);
-    else if (v <= 0) errors.push(`${f} must be greater than 0`);
+function validatePolicyPayload(
+  body: unknown,
+): { ok: true; policy: SpendingPolicy } | { ok: false; errors: SpendingPolicyValidationIssue[] } {
+  const parsed = SpendingPolicyInputSchema.safeParse(body);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      errors: formatSpendingPolicyValidationIssues(parsed.error),
+    };
   }
-  if (typeof body.dailyLimit === "number" && typeof body.monthlyLimit === "number" && body.dailyLimit > body.monthlyLimit) {
-    errors.push("dailyLimit cannot exceed monthlyLimit");
-  }
-  if (typeof body.approvalThreshold === "number" && typeof body.dailyLimit === "number" && body.approvalThreshold > body.dailyLimit) {
-    errors.push("approvalThreshold cannot exceed dailyLimit");
-  }
-  if (
-    typeof body.medicationMonthlyBudget === "number" &&
-    typeof body.billMonthlyBudget === "number" &&
-    typeof body.monthlyLimit === "number" &&
-    body.medicationMonthlyBudget + body.billMonthlyBudget > body.monthlyLimit
-  ) {
-    errors.push("medicationMonthlyBudget + billMonthlyBudget cannot exceed monthlyLimit");
-  }
-  if (errors.length > 0) return { ok: false, errors };
-  const policy = Object.fromEntries(fields.map((f) => [f, body[f]]));
-  return { ok: true, policy };
+  return { ok: true, policy: parsed.data as SpendingPolicy };
+}
+
+function invalidPolicyResponse(res: Response, details: SpendingPolicyValidationIssue[]) {
+  return res.status(400).json({
+    error: "Invalid policy",
+    code: "INVALID_SPENDING_POLICY",
+    details,
+  });
 }
 
 app.post("/agent/policy", (req, res) => {
   const result = validatePolicyPayload(req.body);
-  if (!result.ok) return res.status(400).json({ error: "Invalid policy", details: result.errors });
+  if (!result.ok) return invalidPolicyResponse(res, result.errors);
   const recipientId = (req.query.recipient_id as string) || "rosa";
   setCurrentRecipient(recipientId);
-  setSpendingPolicy(result.policy);
-  res.json({ success: true, policy: result.policy, recipientId });
+  try {
+    const policy = setSpendingPolicy(result.policy);
+    res.json({ success: true, policy: policy ?? result.policy, recipientId });
+  } catch (err) {
+    if (err instanceof SpendingPolicyValidationError) {
+      return invalidPolicyResponse(res, err.issues);
+    }
+    throw err;
+  }
 });
 app.post("/agent/reset", (req, res) => {
   const recipientId = (req.query.recipient_id as string) || "rosa";

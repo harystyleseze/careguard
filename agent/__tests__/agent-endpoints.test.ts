@@ -57,6 +57,35 @@ vi.mock("../../shared/x402-middleware.ts", () => ({
   DEFAULT_FACILITATOR_URL: "https://channels.openzeppelin.com/x402/testnet",
 }));
 
+vi.mock("../../shared/audit-log.ts", () => ({
+  appendAuditEntry: vi.fn(),
+  auditRouter: vi.fn((_req, _res, next) => next()),
+}));
+
+vi.mock("../../shared/rate-limit.ts", () => {
+  const passThrough = vi.fn((_req, _res, next) => next());
+  return {
+    rateLimiters: {
+      agent: passThrough,
+      health: passThrough,
+      default: passThrough,
+    },
+  };
+});
+
+vi.mock("fs", async () => {
+  const actual = await vi.importActual<typeof import("fs")>("fs");
+  return {
+    ...actual,
+    existsSync: vi.fn((filePath: any) => {
+      const normalized = String(filePath).replace(/\\/g, "/");
+      if (normalized.endsWith("/careguard/data")) return true;
+      return actual.existsSync(filePath);
+    }),
+    mkdirSync: vi.fn(),
+  };
+});
+
 vi.mock("@stellar/stellar-sdk", () => ({
   Keypair: { fromSecret: vi.fn(() => ({ publicKey: () => "GMOCKAGENTWALLETPUBKEY123456" })) },
   Horizon: { Server: vi.fn(() => ({ loadAccount: vi.fn() })) },
@@ -78,6 +107,7 @@ process.env.MPP_SECRET_KEY = "test-mpp-secret-key";
 process.env.CAREGIVER_TOKEN = "test-caregiver-token";
 
 const { app } = await import("../../server.ts");
+const tools = await import("../tools.ts");
 const auth = (req: any) => req.set("Authorization", "Bearer test-caregiver-token");
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -205,41 +235,111 @@ describe("POST /agent/policy (Issue #42)", () => {
     approvalThreshold: 80,
   };
 
+  beforeEach(() => {
+    vi.mocked(tools.setSpendingPolicy).mockClear();
+  });
+
   it("valid body → 200 with success: true", async () => {
     const res = await auth(request(app).post("/agent/policy")).send(VALID_POLICY);
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+    expect(tools.setSpendingPolicy).toHaveBeenCalledWith({
+      ...VALID_POLICY,
+      holdTimeSeconds: 0,
+    });
   });
 
   it("invalid body (missing fields) → 400", async () => {
     const res = await auth(request(app).post("/agent/policy")).send({ dailyLimit: 100 });
     expect(res.status).toBe(400);
+    expect(res.body.details).toContainEqual(
+      expect.objectContaining({ field: "monthlyLimit" }),
+    );
+    expect(tools.setSpendingPolicy).not.toHaveBeenCalled();
   });
 
   it("negative value → 400", async () => {
     const res = await auth(request(app).post("/agent/policy"))
       .send({ ...VALID_POLICY, dailyLimit: -10 });
     expect(res.status).toBe(400);
+    expect(res.body.details).toContainEqual(
+      expect.objectContaining({
+        field: "dailyLimit",
+        message: "dailyLimit must be greater than 0",
+      }),
+    );
+    expect(tools.setSpendingPolicy).not.toHaveBeenCalled();
   });
 
   it("zero value → 400", async () => {
     const res = await auth(request(app).post("/agent/policy"))
       .send({ ...VALID_POLICY, monthlyLimit: 0 });
     expect(res.status).toBe(400);
+    expect(res.body.code).toBe("INVALID_SPENDING_POLICY");
+    expect(tools.setSpendingPolicy).not.toHaveBeenCalled();
+  });
+
+  it("over-sane-upper-bound value → 400", async () => {
+    const res = await auth(request(app).post("/agent/policy"))
+      .send({ ...VALID_POLICY, monthlyLimit: 50_001 });
+    expect(res.status).toBe(400);
+    expect(res.body.details).toContainEqual(
+      expect.objectContaining({
+        field: "monthlyLimit",
+        message: "monthlyLimit cannot exceed 50000",
+      }),
+    );
+    expect(tools.setSpendingPolicy).not.toHaveBeenCalled();
+  });
+
+  it("dailyLimit greater than monthlyLimit → 400", async () => {
+    const res = await auth(request(app).post("/agent/policy"))
+      .send({ ...VALID_POLICY, dailyLimit: 901 });
+    expect(res.status).toBe(400);
+    expect(res.body.details).toContainEqual(
+      expect.objectContaining({
+        field: "dailyLimit",
+        message: "dailyLimit cannot exceed monthlyLimit",
+      }),
+    );
+    expect(tools.setSpendingPolicy).not.toHaveBeenCalled();
+  });
+
+  it("approvalThreshold greater than dailyLimit → 400", async () => {
+    const res = await auth(request(app).post("/agent/policy"))
+      .send({ ...VALID_POLICY, approvalThreshold: 151 });
+    expect(res.status).toBe(400);
+    expect(res.body.details).toContainEqual(
+      expect.objectContaining({
+        field: "approvalThreshold",
+        message: "approvalThreshold cannot exceed dailyLimit",
+      }),
+    );
+    expect(tools.setSpendingPolicy).not.toHaveBeenCalled();
   });
 
   it("category budgets exceeding monthlyLimit → 400", async () => {
     const res = await auth(request(app).post("/agent/policy"))
       .send({ ...VALID_POLICY, monthlyLimit: 600 });
     expect(res.status).toBe(400);
-    expect(res.body.details.join(" ")).toContain("monthlyLimit");
+    expect(res.body.details).toContainEqual(
+      expect.objectContaining({
+        field: "medicationMonthlyBudget",
+        message: "medicationMonthlyBudget + billMonthlyBudget cannot exceed monthlyLimit",
+      }),
+    );
+    expect(tools.setSpendingPolicy).not.toHaveBeenCalled();
   });
 
   it("non-object body → 400", async () => {
     const res = await auth(request(app).post("/agent/policy"))
       .set("Content-Type", "application/json")
-      .send('"just a string"');
+      .send([]);
     expect(res.status).toBe(400);
+    expect(res.body.details).toContainEqual(
+      expect.objectContaining({ field: "policy" }),
+    );
+    expect(tools.setSpendingPolicy).not.toHaveBeenCalled();
   });
 });
 

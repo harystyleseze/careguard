@@ -10,7 +10,7 @@
 
 import "dotenv/config";
 import { createHash } from "crypto";
-import express from "express";
+import express, { type Response } from "express";
 import { Keypair, Horizon } from "@stellar/stellar-sdk";
 import OpenAI from "openai";
 import { Mppx, Store } from "mppx/server";
@@ -31,6 +31,13 @@ import {
   validateBillAuditRequest,
 } from "./shared/bill-audit.ts";
 import { sanitizeUserString } from "./shared/sanitize.ts";
+import {
+  SpendingPolicyInputSchema,
+  SpendingPolicyValidationError,
+  formatSpendingPolicyValidationIssues,
+  type SpendingPolicy,
+  type SpendingPolicyValidationIssue,
+} from "./shared/types.ts";
 
 // Sentry (gated by SENTRY_DSN)
 import { initSentry } from "./shared/sentry.ts";
@@ -1103,20 +1110,39 @@ app.get("/agent/transactions", (req, res) => {
     },
   });
 });
+function validatePolicyPayload(
+  body: unknown,
+): { ok: true; policy: SpendingPolicy } | { ok: false; errors: SpendingPolicyValidationIssue[] } {
+  const parsed = SpendingPolicyInputSchema.safeParse(body);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      errors: formatSpendingPolicyValidationIssues(parsed.error),
+    };
+  }
+  return { ok: true, policy: parsed.data as SpendingPolicy };
+}
+
+function invalidPolicyResponse(res: Response, details: SpendingPolicyValidationIssue[]) {
+  return res.status(400).json({
+    error: "Invalid policy",
+    code: "INVALID_SPENDING_POLICY",
+    details,
+  });
+}
+
 app.post("/agent/policy", (req, res) => {
-  const body = req.body;
-  if (!body || typeof body !== "object") {
-    return res.status(400).json({ error: "Invalid policy" });
+  const result = validatePolicyPayload(req.body);
+  if (!result.ok) return invalidPolicyResponse(res, result.errors);
+  try {
+    const policy = setSpendingPolicy(result.policy);
+    res.json({ success: true, policy: policy ?? result.policy });
+  } catch (err) {
+    if (err instanceof SpendingPolicyValidationError) {
+      return invalidPolicyResponse(res, err.issues);
+    }
+    throw err;
   }
-  const fields = ["dailyLimit", "monthlyLimit", "medicationMonthlyBudget", "billMonthlyBudget", "approvalThreshold"] as const;
-  const errors: string[] = [];
-  for (const f of fields) {
-    const v = body[f];
-    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) errors.push(`${f} must be a positive finite number`);
-  }
-  if (errors.length > 0) return res.status(400).json({ error: "Invalid policy", details: errors });
-  setSpendingPolicy(body);
-  res.json({ success: true, policy: body });
 });
 app.post("/agent/reset", (_req, res) => {
   resetSpendingTracker();

@@ -120,6 +120,14 @@ import { describe, it, expect, beforeEach } from "vitest";
 // Mirrors the DATA_DIR computation in agent/tools.ts so the fake fs paths
 // we seed/inspect line up regardless of where the repo is checked out.
 const DATA_DIR = new URL("../../data", import.meta.url).pathname;
+const POLICY_FILE = `${DATA_DIR}/recipients/rosa/policy.json`;
+const VALID_POLICY = {
+  dailyLimit: 100,
+  monthlyLimit: 800,
+  medicationMonthlyBudget: 300,
+  billMonthlyBudget: 400,
+  approvalThreshold: 75,
+};
 
 function freshTracker(transactionCount: number) {
   return {
@@ -181,6 +189,116 @@ describe("Spending tracker persistence across restart (#44)", () => {
     expect(summary.policy.dailyLimit).toBe(123);
     expect(summary.policy.monthlyLimit).toBe(500);
     expect(summary.policy.approvalThreshold).toBe(90);
+  });
+});
+
+describe("Spending policy validation before persistence (#210)", () => {
+  it.each([
+    ["dailyLimit", "dailyLimit"],
+    ["monthlyLimit", "monthlyLimit"],
+    ["medicationMonthlyBudget", "medicationMonthlyBudget"],
+    ["billMonthlyBudget", "billMonthlyBudget"],
+    ["approvalThreshold", "approvalThreshold"],
+  ] as const)("rejects non-positive %s", async (field, expectedField) => {
+    vi.resetModules();
+    const tools = await import("../tools.ts");
+
+    let thrown: any;
+    try {
+      tools.setSpendingPolicy({ ...VALID_POLICY, [field]: 0 } as any);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown?.issues).toContainEqual(
+      expect.objectContaining({
+        field: expectedField,
+        message: `${expectedField} must be greater than 0`,
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "missing required field",
+      (() => {
+        const { monthlyLimit: _monthlyLimit, ...rest } = VALID_POLICY;
+        return rest;
+      })(),
+      "monthlyLimit",
+      "monthlyLimit is required",
+    ],
+    [
+      "sane upper bound",
+      { ...VALID_POLICY, monthlyLimit: 50_001 },
+      "monthlyLimit",
+      "monthlyLimit cannot exceed 50000",
+    ],
+    [
+      "daily over monthly",
+      { ...VALID_POLICY, dailyLimit: 801 },
+      "dailyLimit",
+      "dailyLimit cannot exceed monthlyLimit",
+    ],
+    [
+      "approval over daily",
+      { ...VALID_POLICY, approvalThreshold: 101 },
+      "approvalThreshold",
+      "approvalThreshold cannot exceed dailyLimit",
+    ],
+    [
+      "category budgets over monthly",
+      { ...VALID_POLICY, medicationMonthlyBudget: 500, billMonthlyBudget: 400 },
+      "medicationMonthlyBudget",
+      "medicationMonthlyBudget + billMonthlyBudget cannot exceed monthlyLimit",
+    ],
+    [
+      "negative hold time",
+      { ...VALID_POLICY, holdTimeSeconds: -1 },
+      "holdTimeSeconds",
+      "holdTimeSeconds cannot be negative",
+    ],
+    [
+      "unknown field",
+      { ...VALID_POLICY, unsafeOverride: true },
+      "policy",
+      "Unrecognized key(s) in object: 'unsafeOverride'",
+    ],
+  ])("rejects %s", async (_name, policy, expectedField, expectedMessage) => {
+    vi.resetModules();
+    const tools = await import("../tools.ts");
+
+    let thrown: any;
+    try {
+      tools.setSpendingPolicy(policy as any);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown?.issues).toContainEqual(
+      expect.objectContaining({
+        field: expectedField,
+        message: expectedMessage,
+      }),
+    );
+  });
+
+  it("does not overwrite policy.json when validation fails", async () => {
+    vi.resetModules();
+    const tools = await import("../tools.ts");
+
+    tools.setSpendingPolicy(VALID_POLICY);
+    const persistedPolicy = fsState.files.get(POLICY_FILE);
+    expect(JSON.parse(persistedPolicy!).approvalThreshold).toBe(75);
+
+    expect(() =>
+      tools.setSpendingPolicy({
+        ...VALID_POLICY,
+        approvalThreshold: 101,
+      }),
+    ).toThrow(/Invalid spending policy/);
+
+    expect(fsState.files.get(POLICY_FILE)).toBe(persistedPolicy);
   });
 });
 
