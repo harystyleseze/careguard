@@ -8,7 +8,7 @@
  * For production: use `npm start` (this file)
  */
 
-import "dotenv/config";
+import "./shared/load-env.ts";
 import { createHash } from "crypto";
 import express from "express";
 import { Keypair, Horizon } from "@stellar/stellar-sdk";
