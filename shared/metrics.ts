@@ -97,6 +97,12 @@ export const agentLlmErrorTotal = new Counter({
   registers: [registry],
 });
 
+export const billAuditOversizedRejectionsTotal = new Counter({
+  name: "bill_audit_oversized_rejections_total",
+  help: "Total bill audit requests rejected for exceeding the line item cap",
+  registers: [registry],
+});
+
 export function metricsHandler(): RequestHandler {
   return async (req, res) => {
     const token = process.env.METRICS_TOKEN;

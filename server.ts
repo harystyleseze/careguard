@@ -28,6 +28,7 @@ import { validateTask, getSuspiciousTaskCount } from "./shared/task-validation.t
 import { buildScrubSession, scrubText } from "./shared/prompt-scrub.ts";
 import {
   BillAuditValidationError,
+  createBillAuditMaxItemsMiddleware,
   validateBillAuditRequest,
 } from "./shared/bill-audit.ts";
 import { sanitizeUserString } from "./shared/sanitize.ts";
@@ -42,6 +43,7 @@ import {
   metricsHandler,
   agentRunsTotal,
   agentToolCallsTotal,
+  billAuditOversizedRejectionsTotal,
 } from "./shared/metrics.ts";
 
 // Shared agent pause state + wallet low-balance scheduler
@@ -682,6 +684,13 @@ app.get("/bill/sample", (_req, res) => {
     ],
   });
 });
+
+const billAuditMaxItemsMiddleware = createBillAuditMaxItemsMiddleware({
+  onReject: () => billAuditOversizedRejectionsTotal.inc(),
+});
+
+// Reject oversized bill audits before x402 settlement.
+app.post("/bill/audit", billAuditMaxItemsMiddleware);
 
 // x402 for bill audit
 applyX402Middleware(app, {

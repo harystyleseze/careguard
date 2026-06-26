@@ -1,5 +1,8 @@
 import { z } from "zod";
+import type { RequestHandler } from "express";
 import { freeTextSchema } from "./free-text.ts";
+
+export const DEFAULT_BILL_AUDIT_MAX_ITEMS = 500;
 
 export const LineItemSchema = z
   .object({
@@ -44,6 +47,51 @@ export class BillAuditValidationError extends Error {
   }
 }
 
+export function getBillAuditMaxItems(env: NodeJS.ProcessEnv = process.env): number {
+  const parsed = Number(env.BILL_AUDIT_MAX_ITEMS);
+  return Number.isInteger(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_BILL_AUDIT_MAX_ITEMS;
+}
+
+export function validateBillAuditMaxItems(
+  body: unknown,
+  maxItems = getBillAuditMaxItems(),
+): void {
+  const lineItems = body && typeof body === "object"
+    ? (body as { lineItems?: unknown }).lineItems
+    : undefined;
+
+  if (Array.isArray(lineItems) && lineItems.length > maxItems) {
+    throw new BillAuditValidationError(
+      "LINE_ITEMS_TOO_LARGE",
+      `lineItems exceeds max (${maxItems})`,
+      [{ path: "lineItems", message: `lineItems exceeds max (${maxItems})` }],
+    );
+  }
+}
+
+export function createBillAuditMaxItemsMiddleware(options: {
+  env?: NodeJS.ProcessEnv;
+  onReject?: () => void;
+} = {}): RequestHandler {
+  return (req, res, next) => {
+    const maxItems = getBillAuditMaxItems(options.env);
+
+    try {
+      validateBillAuditMaxItems(req.body, maxItems);
+      next();
+    } catch (error) {
+      if (error instanceof BillAuditValidationError) {
+        options.onReject?.();
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      next(error);
+    }
+  };
+}
+
 export function validateLineItems(lineItems: unknown): LineItem[] {
   const result = z.array(LineItemSchema).min(1, "lineItems must contain at least one item").safeParse(lineItems);
   if (result.success) {
@@ -58,6 +106,8 @@ export function validateLineItems(lineItems: unknown): LineItem[] {
 }
 
 export function validateBillAuditRequest(body: unknown): { lineItems: LineItem[] } {
+  validateBillAuditMaxItems(body);
+
   const result = BillAuditRequestSchema.safeParse(body);
   if (result.success) {
     return result.data;
