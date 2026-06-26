@@ -5,7 +5,7 @@ CareGuard enforces five limits on every payment the agent makes:
 | Field | Default | Description |
 |---|---|---|
 | `dailyLimit` | $100 | Maximum total spending (medications + bills) within one calendar day in the caregiver's timezone |
-| `monthlyLimit` | $500 | Maximum total spending within the current calendar month |
+| `monthlyLimit` | $800 | Maximum total spending within the current calendar month |
 | `medicationMonthlyBudget` | $300 | Monthly cap for medication payments only |
 | `billMonthlyBudget` | $500 | Monthly cap for bill payments only |
 | `approvalThreshold` | $75 | Payments above this amount require explicit caregiver approval |
@@ -45,4 +45,5 @@ Limits are validated client-side and server-side:
 
 - All values must be finite, non-negative, and ≤ 10 000
 - `dailyLimit` must not exceed `monthlyLimit`
+- `medicationMonthlyBudget + billMonthlyBudget` must not exceed `monthlyLimit`
 - `approvalThreshold` must not exceed the smallest of `dailyLimit`, `medicationMonthlyBudget`, and `billMonthlyBudget`

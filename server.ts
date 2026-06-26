@@ -26,6 +26,11 @@ import { applySecurityMiddleware } from "./shared/security-middleware.ts";
 import { logger } from "./shared/logger.ts";
 import { validateTask, getSuspiciousTaskCount } from "./shared/task-validation.ts";
 import { buildScrubSession, scrubText } from "./shared/prompt-scrub.ts";
+import {
+  BillAuditValidationError,
+  validateBillAuditRequest,
+} from "./shared/bill-audit.ts";
+import { sanitizeUserString } from "./shared/sanitize.ts";
 
 // Sentry (gated by SENTRY_DSN)
 import { initSentry } from "./shared/sentry.ts";
@@ -67,7 +72,32 @@ import {
   getSpendingTracker,
   resetSpendingTracker,
   TOOL_DEFINITIONS,
+  validateToolInput,
 } from "./agent/tools.ts";
+import { resolveRequestedDosage } from "./services/pharmacy-api/dosage.ts";
+import { createPharmacyPricingStore } from "./services/pharmacy-api/db.ts";
+import {
+  buildCompareResponse,
+  DrugRecordSchema,
+  PharmacyCompareQuerySchema,
+  PharmacyPriceSchema,
+  PharmacyRecordSchema,
+} from "./services/pharmacy-api/logic.ts";
+import type {
+  DrugRecordInput,
+  PharmacyCompareQuery,
+  PharmacyPriceInput,
+  PharmacyRecordInput,
+} from "./services/pharmacy-api/logic.ts";
+import {
+  checkInteractions as checkDrugInteractionsInService,
+  DrugInteractionsQuerySchema,
+} from "./services/drug-interaction-api/logic.ts";
+import type { DrugInteractionsQuery } from "./services/drug-interaction-api/logic.ts";
+import {
+  MedicationOrderSchema,
+  type MedicationOrderInput,
+} from "./services/pharmacy-payment/validation.ts";
 
 // --- Environment ---
 const envSchema = z.object({
@@ -82,6 +112,7 @@ const envSchema = z.object({
   MPP_SECRET_KEY: z.string().min(1, "MPP_SECRET_KEY required"),
   LLM_BASE_URL: z.string().min(1).optional(),
   LLM_MODEL: z.string().min(1).optional(),
+  CAREGIVER_TOKEN: z.string().min(1, "CAREGIVER_TOKEN required"),
   OZ_FACILITATOR_API_KEY: z.string().min(1).optional(),
   X402_FACILITATOR_URL: z.string().min(1).optional(),
 });
@@ -110,6 +141,7 @@ if (env.data.STELLAR_NETWORK !== "public" && !env.data.OZ_FACILITATOR_API_KEY) {
 const PORT = env.data.PORT;
 const LLM_BASE_URL = env.data.LLM_BASE_URL || "https://api.groq.com/openai/v1";
 const LLM_MODEL = env.data.LLM_MODEL || "llama-3.3-70b-versatile";
+const CAREGIVER_TOKEN = env.data.CAREGIVER_TOKEN;
 const NETWORK = (
   env.data.STELLAR_NETWORK === "public" ? "stellar:public" : "stellar:testnet"
 ) as `${string}:${string}`;
@@ -146,7 +178,18 @@ let _profileData = {
 const app = express();
 let isDraining = false;
 
-app.use("/agent/audit", auditRouter);
+function requireCaregiverToken(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith("Bearer ")) {
+    res.status(401).setHeader("WWW-Authenticate", "Bearer").json({ error: "Missing caregiver token" });
+    return;
+  }
+  if (auth.slice("Bearer ".length) !== CAREGIVER_TOKEN) {
+    res.status(403).json({ error: "Invalid caregiver token" });
+    return;
+  }
+  next();
+}
 
 app.use("/agent", rateLimiters.agent);
 app.use("/health", rateLimiters.health);
@@ -162,6 +205,8 @@ app.use((req, res, next) =>
 );
 app.use(requestContextMiddleware());
 app.use(requestLoggerMiddleware());
+app.use("/agent", requireCaregiverToken);
+app.use("/agent/audit", auditRouter);
 
 // --- Prometheus metrics ---
 app.get("/metrics", metricsHandler());
@@ -204,7 +249,7 @@ app.get("/ready", async (_req, res) => {
   const checks: Record<string, boolean | string> = {};
 
   // 1. Required env vars
-  const requiredEnv = ["LLM_API_KEY", "AGENT_SECRET_KEY", "MPP_SECRET_KEY"];
+  const requiredEnv = ["LLM_API_KEY", "AGENT_SECRET_KEY", "MPP_SECRET_KEY", "CAREGIVER_TOKEN"];
   const missingEnv = requiredEnv.filter((k) => !process.env[k]);
   checks.env = missingEnv.length === 0 ? true : `missing: ${missingEnv.join(", ")}`;
 
@@ -249,174 +294,162 @@ app.patch("/agent/profile", (req, res) => {
 // PHARMACY PRICE API (was port 3001)
 // ============================================================
 
-const PRICING_DATABASE: Record<
-  string,
-  Array<{ pharmacy: string; id: string; price: number; distance: string }>
-> = {
-  lisinopril: [
-    {
-      pharmacy: "Costco Pharmacy",
-      id: "costco-001",
-      price: 3.5,
-      distance: "2.1 mi",
-    },
-    {
-      pharmacy: "Walmart Pharmacy",
-      id: "walmart-001",
-      price: 4.0,
-      distance: "1.8 mi",
-    },
-    {
-      pharmacy: "CVS Pharmacy",
-      id: "cvs-001",
-      price: 12.99,
-      distance: "0.5 mi",
-    },
-    {
-      pharmacy: "Walgreens",
-      id: "walgreens-001",
-      price: 15.49,
-      distance: "0.8 mi",
-    },
-    {
-      pharmacy: "Rite Aid",
-      id: "riteaid-001",
-      price: 18.99,
-      distance: "3.2 mi",
-    },
-  ],
-  metformin: [
-    {
-      pharmacy: "Costco Pharmacy",
-      id: "costco-001",
-      price: 4.0,
-      distance: "2.1 mi",
-    },
-    {
-      pharmacy: "Walmart Pharmacy",
-      id: "walmart-001",
-      price: 4.0,
-      distance: "1.8 mi",
-    },
-    {
-      pharmacy: "CVS Pharmacy",
-      id: "cvs-001",
-      price: 11.99,
-      distance: "0.5 mi",
-    },
-    {
-      pharmacy: "Walgreens",
-      id: "walgreens-001",
-      price: 13.49,
-      distance: "0.8 mi",
-    },
-    {
-      pharmacy: "Rite Aid",
-      id: "riteaid-001",
-      price: 16.79,
-      distance: "3.2 mi",
-    },
-  ],
-  atorvastatin: [
-    {
-      pharmacy: "Costco Pharmacy",
-      id: "costco-001",
-      price: 6.5,
-      distance: "2.1 mi",
-    },
-    {
-      pharmacy: "Walmart Pharmacy",
-      id: "walmart-001",
-      price: 9.0,
-      distance: "1.8 mi",
-    },
-    {
-      pharmacy: "CVS Pharmacy",
-      id: "cvs-001",
-      price: 24.99,
-      distance: "0.5 mi",
-    },
-    {
-      pharmacy: "Walgreens",
-      id: "walgreens-001",
-      price: 28.49,
-      distance: "0.8 mi",
-    },
-    {
-      pharmacy: "Rite Aid",
-      id: "riteaid-001",
-      price: 31.99,
-      distance: "3.2 mi",
-    },
-  ],
-  amlodipine: [
-    {
-      pharmacy: "Costco Pharmacy",
-      id: "costco-001",
-      price: 4.2,
-      distance: "2.1 mi",
-    },
-    {
-      pharmacy: "Walmart Pharmacy",
-      id: "walmart-001",
-      price: 4.0,
-      distance: "1.8 mi",
-    },
-    {
-      pharmacy: "CVS Pharmacy",
-      id: "cvs-001",
-      price: 14.99,
-      distance: "0.5 mi",
-    },
-    {
-      pharmacy: "Walgreens",
-      id: "walgreens-001",
-      price: 17.49,
-      distance: "0.8 mi",
-    },
-    {
-      pharmacy: "Rite Aid",
-      id: "riteaid-001",
-      price: 19.99,
-      distance: "3.2 mi",
-    },
-  ],
-  omeprazole: [
-    {
-      pharmacy: "Costco Pharmacy",
-      id: "costco-001",
-      price: 5.8,
-      distance: "2.1 mi",
-    },
-    {
-      pharmacy: "Walmart Pharmacy",
-      id: "walmart-001",
-      price: 8.5,
-      distance: "1.8 mi",
-    },
-    {
-      pharmacy: "CVS Pharmacy",
-      id: "cvs-001",
-      price: 22.99,
-      distance: "0.5 mi",
-    },
-    {
-      pharmacy: "Walgreens",
-      id: "walgreens-001",
-      price: 25.49,
-      distance: "0.8 mi",
-    },
-    {
-      pharmacy: "Rite Aid",
-      id: "riteaid-001",
-      price: 27.99,
-      distance: "3.2 mi",
-    },
-  ],
-};
+const PHARMACY_ADMIN_TOKEN = process.env.PHARMACY_ADMIN_TOKEN || CAREGIVER_TOKEN;
+const pharmacyStore = createPharmacyPricingStore();
+
+function requirePharmacyAdmin(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith("Bearer ")) {
+    res
+      .status(401)
+      .setHeader("WWW-Authenticate", "Bearer")
+      .json({ error: "Missing admin token" });
+    return;
+  }
+
+  if (auth.slice("Bearer ".length) !== PHARMACY_ADMIN_TOKEN) {
+    res.status(403).json({ error: "Invalid admin token" });
+    return;
+  }
+
+  next();
+}
 
 app.get("/pharmacy/drugs", (_req, res) => {
-  res.json({ drugs: Object.keys(PRICING_DATABASE) });
+  const drugs = pharmacyStore.listDrugs();
+  res.json({ count: drugs.length, drugs, provider: "sqlite" });
+});
+
+app.get("/pharmacy/pharmacies", (_req, res) => {
+  res.json({ pharmacies: pharmacyStore.listPharmacies() });
+});
+
+app.post("/pharmacy/drugs", requirePharmacyAdmin, (req, res) => {
+  const parsedBody = DrugRecordSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    res.status(400).json({
+      error: parsedBody.error.issues[0]?.message ?? "Invalid drug payload",
+    });
+    return;
+  }
+
+  res.status(201).json({
+    drug: pharmacyStore.upsertDrug(parsedBody.data as DrugRecordInput),
+  });
+});
+
+app.put("/pharmacy/drugs/:drugName", requirePharmacyAdmin, (req, res) => {
+  const drugName = Array.isArray(req.params.drugName)
+    ? req.params.drugName[0]
+    : req.params.drugName;
+  const parsedBody = DrugRecordSchema.safeParse({
+    ...req.body,
+    name: drugName,
+  });
+  if (!parsedBody.success) {
+    res.status(400).json({
+      error: parsedBody.error.issues[0]?.message ?? "Invalid drug payload",
+    });
+    return;
+  }
+
+  res.json({ drug: pharmacyStore.upsertDrug(parsedBody.data as DrugRecordInput) });
+});
+
+app.delete("/pharmacy/drugs/:drugName", requirePharmacyAdmin, (req, res) => {
+  const drugName = Array.isArray(req.params.drugName)
+    ? req.params.drugName[0]
+    : req.params.drugName;
+  if (!pharmacyStore.deleteDrug(drugName)) {
+    res.status(404).json({ error: `Drug not found: ${drugName}` });
+    return;
+  }
+
+  res.status(204).send();
+});
+
+app.post("/pharmacy/pharmacies", requirePharmacyAdmin, (req, res) => {
+  const parsedBody = PharmacyRecordSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    res.status(400).json({
+      error: parsedBody.error.issues[0]?.message ?? "Invalid pharmacy payload",
+    });
+    return;
+  }
+
+  res.status(201).json({
+    pharmacy: pharmacyStore.upsertPharmacy(parsedBody.data as PharmacyRecordInput),
+  });
+});
+
+app.put(
+  "/pharmacy/pharmacies/:pharmacyId",
+  requirePharmacyAdmin,
+  (req, res) => {
+    const pharmacyId = Array.isArray(req.params.pharmacyId)
+      ? req.params.pharmacyId[0]
+      : req.params.pharmacyId;
+    const parsedBody = PharmacyRecordSchema.safeParse({
+      ...req.body,
+      id: pharmacyId,
+    });
+    if (!parsedBody.success) {
+      res.status(400).json({
+        error:
+          parsedBody.error.issues[0]?.message ?? "Invalid pharmacy payload",
+      });
+      return;
+    }
+
+    res.json({
+      pharmacy: pharmacyStore.upsertPharmacy(
+        parsedBody.data as PharmacyRecordInput,
+      ),
+    });
+  },
+);
+
+app.delete(
+  "/pharmacy/pharmacies/:pharmacyId",
+  requirePharmacyAdmin,
+  (req, res) => {
+    const pharmacyId = Array.isArray(req.params.pharmacyId)
+      ? req.params.pharmacyId[0]
+      : req.params.pharmacyId;
+    if (!pharmacyStore.deletePharmacy(pharmacyId)) {
+      res.status(404).json({
+        error: `Pharmacy not found: ${pharmacyId}`,
+      });
+      return;
+    }
+
+    res.status(204).send();
+  },
+);
+
+app.post("/pharmacy/prices", requirePharmacyAdmin, (req, res) => {
+  const parsedBody = PharmacyPriceSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    res.status(400).json({
+      error:
+        parsedBody.error.issues[0]?.message ?? "Invalid pharmacy price payload",
+    });
+    return;
+  }
+
+  try {
+    res.json({
+      price: pharmacyStore.upsertPrice(parsedBody.data as PharmacyPriceInput),
+    });
+  } catch (error) {
+    res.status(404).json({
+      error: error instanceof Error ? error.message : "Unable to upsert price",
+    });
+  }
 });
 
 // x402 for pharmacy compare
@@ -441,50 +474,43 @@ applyX402Middleware(
 );
 
 app.get("/pharmacy/compare", (req, res) => {
-  const drug = ((req.query.drug as string) || "").toLowerCase().trim();
-  if (!drug) {
-    res.status(400).json({ error: "Missing: drug" });
-    return;
-  }
-  const prices = PRICING_DATABASE[drug];
-  if (!prices) {
-    res.status(404).json({ error: `Drug "${drug}" not found` });
-    return;
-  }
-  const sorted = [...prices].sort((a, b) => a.price - b.price);
-  const cheapest = sorted[0],
-    most = sorted[sorted.length - 1];
-  res.json({
-    drug: drug.charAt(0).toUpperCase() + drug.slice(1),
-    zipCode: req.query.zip || "90210",
-    queryTimestamp: new Date().toISOString(),
-    protocol: {
-      name: "x402",
-      network: NETWORK,
-      price: "$0.002",
-      payTo: process.env.PHARMACY_1_PUBLIC_KEY,
-    },
-    prices: sorted.map((p) => ({
-      pharmacyName: p.pharmacy,
-      pharmacyId: p.id,
-      price: p.price,
-      distance: p.distance,
-      inStock: true,
-    })),
-    cheapest: {
-      pharmacyName: cheapest.pharmacy,
-      pharmacyId: cheapest.id,
-      price: cheapest.price,
-      distance: cheapest.distance,
-    },
-    mostExpensive: {
-      pharmacyName: most.pharmacy,
-      pharmacyId: most.id,
-      price: most.price,
-    },
-    potentialSavings: +(most.price - cheapest.price).toFixed(2),
-    savingsPercent: +((1 - cheapest.price / most.price) * 100).toFixed(1),
+  const parsedQuery = PharmacyCompareQuerySchema.safeParse({
+    drug: req.query.drug,
+    dosage: req.query.dosage,
+    zip: req.query.zip,
   });
+  if (!parsedQuery.success) {
+    res.status(400).json({
+      error:
+        parsedQuery.error.issues[0]?.message ??
+        "Invalid pharmacy query parameters",
+    });
+    return;
+  }
+
+  const query = parsedQuery.data as PharmacyCompareQuery;
+  const drug = query.drug.trim().toLowerCase();
+  const dosage = resolveRequestedDosage(drug, query.dosage);
+
+  try {
+    const prices = pharmacyStore.getPrices(drug);
+    res.json(
+      buildCompareResponse({
+        drug,
+        dosage,
+        zip: query.zip,
+        payTo: env.data.PHARMACY_1_PUBLIC_KEY,
+        network: NETWORK,
+        prices,
+      }),
+    );
+  } catch (error) {
+    res.status(404).json({
+      error: error instanceof Error ? error.message : `Drug "${drug}" not found`,
+      provider: "sqlite",
+      drugCount: pharmacyStore.getDrugCount(),
+    });
+  }
 });
 
 // ============================================================
@@ -671,68 +697,32 @@ applyX402Middleware(app, {
 });
 
 app.post("/bill/audit", (req, res) => {
-  const { lineItems } = req.body;
-  if (!lineItems?.length) {
-    res.status(400).json({ error: "Missing lineItems" });
-    return;
+  try {
+    const validatedBody = validateBillAuditRequest(req.body);
+    const sanitizedLineItems = validatedBody.lineItems.map((lineItem) => ({
+      ...lineItem,
+      description: sanitizeUserString(lineItem.description),
+    }));
+    res.json(runBillAudit(sanitizedLineItems));
+  } catch (error) {
+    if (error instanceof BillAuditValidationError) {
+      const validationError = error as BillAuditValidationError;
+      res.status(400).json({
+        ok: false,
+        reason: validationError.code,
+        message: validationError.message,
+        issues: validationError.issues,
+      });
+      return;
+    }
+
+    res.status(400).json({ ok: false, reason: "INVALID_REQUEST_BODY" });
   }
-  res.json(runBillAudit(lineItems));
 });
 
 // ============================================================
 // DRUG INTERACTION API (was port 3003)
 // ============================================================
-
-const INTERACTIONS = [
-  {
-    drugs: ["lisinopril", "potassium"] as [string, string],
-    severity: "severe" as const,
-    description: "ACE inhibitors + potassium = hyperkalemia risk",
-    recommendation: "Monitor potassium levels",
-  },
-  {
-    drugs: ["metformin", "alcohol"] as [string, string],
-    severity: "severe" as const,
-    description: "Alcohol + metformin = lactic acidosis risk",
-    recommendation: "Limit alcohol",
-  },
-  {
-    drugs: ["atorvastatin", "grapefruit"] as [string, string],
-    severity: "moderate" as const,
-    description: "Grapefruit increases atorvastatin levels",
-    recommendation: "Avoid grapefruit juice",
-  },
-  {
-    drugs: ["lisinopril", "ibuprofen"] as [string, string],
-    severity: "moderate" as const,
-    description: "NSAIDs reduce lisinopril effectiveness",
-    recommendation: "Use acetaminophen instead",
-  },
-  {
-    drugs: ["amlodipine", "atorvastatin"] as [string, string],
-    severity: "mild" as const,
-    description: "Amlodipine slightly increases atorvastatin levels",
-    recommendation: "Safe at standard doses",
-  },
-  {
-    drugs: ["metformin", "atorvastatin"] as [string, string],
-    severity: "mild" as const,
-    description: "Statins may slightly increase blood sugar",
-    recommendation: "Monitor blood sugar",
-  },
-  {
-    drugs: ["omeprazole", "metformin"] as [string, string],
-    severity: "mild" as const,
-    description: "Long-term omeprazole may reduce B12 absorption",
-    recommendation: "Monitor B12",
-  },
-  {
-    drugs: ["lisinopril", "amlodipine"] as [string, string],
-    severity: "mild" as const,
-    description: "Common BP combo, generally safe",
-    recommendation: "Monitor for low BP",
-  },
-];
 
 // x402 for drug interactions
 applyX402Middleware(app, {
@@ -749,62 +739,25 @@ applyX402Middleware(app, {
 });
 
 app.get("/drug/interactions", (req, res) => {
-  const medsParam = req.query.meds as string;
-  if (!medsParam) {
-    res.status(400).json({ error: "Missing: meds" });
+  const parsedQuery = DrugInteractionsQuerySchema.safeParse({
+    meds: req.query.meds,
+  });
+  if (!parsedQuery.success) {
+    res.status(400).json({
+      error:
+        parsedQuery.error.issues[0]?.message ??
+        "Invalid meds query parameter",
+    });
     return;
   }
-  const medications = medsParam
-    .split(",")
-    .map((m) => m.trim())
-    .filter(Boolean);
-  if (medications.length < 2) {
-    res.status(400).json({ error: "Need 2+ medications" });
-    return;
-  }
-  const meds = medications.map((m) => m.toLowerCase());
-  const found: any[] = [];
-  for (let i = 0; i < meds.length; i++) {
-    for (let j = i + 1; j < meds.length; j++) {
-      for (const ix of INTERACTIONS) {
-        if (
-          (meds[i] === ix.drugs[0] && meds[j] === ix.drugs[1]) ||
-          (meds[i] === ix.drugs[1] && meds[j] === ix.drugs[0])
-        ) {
-          found.push({
-            drug1: medications[i],
-            drug2: medications[j],
-            severity: ix.severity,
-            description: ix.description,
-            recommendation: ix.recommendation,
-          });
-        }
-      }
-    }
-  }
-  const severe = found.filter((f) => f.severity === "severe").length;
-  const moderate = found.filter((f) => f.severity === "moderate").length;
+
+  const result = checkDrugInteractionsInService(
+    (parsedQuery.data as DrugInteractionsQuery).medications,
+  );
   res.json({
     checkTimestamp: new Date().toISOString(),
     protocol: { name: "x402", network: NETWORK, price: "$0.001" },
-    medications,
-    interactionCount: found.length,
-    severeCount: severe,
-    moderateCount: moderate,
-    mildCount: found.length - severe - moderate,
-    interactions: found,
-    overallRisk:
-      severe > 0
-        ? "high"
-        : moderate > 0
-          ? "moderate"
-          : found.length > 0
-            ? "low"
-            : "none",
-    summary:
-      found.length === 0
-        ? "No known interactions found."
-        : `Found ${found.length} interaction(s): ${severe} severe, ${moderate} moderate, ${found.length - severe - moderate} mild.`,
+    ...result,
   });
 });
 
@@ -832,7 +785,10 @@ const mppx = Mppx.create({
     stellar.charge({
       recipient: process.env.PHARMACY_1_PUBLIC_KEY!,
       currency: USDC_SAC_TESTNET,
-      network: NETWORK,
+      network:
+        env.data.STELLAR_NETWORK === "public"
+          ? "stellar:pubnet"
+          : "stellar:testnet",
       store: Store.memory(),
     }),
   ],
@@ -843,11 +799,18 @@ app.get("/pharmacy/orders", (_req, res) => {
 });
 
 app.post("/pharmacy/order", async (req, res) => {
-  const { drug, pharmacy, amount } = req.body;
-  if (!drug || !pharmacy || amount === undefined || amount === null) {
-    res.status(400).json({ error: "Missing: drug, pharmacy, amount" });
+  const parsedOrder = MedicationOrderSchema.safeParse(req.body);
+  if (!parsedOrder.success) {
+    res.status(400).json({
+      error: "Invalid order request",
+      details: parsedOrder.error.issues.map((issue) => issue.message),
+    });
     return;
   }
+
+  const parsedOrderData = parsedOrder.data as MedicationOrderInput;
+  const safeDrug = sanitizeUserString(parsedOrderData.drug);
+  const safePharmacy = sanitizeUserString(parsedOrderData.pharmacy);
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
     if (value == null) continue;
@@ -862,8 +825,8 @@ app.post("/pharmacy/order", async (req, res) => {
     headers,
   });
   const result = await mppx.charge({
-    amount: parseFloat(amount).toFixed(2),
-    description: `Medication: ${drug} from ${pharmacy}`,
+    amount: parsedOrderData.amount.toFixed(2),
+    description: `Medication: ${safeDrug} from ${safePharmacy}`,
   })(webReq);
   if (result.status === 402) {
     result.challenge.headers.forEach((v: string, k: string) =>
@@ -874,9 +837,9 @@ app.post("/pharmacy/order", async (req, res) => {
   }
   const order = {
     id: `order-${Date.now()}`,
-    drug,
-    pharmacy,
-    amount: parseFloat(amount),
+    drug: safeDrug,
+    pharmacy: safePharmacy,
+    amount: parsedOrderData.amount,
     status: "confirmed",
     timestamp: new Date().toISOString(),
     network: NETWORK,
@@ -887,7 +850,7 @@ app.post("/pharmacy/order", async (req, res) => {
     Response.json({
       success: true,
       order,
-      message: `Payment settled. ${drug} from ${pharmacy} confirmed.`,
+      message: `Payment settled. ${safeDrug} from ${safePharmacy} confirmed.`,
     }),
   );
   response.headers.forEach((v: string, k: string) => res.setHeader(k, v));
@@ -936,6 +899,7 @@ const LLM_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] =
 async function executeTool(name: string, input: any): Promise<any> {
   let result: any;
   try {
+    input = validateToolInput(name, input);
     switch (name) {
       case "compare_pharmacy_prices":
         result = await comparePharmacyPrices(input.drug_name, input.zip_code);

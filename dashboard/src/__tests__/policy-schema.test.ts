@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { validatePolicy } from "../lib/schemas";
+import { describe, expect, it } from 'vitest';
+import { validatePolicy } from '../lib/schemas';
 
 const valid = {
   dailyLimit: 100,
@@ -7,80 +7,106 @@ const valid = {
   medicationMonthlyBudget: 300,
   billMonthlyBudget: 200,
   approvalThreshold: 75,
+  holdTimeSeconds: 0,
 };
 
-describe("validatePolicy", () => {
-  it("accepts a valid policy", () => {
+describe('validatePolicy', () => {
+  it('accepts a valid policy', () => {
     const r = validatePolicy(valid);
     expect(r.isValid).toBe(true);
     expect(r.errors).toEqual([]);
   });
 
-  it("rejects negative dailyLimit", () => {
+  it('rejects negative dailyLimit', () => {
     const r = validatePolicy({ ...valid, dailyLimit: -1 });
     expect(r.isValid).toBe(false);
-    expect(r.errors.find((e) => e.field === "dailyLimit")).toBeDefined();
+    expect(r.errors.find((e) => e.field === 'dailyLimit')).toBeDefined();
   });
 
-  it("accepts zero values", () => {
-    const r = validatePolicy({ ...valid, monthlyLimit: 0 });
+  it('accepts zero values', () => {
+    const r = validatePolicy({
+      ...valid,
+      dailyLimit: 0,
+      monthlyLimit: 0,
+      medicationMonthlyBudget: 0,
+      billMonthlyBudget: 0,
+      approvalThreshold: 0,
+    });
     expect(r.isValid).toBe(true);
   });
 
-  it("rejects values over 10000", () => {
+  it('rejects values over 10000', () => {
     const r = validatePolicy({ ...valid, monthlyLimit: 10001 });
     expect(r.isValid).toBe(false);
     expect(
       r.errors.some(
-        (e) => e.field === "monthlyLimit" && /10000/.test(e.message),
+        (e) => e.field === 'monthlyLimit' && /10000/.test(e.message),
       ),
     ).toBe(true);
   });
 
-  it("rejects NaN coerced from non-numeric input", () => {
+  it('rejects NaN coerced from non-numeric input', () => {
     const r = validatePolicy({ ...valid, dailyLimit: Number.NaN });
     expect(r.isValid).toBe(false);
   });
 
-  it("rejects dailyLimit greater than monthlyLimit", () => {
+  it('rejects dailyLimit greater than monthlyLimit', () => {
     const r = validatePolicy({ ...valid, dailyLimit: 600 });
     expect(r.isValid).toBe(false);
     expect(
       r.errors.some(
-        (e) => e.field === "dailyLimit" && /monthly/i.test(e.message),
+        (e) => e.field === 'dailyLimit' && /monthly/i.test(e.message),
       ),
     ).toBe(true);
   });
 
-  it("rejects approvalThreshold greater than smallest cap", () => {
+  it('rejects negative holdTimeSeconds', () => {
+    const r = validatePolicy({ ...valid, holdTimeSeconds: -1 });
+    expect(r.isValid).toBe(false);
+    expect(
+      r.errors.some(
+        (e) =>
+          e.field === 'holdTimeSeconds' &&
+          /cannot be negative/i.test(e.message),
+      ),
+    ).toBe(true);
+  });
+
+  it('accepts zero holdTimeSeconds', () => {
+    const r = validatePolicy({ ...valid, holdTimeSeconds: 0 });
+    expect(r.isValid).toBe(true);
+  });
+
+  it('rejects approvalThreshold greater than smallest cap', () => {
     const r = validatePolicy({ ...valid, approvalThreshold: 200 });
     expect(r.isValid).toBe(false);
     expect(
       r.errors.some(
         (e) =>
-          e.field === "approvalThreshold" && /smallest budget cap/i.test(e.message),
+          e.field === 'approvalThreshold' &&
+          /smallest budget cap/i.test(e.message),
       ),
     ).toBe(true);
   });
 
-  it("warns when category budgets exceed 120% of monthly limit", () => {
+  it('rejects when category budgets exceed monthly limit', () => {
     const r = validatePolicy({
       ...valid,
       medicationMonthlyBudget: 400,
       billMonthlyBudget: 400,
     });
-    expect(r.isValid).toBe(true);
-    expect(r.warnings.length).toBeGreaterThan(0);
+    expect(r.isValid).toBe(false);
+    expect(r.errors.length).toBeGreaterThan(0);
   });
 
-  it("rejects missing fields", () => {
+  it('rejects missing fields', () => {
     const r = validatePolicy({ dailyLimit: 100 });
     expect(r.isValid).toBe(false);
   });
 
-  it("rejects non-object input", () => {
+  it('rejects non-object input', () => {
     expect(validatePolicy(null).isValid).toBe(false);
-    expect(validatePolicy("hello").isValid).toBe(false);
+    expect(validatePolicy('hello').isValid).toBe(false);
     expect(validatePolicy(undefined).isValid).toBe(false);
   });
 });

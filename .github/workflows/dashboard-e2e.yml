@@ -30,6 +30,16 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium webkit
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Forbid localStorage/sessionStorage writes (#96)
+        run: |
+          if grep -rnE '(localStorage|sessionStorage)\.setItem' src; then
+            echo "::error::Found a localStorage/sessionStorage.setItem call in dashboard/src — see docs/SECURITY.md for the exception process."
+            exit 1
+          fi
+
       - name: Run dashboard E2E
         env:
           NEXT_PUBLIC_API_URL: "http://localhost:3004"

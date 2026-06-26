@@ -10,6 +10,10 @@ import { z } from "zod";
 import { writeFileSync, mkdirSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import {
+  MAX_FREE_TEXT_LENGTH,
+  MAX_FREE_TEXT_LIST_LENGTH,
+} from "../shared/free-text.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const docsDir = path.resolve(__dirname, "../docs");
@@ -24,6 +28,7 @@ interface OpenAPIPath {
   [method: string]: {
     summary?: string;
     tags?: string[];
+    parameters?: Array<Record<string, unknown>>;
     requestBody?: {
       required: boolean;
       content: {
@@ -144,25 +149,45 @@ function generateSpec(): OpenAPISpec {
           },
         },
       },
-      "/pharmacy": {
-        post: {
-          summary: "Query pharmacy API",
+      "/pharmacy/compare": {
+        get: {
+          summary: "Compare pharmacy prices for a drug",
           tags: ["Pharmacy"],
           security: [{ X402Auth: [] }],
-          requestBody: {
-            required: true,
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: {
-                    query: { type: "string" },
-                  },
-                  required: ["query"],
-                },
+          parameters: [
+            {
+              in: "query",
+              name: "drug",
+              required: true,
+              schema: {
+                type: "string",
+                minLength: 1,
+                maxLength: MAX_FREE_TEXT_LENGTH,
               },
+              description: "Drug name. Maximum length: 80 characters.",
             },
-          },
+            {
+              in: "query",
+              name: "dosage",
+              required: false,
+              schema: {
+                type: "string",
+                minLength: 1,
+                maxLength: MAX_FREE_TEXT_LENGTH,
+              },
+              description: "Optional dosage string. Maximum length: 80 characters.",
+            },
+            {
+              in: "query",
+              name: "zip",
+              required: false,
+              schema: {
+                type: "string",
+                pattern: "^\\d{5}$",
+              },
+              description: "5-digit ZIP code used for distance adjustments.",
+            },
+          ],
           responses: {
             "200": {
               description: "Pharmacy query results",
@@ -173,7 +198,49 @@ function generateSpec(): OpenAPISpec {
           },
         },
       },
-      "/bill-audit": {
+      "/pharmacy/prices": {
+        post: {
+          summary: "Admin upsert for a drug price at a pharmacy",
+          tags: ["Pharmacy"],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    drug: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: MAX_FREE_TEXT_LENGTH,
+                    },
+                    pharmacyId: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: MAX_FREE_TEXT_LENGTH,
+                    },
+                    price: {
+                      type: "number",
+                      exclusiveMinimum: 0,
+                      maximum: 10000,
+                    },
+                  },
+                  required: ["drug", "pharmacyId", "price"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Price created or updated",
+            },
+            "400": {
+              description: "Validation error",
+            },
+          },
+        },
+      },
+      "/bill/audit": {
         post: {
           summary: "Audit medical bills",
           tags: ["Bill Audit"],
@@ -185,7 +252,7 @@ function generateSpec(): OpenAPISpec {
                 schema: {
                   type: "object",
                   properties: {
-                    items: {
+                    lineItems: {
                       type: "array",
                       items: {
                         type: "object",
@@ -197,7 +264,11 @@ function generateSpec(): OpenAPISpec {
                             minimum: 0,
                             maximum: 1000000,
                           },
-                          description: { type: "string", minLength: 1 },
+                          description: {
+                            type: "string",
+                            minLength: 1,
+                            maxLength: MAX_FREE_TEXT_LENGTH,
+                          },
                         },
                         required: [
                           "cptCode",
@@ -208,7 +279,7 @@ function generateSpec(): OpenAPISpec {
                       },
                     },
                   },
-                  required: ["items"],
+                  required: ["lineItems"],
                 },
               },
             },
@@ -229,6 +300,81 @@ function generateSpec(): OpenAPISpec {
                   },
                 },
               },
+            },
+          },
+        },
+      },
+      "/drug/interactions": {
+        get: {
+          summary: "Check drug interactions for a medication list",
+          tags: ["Drug Interactions"],
+          security: [{ X402Auth: [] }],
+          parameters: [
+            {
+              in: "query",
+              name: "meds",
+              required: true,
+              schema: {
+                type: "string",
+                minLength: 1,
+                maxLength: MAX_FREE_TEXT_LIST_LENGTH,
+              },
+              description:
+                "Comma-separated medication names. Each medication name is limited to 80 characters.",
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Drug interaction results",
+            },
+            "400": {
+              description: "Validation error",
+            },
+          },
+        },
+      },
+      "/pharmacy/order": {
+        post: {
+          summary: "Submit a paid pharmacy order",
+          tags: ["Pharmacy Payments"],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    drug: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: MAX_FREE_TEXT_LENGTH,
+                    },
+                    pharmacy: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: MAX_FREE_TEXT_LENGTH,
+                    },
+                    amount: {
+                      oneOf: [
+                        { type: "number", minimum: 0.01, maximum: 10000 },
+                        { type: "string" },
+                      ],
+                    },
+                  },
+                  required: ["drug", "pharmacy", "amount"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Order confirmed",
+            },
+            "400": {
+              description: "Validation error",
+            },
+            "402": {
+              description: "Payment required",
             },
           },
         },

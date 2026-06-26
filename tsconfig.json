@@ -15,10 +15,15 @@
     "rootDir": ".",
     "declaration": true,
     "sourceMap": true,
+    "typeRoots": ["./types", "./node_modules/@types"],
     "paths": {
       "@shared/*": ["./shared/*"]
     }
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules", "dist", "dashboard"]
+  "exclude": ["node_modules", "dist", "dashboard", "shared"],
+  "references": [
+    { "path": "./shared" },
+    { "path": "./dashboard" }
+  ]
 }

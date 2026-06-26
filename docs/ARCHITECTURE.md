@@ -49,7 +49,7 @@ flowchart TD
   recipient: string;
   stellarTxHash?: string;
   status: "pending" | "approved" | "completed" | "blocked" | "disputed";
-  category: string;
+  category: "medications" | "bills" | "service_fees";
 }
 ```
 

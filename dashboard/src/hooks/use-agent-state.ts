@@ -1,13 +1,14 @@
-"use client";
+'use client';
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import {
   SpendingDataSchema,
   TransactionSchema,
   AuditLogSchema,
   type SpendingData,
   type Transaction,
-} from "../lib/types";
+} from '../lib/types';
 import type {
   AgentInfo,
   AgentLogEntry,
@@ -15,16 +16,18 @@ import type {
   PaginationData,
   Tab,
   AuditLogEvent,
-} from "../components/types";
+} from '../components/types';
+import { usePoll } from './use-poll';
 
-const AGENT_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3004";
+const AGENT_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3004';
 
 const DEFAULT_POLICY = {
   dailyLimit: 100,
-  monthlyLimit: 500,
+  monthlyLimit: 800,
   medicationMonthlyBudget: 300,
   billMonthlyBudget: 500,
   approvalThreshold: 75,
+  holdTimeSeconds: 0,
 };
 
 export type PolicyForm = typeof DEFAULT_POLICY;
@@ -42,18 +45,21 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const [pageSize, setPageSize] = useState(25);
   const [agentResult, setAgentResult] = useState<AgentResult | null>(null);
   const [loading, setLoading] = useState(false);
-  const [activeTask, setActiveTask] = useState("");
+  const [activeTask, setActiveTask] = useState('');
   const [agentLog, setAgentLog] = useState<AgentLogEntry[]>([]);
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null);
   const [agentConnected, setAgentConnected] = useState(false);
   const [agentPaused, setAgentPaused] = useState(false);
-  const [agentPausedReason, setAgentPausedReason] = useState<string | null>(null);
+  const [agentPausedReason, setAgentPausedReason] = useState<string | null>(
+    null,
+  );
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletXlm, setWalletXlm] = useState<string | null>(null);
-  const [liveMessage, setLiveMessage] = useState("");
+  const [liveMessage, setLiveMessage] = useState('');
   const [policyForm, setPolicyForm] = useState<PolicyForm>(DEFAULT_POLICY);
   const [policyDirty, setPolicyDirty] = useState(false);
   const [policySaved, setPolicySaved] = useState(false);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   const activeTabRef = useRef(activeTab);
   const policyDirtyRef = useRef(policyDirty);
@@ -68,16 +74,17 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
 
   useEffect(() => {
     const connectionState = !agentConnected
-      ? "disconnected"
+      ? 'disconnected'
       : agentPaused
-        ? "paused"
-        : "active";
+        ? 'paused'
+        : 'active';
     const prev = lastConnectionStateRef.current;
     if (prev === connectionState) return;
     lastConnectionStateRef.current = connectionState;
-    if (connectionState === "active") setLiveMessage("Agent connected");
-    if (connectionState === "paused") setLiveMessage("Agent paused");
-    if (connectionState === "disconnected") setLiveMessage("Agent disconnected");
+    if (connectionState === 'active') setLiveMessage('Agent connected');
+    if (connectionState === 'paused') setLiveMessage('Agent paused');
+    if (connectionState === 'disconnected')
+      setLiveMessage('Agent disconnected');
   }, [agentConnected, agentPaused]);
 
   const addLogEntry = useCallback((message: string) => {
@@ -100,15 +107,17 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       setAgentInfo(data);
       setAgentConnected(true);
       setAgentPaused(Boolean(data.paused));
-      setAgentPausedReason(typeof data.pausedReason === "string" ? data.pausedReason : null);
+      setAgentPausedReason(
+        typeof data.pausedReason === 'string' ? data.pausedReason : null,
+      );
       // Fetch wallet balance from server (Issue #134 - server-side cache)
       if (data.agentWallet) {
         try {
           const wres = await fetch(`${AGENT_URL}/agent/wallet`);
           if (wres.ok) {
             const wdata = await wres.json();
-            setWalletBalance(wdata.usdc || "0.00");
-            setWalletXlm(wdata.xlm || "0.00");
+            setWalletBalance(wdata.usdc || '0.00');
+            setWalletXlm(wdata.xlm || '0.00');
           }
         } catch {}
       }
@@ -117,61 +126,82 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     }
   }, []);
 
-  const fetchSpending = useCallback(async (opts?: { forcePolicySync?: boolean }) => {
-    try {
-      const res = await fetch(`${AGENT_URL}/agent/spending`);
-      if (!res.ok) return;
-      const data = SpendingDataSchema.parse(await res.json());
-      setSpending(data);
-      const forcePolicySync = Boolean(opts?.forcePolicySync);
-      const shouldSyncPolicy =
-        forcePolicySync ||
-        (activeTabRef.current !== "policy" && !policyDirtyRef.current);
-      if (shouldSyncPolicy) {
-        setPolicyForm(data.policy);
-        setPolicyDirty(false);
-      }
-    } catch {}
-  }, []);
+  const fetchSpending = useCallback(
+    async (opts?: { forcePolicySync?: boolean }) => {
+      try {
+        const res = await fetch(`${AGENT_URL}/agent/spending`);
+        if (!res.ok) return;
+        const data = SpendingDataSchema.parse(await res.json());
+        setSpending(data);
+        const forcePolicySync = Boolean(opts?.forcePolicySync);
+        const shouldSyncPolicy =
+          forcePolicySync ||
+          (activeTabRef.current !== 'policy' && !policyDirtyRef.current);
+        if (shouldSyncPolicy) {
+          setPolicyForm(data.policy);
+          setPolicyDirty(false);
+        }
+      } catch {}
+    },
+    [],
+  );
 
-  const fetchTransactions = useCallback(async (limit?: number, offset?: number) => {
-    try {
-      const params = new URLSearchParams();
-      if (limit) params.append("limit", limit.toString());
-      if (offset) params.append("offset", offset.toString());
-      const res = await fetch(`${AGENT_URL}/agent/transactions?${params}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      const txs = Array.isArray(data.transactions)
-        ? data.transactions.map((t: unknown) => TransactionSchema.parse(t))
-        : [];
-      setAllTransactions(txs);
-      if (data.pagination) setPagination(data.pagination);
-
-      const auditRes = await fetch(`${AGENT_URL}/agent/audit?limit=100`);
-      if (auditRes.ok) {
-        const auditData = await auditRes.json();
-        const logs = Array.isArray(auditData.data)
-          ? auditData.data.map((l: unknown) => AuditLogSchema.parse(l))
+  const fetchTransactions = useCallback(
+    async (limit?: number, offset?: number) => {
+      try {
+        const params = new URLSearchParams();
+        if (limit) params.append('limit', limit.toString());
+        if (offset) params.append('offset', offset.toString());
+        const res = await fetch(`${AGENT_URL}/agent/transactions?${params}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const txs = Array.isArray(data.transactions)
+          ? data.transactions.map((t: unknown) => TransactionSchema.parse(t))
           : [];
-        setAuditEvents(logs);
-      }
-    } catch {}
-  }, []);
+        setAllTransactions(txs);
+        if (data.pagination) setPagination(data.pagination);
 
+        const auditRes = await fetch(`${AGENT_URL}/agent/audit?limit=100`);
+        if (auditRes.ok) {
+          const auditData = await auditRes.json();
+          const logs = Array.isArray(auditData.data)
+            ? auditData.data.map((l: unknown) => AuditLogSchema.parse(l))
+            : [];
+          setAuditEvents(logs);
+        }
+      } catch {}
+    },
+    [],
+  );
+
+  // Poll spending and transactions every 3s with backoff
+  const spendingPoll = usePoll({
+    intervalMs: 3000,
+    enabled: true,
+    onPoll: async () => {
+      await fetchSpending();
+      await fetchTransactions(pageSize, currentPage * pageSize);
+    },
+    onError: (error) => {
+      console.error('[Poll] Spending/transactions poll error:', error.message);
+    },
+  });
+
+  // Poll agent info every 10s with backoff
+  const agentInfoPoll = usePoll({
+    intervalMs: 10000,
+    enabled: true,
+    onPoll: fetchAgentInfo,
+    onError: (error) => {
+      console.error('[Poll] Agent info poll error:', error.message);
+    },
+  });
+
+  // Initial fetch on mount
   useEffect(() => {
     fetchAgentInfo();
     fetchSpending();
     fetchTransactions(pageSize, currentPage * pageSize);
-    const i = setInterval(() => {
-      fetchSpending();
-      fetchTransactions(pageSize, currentPage * pageSize);
-    }, 3000);
-    const j = setInterval(fetchAgentInfo, 10000);
-    return () => {
-      clearInterval(i);
-      clearInterval(j);
-    };
   }, [fetchAgentInfo, fetchSpending, fetchTransactions, pageSize, currentPage]);
 
   const runAgentTask = useCallback(
@@ -185,11 +215,21 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       setLoading(true);
       setActiveTask(label);
       addLogEntry(`[${new Date().toLocaleTimeString()}] Starting: ${label}`);
+      
+      const controller = new AbortController();
+      setAbortController(controller);
+      
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+        addLogEntry(`[${new Date().toLocaleTimeString()}] Agent task timed out`);
+      }, 60000);
+      
       try {
         const res = await fetch(`${AGENT_URL}/agent/run`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ task }),
+          signal: controller.signal,
         });
         if (!res.ok) {
           const errText = await res.text();
@@ -203,6 +243,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
           addLogEntry(
             `[${new Date().toLocaleTimeString()}] Error (${res.status}): ${errMsg}`,
           );
+          toast.error(`Agent error (${res.status}): ${errMsg}`);
           return;
         }
         const data: AgentResult = await res.json();
@@ -212,7 +253,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         for (const tc of data.toolCalls) {
           const resultPreview = tc.result?.error
             ? `ERROR: ${String(tc.result.error).slice(0, 60)}`
-            : "OK";
+            : 'OK';
           addLogEntry(`  -> ${tc.tool} ${resultPreview}`);
         }
         addLogEntry(
@@ -221,31 +262,50 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         fetchTransactions(pageSize, 0);
         fetchAgentInfo();
       } catch (err: any) {
-        addLogEntry(
-          `[${new Date().toLocaleTimeString()}] Connection error: ${err.message}`,
-        );
-        setAgentConnected(false);
+        if (err.name === 'AbortError') {
+          addLogEntry(
+            `[${new Date().toLocaleTimeString()}] Cancelled`,
+          );
+          toast.error('Agent task cancelled');
+        } else {
+          addLogEntry(
+            `[${new Date().toLocaleTimeString()}] Connection error: ${err.message}`,
+          );
+          toast.error(`Connection error: ${err.message}`);
+          setAgentConnected(false);
+        }
       } finally {
+        clearTimeout(timeoutId);
         setLoading(false);
-        setActiveTask("");
+        setActiveTask('');
+        setAbortController(null);
       }
     },
     [agentConnected, addLogEntry, fetchAgentInfo, fetchTransactions, pageSize],
   );
 
-  const updatePolicy = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
+  const cancelAgentTask = useCallback(() => {
+    if (abortController) {
+      abortController.abort();
+    }
+  }, [abortController]);
+
+  const updatePolicy = useCallback(async (): Promise<{
+    ok: boolean;
+    error?: string;
+  }> => {
     try {
       const res = await fetch(`${AGENT_URL}/agent/policy`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(policyForm),
       });
       if (!res.ok) {
-        const errText = await res.text().catch(() => "");
+        const errText = await res.text().catch(() => '');
         addLogEntry(
           `[${new Date().toLocaleTimeString()}] Failed to update policy: ${errText.slice(0, 120)}`,
         );
-        return { ok: false, error: errText || "Failed to update policy" };
+        return { ok: false, error: errText || 'Failed to update policy' };
       }
       const spendingRes = await fetch(`${AGENT_URL}/agent/spending`);
       if (spendingRes.ok) {
@@ -257,7 +317,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       addLogEntry(
         `[${new Date().toLocaleTimeString()}] Policy updated: daily=$${policyForm.dailyLimit}, monthly=$${policyForm.monthlyLimit}, meds=$${policyForm.medicationMonthlyBudget}, bills=$${policyForm.billMonthlyBudget}, approval=$${policyForm.approvalThreshold}`,
       );
-      setLiveMessage("Policy updated");
+      setLiveMessage('Policy updated');
       setPolicySaved(true);
       setTimeout(() => setPolicySaved(false), 3000);
       return { ok: true };
@@ -270,29 +330,29 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   }, [addLogEntry, policyForm]);
 
   const resetAgent = useCallback(async () => {
-    await fetch(`${AGENT_URL}/agent/reset`, { method: "POST" });
+    await fetch(`${AGENT_URL}/agent/reset`, { method: 'POST' });
     setAllTransactions([]);
     setPagination(null);
     setCurrentPage(0);
     setAgentResult(null);
     setAgentLog([]);
     fetchSpending();
-    addLogEntry(
-      `[${new Date().toLocaleTimeString()}] Reset by caregiver`,
-    );
-    setLiveMessage("All transactions and logs cleared");
+    addLogEntry(`[${new Date().toLocaleTimeString()}] Reset by caregiver`);
+    setLiveMessage('All transactions and logs cleared');
   }, [addLogEntry, fetchSpending]);
 
   const togglePause = useCallback(async () => {
-    const endpoint = agentPaused ? "/agent/resume" : "/agent/pause";
+    const endpoint = agentPaused ? '/agent/resume' : '/agent/pause';
     try {
-      const res = await fetch(`${AGENT_URL}${endpoint}`, { method: "POST" });
+      const res = await fetch(`${AGENT_URL}${endpoint}`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         setAgentPaused(data.paused);
-        setAgentPausedReason(typeof data.pausedReason === "string" ? data.pausedReason : null);
+        setAgentPausedReason(
+          typeof data.pausedReason === 'string' ? data.pausedReason : null,
+        );
         addLogEntry(
-          `[${new Date().toLocaleTimeString()}] Agent ${data.paused ? "paused" : "resumed"}`,
+          `[${new Date().toLocaleTimeString()}] Agent ${data.paused ? 'paused' : 'resumed'}`,
         );
       }
     } catch {}
@@ -329,6 +389,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     // actions
     fetchSpending,
     runAgentTask,
+    cancelAgentTask,
     updatePolicy,
     resetAgent,
     togglePause,

@@ -2,6 +2,7 @@
 
 import type { RecipientProfile } from "../lib/types";
 import type { AgentInfo } from "./types";
+import { EXPLORER_ACCOUNT_URL } from "../lib/stellar-network";
 
 export interface DashboardHeaderProps {
   recipient: RecipientProfile;
@@ -59,7 +60,7 @@ export function DashboardHeader({
         <div className="flex items-center gap-4">
           {walletBalance && agentInfo?.agentWallet && (
             <a
-              href={`https://stellar.expert/explorer/testnet/account/${agentInfo.agentWallet}`}
+              href={`${EXPLORER_ACCOUNT_URL}/${agentInfo.agentWallet}`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-right group"

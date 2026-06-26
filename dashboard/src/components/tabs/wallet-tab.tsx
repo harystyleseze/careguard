@@ -4,6 +4,7 @@ import { useState } from "react";
 import { copyText } from "../../lib/clipboard";
 import { Toast } from "../primitives/toast";
 import type { AgentInfo } from "../types";
+import { EXPLORER_ACCOUNT_URL, NETWORK_LABEL } from "../../lib/stellar-network";
 
 export interface WalletTabProps {
   agentInfo: AgentInfo | null;
@@ -48,7 +49,7 @@ export function WalletTab({ agentInfo, walletBalance, walletXlm }: WalletTabProp
         <p className="text-xs text-slate-500 mb-4">
           This is the AI agent&apos;s Stellar wallet. It holds USDC for paying
           pharmacies, medical bills, and API query fees. All balances are on
-          Stellar testnet.
+          {NETWORK_LABEL.replace('Stellar ', '').toLowerCase()}.
         </p>
         <div className="grid grid-cols-2 gap-4 mb-6">
           <div className="bg-sky-50 rounded-lg p-4 text-center border border-sky-200">
@@ -94,7 +95,7 @@ export function WalletTab({ agentInfo, walletBalance, walletXlm }: WalletTabProp
               Network
             </label>
             <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
-              Stellar Testnet
+              {NETWORK_LABEL}
             </div>
           </div>
           <div>
@@ -109,7 +110,7 @@ export function WalletTab({ agentInfo, walletBalance, walletXlm }: WalletTabProp
         <div className="mt-6 flex gap-3">
           {agentInfo?.agentWallet && (
             <a
-              href={`https://stellar.expert/explorer/testnet/account/${agentInfo.agentWallet}`}
+              href={`${EXPLORER_ACCOUNT_URL}/${agentInfo.agentWallet}`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex-1 text-center px-4 py-2 bg-sky-500 text-white rounded-lg text-sm font-medium hover:bg-sky-600 active:bg-sky-700 cursor-pointer transition-all"

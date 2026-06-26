@@ -106,6 +106,34 @@ Requests exceeding the limit receive HTTP 413 with a JSON error body.
 
 ---
 
+## #96 — No Sensitive Data in `localStorage`/`sessionStorage`
+
+### Policy
+
+The dashboard must never persist data to `localStorage` or `sessionStorage`. Both survive page reloads (and `localStorage` survives tab/browser close) on a shared or unattended device — a real risk for a caregiver app that may be left open at a kiosk or family computer. Any PII/PHI, transaction history, or auth token written there would outlive the React session and the tab.
+
+Today the dashboard keeps all session state in React (component state / context), which is cleared on reload. This is intentional and should stay the default.
+
+### Enforcement
+
+- `dashboard/eslint.config.mjs` defines a `no-restricted-properties` rule for `dashboard/src/**` that errors on `localStorage.setItem` and `sessionStorage.setItem`.
+- The dashboard E2E workflow (`.github/workflows/dashboard-e2e.yml`) runs `grep -rn "\(localStorage\|sessionStorage\)\.setItem" dashboard/src` as a CI gate, so the check still fires even if someone locally bypasses lint.
+- A Playwright check confirms no `localStorage`/`sessionStorage` keys exist after a full dashboard interaction + reload (`dashboard/tests/e2e/no-local-storage.spec.ts`).
+
+### Exception process
+
+If a future feature genuinely needs client-side persistence (e.g. a non-sensitive UI preference like "collapsed sidebar"):
+
+1. Get sign-off from a code owner in PR review — confirm the value contains no PII/PHI/secrets.
+2. Add a scoped `// eslint-disable-next-line no-restricted-properties -- <reason>, approved by @<reviewer>` comment directly above the call.
+3. Add a row to the table below documenting what's stored and why.
+
+| Key | Data stored | Approved by | Date |
+|-----|-------------|-------------|------|
+| _none yet_ | | | |
+
+---
+
 ## Secret Rotation
 
 See `docs/runbooks/rotate-secrets.md` for step-by-step rotation procedures for every secret (agent wallet, OZ API key, LLM key, MPP key, JWT).

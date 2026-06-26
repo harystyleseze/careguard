@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { getLocalDateStr } from "../tz.ts";
+import { getLocalDateStr, getLocalDayBounds } from "../tz.ts";
 
 // Isolated module — no external deps, no mocking needed.
 
@@ -76,5 +76,25 @@ describe("getLocalDateStr (Issue #19 — timezone-aware daily limit)", () => {
     // UTC 2024-03-15T03:00:00Z = Eastern 2024-03-14T23:00:00 (11 pm March 14, EST = UTC-5)
     const d = getLocalDateStr("America/New_York", new Date("2024-03-15T03:00:00Z"));
     expect(d).toBe("2024-03-14");
+  });
+
+  it("returns exact UTC day bounds for UTC timezones", () => {
+    const { dayStart, dayEnd } = getLocalDayBounds(
+      "UTC",
+      new Date("2026-04-10T12:00:00.000Z"),
+    );
+
+    expect(dayStart.toISOString()).toBe("2026-04-10T00:00:00.000Z");
+    expect(dayEnd.toISOString()).toBe("2026-04-11T00:00:00.000Z");
+  });
+
+  it("returns timezone-aware day bounds for Phoenix", () => {
+    const { dayStart, dayEnd } = getLocalDayBounds(
+      "America/Phoenix",
+      new Date("2024-06-16T12:00:00.000Z"),
+    );
+
+    expect(dayStart.toISOString()).toBe("2024-06-16T07:00:00.000Z");
+    expect(dayEnd.toISOString()).toBe("2024-06-17T07:00:00.000Z");
   });
 });

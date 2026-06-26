@@ -25,8 +25,14 @@ describe("validateTask", () => {
     expect(result.error).toBeDefined();
   });
 
-  it("rejects task over 2000 chars", () => {
-    const result = validateTask("a".repeat(2001));
+  it("rejects task under 10 chars", () => {
+    const result = validateTask("short");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBeDefined();
+  });
+
+  it("rejects task over 5000 chars", () => {
+    const result = validateTask("a".repeat(5001));
     expect(result.ok).toBe(false);
     expect(result.error).toBeDefined();
   });

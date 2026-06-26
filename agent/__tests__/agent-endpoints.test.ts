@@ -34,7 +34,7 @@ vi.mock("../tools.ts", () => ({
   getSpendingSummary: vi.fn(() => ({
     policy: {
       dailyLimit: 100,
-      monthlyLimit: 500,
+      monthlyLimit: 800,
       medicationMonthlyBudget: 300,
       billMonthlyBudget: 500,
       approvalThreshold: 75,
@@ -48,6 +48,7 @@ vi.mock("../tools.ts", () => ({
   getSpendingTracker: vi.fn(() => ({ transactions: [], policy: {}, spending: {} })),
   resetSpendingTracker: vi.fn(),
   TOOL_DEFINITIONS: [],
+  validateToolInput: vi.fn((_name: string, input: Record<string, unknown>) => input),
 }));
 
 vi.mock("../../shared/x402-middleware.ts", () => ({
@@ -74,8 +75,10 @@ process.env.AGENT_SECRET_KEY = "SCZANGBA5YHTNYVS23C4QSOT45PZCBL2D4ZO5TSRE73UFYS3
 process.env.PHARMACY_1_PUBLIC_KEY = "GBQTESTPHARMACY1PUBKEY";
 process.env.BILL_PROVIDER_PUBLIC_KEY = "GBQTESTBILLPROVIDERPUBKEY";
 process.env.MPP_SECRET_KEY = "test-mpp-secret-key";
+process.env.CAREGIVER_TOKEN = "test-caregiver-token";
 
 const { app } = await import("../../server.ts");
+const auth = (req: any) => req.set("Authorization", "Bearer test-caregiver-token");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // pause / status / run-while-paused
@@ -83,26 +86,25 @@ const { app } = await import("../../server.ts");
 
 describe("POST /agent/pause → GET /agent/status → POST /agent/run (Issue #42)", () => {
   beforeEach(async () => {
-    await request(app).post("/agent/resume");
+    await auth(request(app).post("/agent/resume"));
   });
 
   it("POST /agent/pause sets paused=true", async () => {
-    const res = await request(app).post("/agent/pause");
+    const res = await auth(request(app).post("/agent/pause"));
     expect(res.status).toBe(200);
     expect(res.body.paused).toBe(true);
   });
 
   it("GET /agent/status reflects paused state", async () => {
-    await request(app).post("/agent/pause");
-    const res = await request(app).get("/agent/status");
+    await auth(request(app).post("/agent/pause"));
+    const res = await auth(request(app).get("/agent/status"));
     expect(res.status).toBe(200);
     expect(res.body.paused).toBe(true);
   });
 
   it("POST /agent/run returns 409 when agent is paused", async () => {
-    await request(app).post("/agent/pause");
-    const res = await request(app)
-      .post("/agent/run")
+    await auth(request(app).post("/agent/pause"));
+    const res = await auth(request(app).post("/agent/run"))
       .send({ task: "Compare medication prices" });
     expect(res.status).toBe(409);
     expect(res.body.paused).toBe(true);
@@ -115,16 +117,16 @@ describe("POST /agent/pause → GET /agent/status → POST /agent/run (Issue #42
 
 describe("POST /agent/resume (Issue #42)", () => {
   it("clears paused state", async () => {
-    await request(app).post("/agent/pause");
-    const res = await request(app).post("/agent/resume");
+    await auth(request(app).post("/agent/pause"));
+    const res = await auth(request(app).post("/agent/resume"));
     expect(res.status).toBe(200);
     expect(res.body.paused).toBe(false);
   });
 
   it("GET /agent/status shows paused=false after resume", async () => {
-    await request(app).post("/agent/pause");
-    await request(app).post("/agent/resume");
-    const res = await request(app).get("/agent/status");
+    await auth(request(app).post("/agent/pause"));
+    await auth(request(app).post("/agent/resume"));
+    const res = await auth(request(app).get("/agent/status"));
     expect(res.body.paused).toBe(false);
   });
 });
@@ -135,17 +137,17 @@ describe("POST /agent/resume (Issue #42)", () => {
 
 describe("POST /agent/run — validation (Issue #42)", () => {
   beforeEach(async () => {
-    await request(app).post("/agent/resume");
+    await auth(request(app).post("/agent/resume"));
   });
 
   it("missing task → 400", async () => {
-    const res = await request(app).post("/agent/run").send({});
+    const res = await auth(request(app).post("/agent/run")).send({});
     expect(res.status).toBe(400);
     expect(res.body.error).toBeTruthy();
   });
 
   it("empty string task → 400", async () => {
-    const res = await request(app).post("/agent/run").send({ task: "" });
+    const res = await auth(request(app).post("/agent/run")).send({ task: "" });
     expect(res.status).toBe(400);
   });
 
@@ -179,8 +181,7 @@ describe("POST /agent/run — validation (Issue #42)", () => {
       ],
     });
 
-    const res = await request(app)
-      .post("/agent/run")
+    const res = await auth(request(app).post("/agent/run"))
       .send({ task: "What is the current spending summary?" });
 
     expect(res.status).toBe(200);
@@ -198,40 +199,44 @@ describe("POST /agent/run — validation (Issue #42)", () => {
 describe("POST /agent/policy (Issue #42)", () => {
   const VALID_POLICY = {
     dailyLimit: 150,
-    monthlyLimit: 600,
+    monthlyLimit: 900,
     medicationMonthlyBudget: 350,
     billMonthlyBudget: 550,
     approvalThreshold: 80,
   };
 
   it("valid body → 200 with success: true", async () => {
-    const res = await request(app).post("/agent/policy").send(VALID_POLICY);
+    const res = await auth(request(app).post("/agent/policy")).send(VALID_POLICY);
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
   });
 
   it("invalid body (missing fields) → 400", async () => {
-    const res = await request(app).post("/agent/policy").send({ dailyLimit: 100 });
+    const res = await auth(request(app).post("/agent/policy")).send({ dailyLimit: 100 });
     expect(res.status).toBe(400);
   });
 
   it("negative value → 400", async () => {
-    const res = await request(app)
-      .post("/agent/policy")
+    const res = await auth(request(app).post("/agent/policy"))
       .send({ ...VALID_POLICY, dailyLimit: -10 });
     expect(res.status).toBe(400);
   });
 
   it("zero value → 400", async () => {
-    const res = await request(app)
-      .post("/agent/policy")
+    const res = await auth(request(app).post("/agent/policy"))
       .send({ ...VALID_POLICY, monthlyLimit: 0 });
     expect(res.status).toBe(400);
   });
 
+  it("category budgets exceeding monthlyLimit → 400", async () => {
+    const res = await auth(request(app).post("/agent/policy"))
+      .send({ ...VALID_POLICY, monthlyLimit: 600 });
+    expect(res.status).toBe(400);
+    expect(res.body.details.join(" ")).toContain("monthlyLimit");
+  });
+
   it("non-object body → 400", async () => {
-    const res = await request(app)
-      .post("/agent/policy")
+    const res = await auth(request(app).post("/agent/policy"))
       .set("Content-Type", "application/json")
       .send('"just a string"');
     expect(res.status).toBe(400);
@@ -244,14 +249,14 @@ describe("POST /agent/policy (Issue #42)", () => {
 
 describe("POST /agent/reset (Issue #42)", () => {
   it("returns { success: true }", async () => {
-    const res = await request(app).post("/agent/reset");
+    const res = await auth(request(app).post("/agent/reset"));
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
   });
 
   it("GET /agent/transactions returns empty transactions after reset", async () => {
-    await request(app).post("/agent/reset");
-    const res = await request(app).get("/agent/transactions");
+    await auth(request(app).post("/agent/reset"));
+    const res = await auth(request(app).get("/agent/transactions"));
     expect(res.status).toBe(200);
     expect(res.body.transactions).toEqual([]);
   });
@@ -262,34 +267,31 @@ describe("POST /agent/reset (Issue #42)", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Agent endpoints — with and without X-API-Key header (Issue #42, #10)", () => {
-  it("GET /agent/status works without X-API-Key header", async () => {
+  it("missing token returns 401", async () => {
     const res = await request(app).get("/agent/status");
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(401);
+    expect(res.headers["www-authenticate"]).toBe("Bearer");
   });
 
-  it("GET /agent/status works with X-API-Key header (no auth required on agent routes)", async () => {
+  it("wrong token returns 403", async () => {
     const res = await request(app)
       .get("/agent/status")
-      .set("X-API-Key", "some-arbitrary-key");
+      .set("Authorization", "Bearer wrong-token");
+    expect(res.status).toBe(403);
+  });
+
+  it("correct token returns 200", async () => {
+    const res = await auth(request(app).get("/agent/status"));
     expect(res.status).toBe(200);
   });
 
-  it("POST /agent/pause works without X-API-Key header", async () => {
-    const res = await request(app).post("/agent/resume");
-    expect(res.status).toBe(200);
-  });
-
-  it("POST /agent/run returns 400 (validation) without X-API-Key header", async () => {
+  it("POST /agent/run requires the Bearer token before validation", async () => {
     const res = await request(app).post("/agent/run").send({});
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
   });
 
-  it("POST /agent/run returns same status with X-API-Key header as without", async () => {
-    const withoutKey = await request(app).post("/agent/run").send({});
-    const withKey = await request(app)
-      .post("/agent/run")
-      .set("X-API-Key", "some-key")
-      .send({});
-    expect(withKey.status).toBe(withoutKey.status);
+  it("POST /agent/run with correct token reaches request validation", async () => {
+    const res = await auth(request(app).post("/agent/run")).send({});
+    expect(res.status).toBe(400);
   });
 });

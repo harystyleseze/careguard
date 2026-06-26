@@ -20,10 +20,11 @@ const RECIPIENT = { name: "Rosa Garcia" };
 
 const BASE_POLICY = {
   dailyLimit: 100,
-  monthlyLimit: 500,
+  monthlyLimit: 800,
   medicationMonthlyBudget: 300,
   billMonthlyBudget: 500,
   approvalThreshold: 75,
+  holdTimeSeconds: 0,
 };
 
 function buildProps(overrides: Partial<PolicyTabProps> = {}): PolicyTabProps {
@@ -54,10 +55,11 @@ describe("PolicyTab — rendering (Issue #47)", () => {
     const props = buildProps({
       policyForm: {
         dailyLimit: 120,
-        monthlyLimit: 600,
+        monthlyLimit: 700,
         medicationMonthlyBudget: 250,
         billMonthlyBudget: 450,
         approvalThreshold: 80,
+        holdTimeSeconds: 0,
       },
     });
     render(<PolicyTab {...props} />);
@@ -66,7 +68,7 @@ describe("PolicyTab — rendering (Issue #47)", () => {
     const monthlyInput = screen.getByLabelText(/Monthly Spending Limit/i) as HTMLInputElement;
 
     expect(dailyInput.value).toBe("120");
-    expect(monthlyInput.value).toBe("600");
+    expect(monthlyInput.value).toBe("700");
   });
 
   it("renders the 'Update Policy' button when policySaved is false", () => {
@@ -114,7 +116,7 @@ describe("PolicyTab — form interaction (Issue #47)", () => {
     render(
       <PolicyTab
         {...buildProps({
-          policyForm: { ...BASE_POLICY, dailyLimit: 600 }, // 600 > monthlyLimit 500
+          policyForm: { ...BASE_POLICY, dailyLimit: 900 }, // 900 > monthlyLimit 800
         })}
       />,
     );

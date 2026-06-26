@@ -30,14 +30,14 @@ function buildApp(defaultLimit: string, billAuditLimit?: string) {
   return app;
 }
 
-const oversized = JSON.stringify({ data: "x".repeat(25_000) });    // ~25kb
+const oversized = JSON.stringify({ data: "x".repeat(70_000) });    // ~70kb
 const medium    = JSON.stringify({ data: "x".repeat(200_000) });   // ~200kb
 const small     = JSON.stringify({ task: "Check drug prices" });
 
-describe("#92 body-size limit — 20kb default", () => {
-  const app = buildApp("20kb");
+describe("#92 body-size limit — 64kb default", () => {
+  const app = buildApp("64kb");
 
-  it("returns 413 when POST body exceeds 20kb", async () => {
+  it("returns 413 when POST body exceeds 64kb", async () => {
     const res = await request(app)
       .post("/agent/run")
       .set("Content-Type", "application/json")
@@ -47,7 +47,7 @@ describe("#92 body-size limit — 20kb default", () => {
     expect(res.body.error).toMatch(/too large/i);
   });
 
-  it("does not 413 when body is within 20kb", async () => {
+  it("does not 413 when body is within 64kb", async () => {
     const res = await request(app)
       .post("/agent/run")
       .set("Content-Type", "application/json")
@@ -70,7 +70,7 @@ describe("#92 body-size limit — bill-audit route gets 256kb", () => {
     expect(res.status).toBe(200);
   });
 
-  it("still 413 on non-bill route with oversized body", async () => {
+  it("still 413 on non-bill route with 70kb oversized body", async () => {
     const res = await request(app)
       .post("/agent/run")
       .set("Content-Type", "application/json")

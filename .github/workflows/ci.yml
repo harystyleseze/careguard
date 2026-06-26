@@ -10,23 +10,40 @@ jobs:
   test:
     name: Test & SBOM
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22]
 
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: ${{ matrix.node-version }}
+          cache: "pnpm"
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps
+        run: pnpm install --frozen-lockfile
 
       - name: Type check
-        run: npm run build
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
 
       - name: Run tests
-        run: npm test
+        run: pnpm test
+
+      - name: Check for committed sensitive data files
+        run: |
+          if git diff --name-only origin/main...HEAD 2>/dev/null | grep -qE '^data/(spending|orders)\.json$'; then
+            echo "::error::Sensitive data file detected in PR diff (data/spending.json or data/orders.json). Remove it before merging."
+            exit 1
+          fi
 
       - name: Run evals (requires LLM_API_KEY)
         if: secrets.LLM_API_KEY != ''
@@ -36,7 +53,7 @@ jobs:
 
       - name: Security audit (high/critical)
         run: |
-          npm audit --json 2>/dev/null | node -e "
+          pnpm audit --json 2>/dev/null | node -e "
             const data = JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf8'));
             const vulns = data.vulnerabilities || {};
             const high = Object.values(vulns).filter(v => ['high','critical'].includes(v.severity));

@@ -71,7 +71,8 @@ export abstract class BasePricingProvider implements PricingProvider {
 export class StaticProvider extends BasePricingProvider {
   name = "static";
   
-  private static PRICING_DATABASE: Record<string, PharmacyPrice[]> = {
+  private static PRICING_DATABASE: Record<string, PharmacyPrice[]> = (() => {
+    const raw: Record<string, PharmacyPrice[]> = {
     lisinopril: [
       { pharmacy: "Costco Pharmacy", id: "costco-001", price: 3.50, distance: "2.1 mi" },
       { pharmacy: "Walmart Pharmacy", id: "walmart-001", price: 4.00, distance: "1.8 mi" },
@@ -107,7 +108,9 @@ export class StaticProvider extends BasePricingProvider {
       { pharmacy: "Walgreens", id: "walgreens-001", price: 25.49, distance: "0.8 mi" },
       { pharmacy: "Rite Aid", id: "riteaid-001", price: 27.99, distance: "3.2 mi" },
     ],
-  };
+    };
+    return Object.fromEntries(Object.entries(raw).map(([k, v]) => [k.toLowerCase(), v]));
+  })();
 
   async getPrices(drugName: string, _zipCode?: string): Promise<PharmacyPrice[]> {
     const normalized = drugName.toLowerCase();
@@ -785,36 +788,37 @@ export class GoodRxProvider extends BasePricingProvider {
     const database: Record<string, PharmacyPrice[]> = {};
     
     for (const drug of commonDrugs) {
-      database[drug.name] = [
-        { 
-          pharmacy: "Costco Pharmacy", 
-          id: `costco-${drug.name}`, 
-          price: drug.basePrice, 
-          distance: "2.1 mi" 
+      const key = drug.name.toLowerCase();
+      database[key] = [
+        {
+          pharmacy: "Costco Pharmacy",
+          id: `costco-${key}`,
+          price: drug.basePrice,
+          distance: "2.1 mi"
         },
-        { 
-          pharmacy: "Walmart Pharmacy", 
-          id: `walmart-${drug.name}`, 
-          price: Math.round(drug.basePrice * 1.1 * 100) / 100, 
-          distance: "1.8 mi" 
+        {
+          pharmacy: "Walmart Pharmacy",
+          id: `walmart-${key}`,
+          price: Math.round(drug.basePrice * 1.1 * 100) / 100,
+          distance: "1.8 mi"
         },
-        { 
-          pharmacy: "CVS Pharmacy", 
-          id: `cvs-${drug.name}`, 
-          price: Math.round(drug.basePrice * 2.8 * 100) / 100, 
-          distance: "0.5 mi" 
+        {
+          pharmacy: "CVS Pharmacy",
+          id: `cvs-${key}`,
+          price: Math.round(drug.basePrice * 2.8 * 100) / 100,
+          distance: "0.5 mi"
         },
-        { 
-          pharmacy: "Walgreens", 
-          id: `walgreens-${drug.name}`, 
-          price: Math.round(drug.basePrice * 3.2 * 100) / 100, 
-          distance: "0.8 mi" 
+        {
+          pharmacy: "Walgreens",
+          id: `walgreens-${key}`,
+          price: Math.round(drug.basePrice * 3.2 * 100) / 100,
+          distance: "0.8 mi"
         },
-        { 
-          pharmacy: "Rite Aid", 
-          id: `riteaid-${drug.name}`, 
-          price: Math.round(drug.basePrice * 3.8 * 100) / 100, 
-          distance: "3.2 mi" 
+        {
+          pharmacy: "Rite Aid",
+          id: `riteaid-${key}`,
+          price: Math.round(drug.basePrice * 3.8 * 100) / 100,
+          distance: "3.2 mi"
         },
       ];
     }
@@ -967,36 +971,37 @@ export class CostcoRxProvider extends BasePricingProvider {
     const database: Record<string, PharmacyPrice[]> = {};
     
     for (const drug of costcoDrugs) {
-      database[drug.name] = [
-        { 
-          pharmacy: "Costco Pharmacy", 
-          id: `costco-${drug.name}`, 
-          price: drug.costcoPrice, 
-          distance: "2.1 mi" 
+      const key = drug.name.toLowerCase();
+      database[key] = [
+        {
+          pharmacy: "Costco Pharmacy",
+          id: `costco-${key}`,
+          price: drug.costcoPrice,
+          distance: "2.1 mi"
         },
-        { 
-          pharmacy: "Sam's Club Pharmacy", 
-          id: `sams-${drug.name}`, 
-          price: Math.round(drug.costcoPrice * 1.05 * 100) / 100, 
-          distance: "2.5 mi" 
+        {
+          pharmacy: "Sam's Club Pharmacy",
+          id: `sams-${key}`,
+          price: Math.round(drug.costcoPrice * 1.05 * 100) / 100,
+          distance: "2.5 mi"
         },
-        { 
-          pharmacy: "Walmart Pharmacy", 
-          id: `walmart-${drug.name}`, 
-          price: Math.round(drug.costcoPrice * 1.15 * 100) / 100, 
-          distance: "1.8 mi" 
+        {
+          pharmacy: "Walmart Pharmacy",
+          id: `walmart-${key}`,
+          price: Math.round(drug.costcoPrice * 1.15 * 100) / 100,
+          distance: "1.8 mi"
         },
-        { 
-          pharmacy: "CVS Pharmacy", 
-          id: `cvs-${drug.name}`, 
-          price: Math.round(drug.costcoPrice * drug.competitorMultiplier * 100) / 100, 
-          distance: "0.5 mi" 
+        {
+          pharmacy: "CVS Pharmacy",
+          id: `cvs-${key}`,
+          price: Math.round(drug.costcoPrice * drug.competitorMultiplier * 100) / 100,
+          distance: "0.5 mi"
         },
-        { 
-          pharmacy: "Walgreens", 
-          id: `walgreens-${drug.name}`, 
-          price: Math.round(drug.costcoPrice * (drug.competitorMultiplier + 0.2) * 100) / 100, 
-          distance: "0.8 mi" 
+        {
+          pharmacy: "Walgreens",
+          id: `walgreens-${key}`,
+          price: Math.round(drug.costcoPrice * (drug.competitorMultiplier + 0.2) * 100) / 100,
+          distance: "0.8 mi"
         },
       ];
     }

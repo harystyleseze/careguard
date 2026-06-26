@@ -1,6 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { Toaster } from "@/components/ui/toaster";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,6 +17,29 @@ export const metadata: Metadata = {
   title: "CareGuard — AI Healthcare Agent",
   description:
     "AI agent that autonomously manages elderly healthcare spending on Stellar",
+  manifest: "/manifest.json",
+  robots: {
+    index: false,
+    follow: false,
+  },
+  icons: {
+    icon: "/icon-192.png",
+    apple: "/icon-192.png",
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "CareGuard",
+  },
+};
+
+// `viewport` and `themeColor` are exported separately from `metadata` per the
+// Next.js App Router metadata API (themeColor inside metadata is deprecated).
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: "#0ea5e9",
 };
 
 export default function RootLayout({
@@ -30,6 +54,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">
         {children}
+        <Toaster />
       </body>
     </html>
   );

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@sentry/nextjs": "^8.45.1",
+    "sonner": "^2.0.3",
     "@tanstack/react-virtual": "^3.13.24",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",

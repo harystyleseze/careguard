@@ -1,0 +1,237 @@
+openapi: '3.1.0'
+info:
+  title: 'CareGuard API'
+  version: '1.0.0'
+  description: 'OpenAPI spec for CareGuard services: agent spending, pharmacy, bill audit, drug interactions, and payments.'
+servers:
+  - url: 'http://localhost:3000'
+    description: 'Development server'
+  - url: 'https://api.careguard.xyz'
+    description: 'Production server'
+security:
+  - X402Auth:
+[]
+components:
+  securitySchemes:
+    X402Auth:
+      type: 'http'
+      scheme: 'bearer'
+      description: 'x402 payment protocol. Include X-PAYMENT header with payment proof on protected routes.'
+  schemas:
+    Error:
+      type: 'object'
+      properties:
+        error:
+          type: 'string'
+        code:
+          type: 'string'
+        details:
+          type: 'object'
+paths:
+  /agent/spending:
+    get:
+      summary: 'Get agent spending summary'
+      tags:
+        - 'Agent'
+      responses:
+        200:
+          description: 'Spending summary'
+          content:
+            application/json:
+              schema:
+                type: 'object'
+                properties:
+                  totalSpent:
+                    type: 'number'
+                  categories:
+                    type: 'object'
+  /pharmacy/compare:
+    get:
+      summary: 'Compare pharmacy prices for a drug'
+      tags:
+        - 'Pharmacy'
+      security:
+        - X402Auth:
+[]
+      parameters:
+        - in: 'query'
+          name: 'drug'
+          required: true
+          schema:
+            type: 'string'
+            minLength: 1
+            maxLength: 80
+          description: 'Drug name. Maximum length: 80 characters.'
+        - in: 'query'
+          name: 'dosage'
+          required: false
+          schema:
+            type: 'string'
+            minLength: 1
+            maxLength: 80
+          description: 'Optional dosage string. Maximum length: 80 characters.'
+        - in: 'query'
+          name: 'zip'
+          required: false
+          schema:
+            type: 'string'
+            pattern: '^\d{5}$'
+          description: '5-digit ZIP code used for distance adjustments.'
+      responses:
+        200:
+          description: 'Pharmacy query results'
+        400:
+          description: 'Invalid request'
+  /pharmacy/prices:
+    post:
+      summary: 'Admin upsert for a drug price at a pharmacy'
+      tags:
+        - 'Pharmacy'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: 'object'
+              properties:
+                drug:
+                  type: 'string'
+                  minLength: 1
+                  maxLength: 80
+                pharmacyId:
+                  type: 'string'
+                  minLength: 1
+                  maxLength: 80
+                price:
+                  type: 'number'
+                  exclusiveMinimum: 0
+                  maximum: 10000
+              required:
+                - 'drug'
+                - 'pharmacyId'
+                - 'price'
+      responses:
+        200:
+          description: 'Price created or updated'
+        400:
+          description: 'Validation error'
+  /bill/audit:
+    post:
+      summary: 'Audit medical bills'
+      tags:
+        - 'Bill Audit'
+      security:
+        - X402Auth:
+[]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: 'object'
+              properties:
+                lineItems:
+                  type: 'array'
+                  items:
+                    type: 'object'
+                    properties:
+                      cptCode:
+                        type: 'string'
+                      quantity:
+                        type: 'integer'
+                        minimum: 1
+                        maximum: 999
+                      chargedAmount:
+                        type: 'number'
+                        minimum: 0
+                        maximum: 1000000
+                      description:
+                        type: 'string'
+                        minLength: 1
+                        maxLength: 80
+                    required:
+                      - 'cptCode'
+                      - 'quantity'
+                      - 'chargedAmount'
+                      - 'description'
+              required:
+                - 'lineItems'
+      responses:
+        200:
+          description: 'Audit results'
+        400:
+          description: 'Validation error'
+          content:
+            application/json:
+              schema:
+                type: 'object'
+                properties:
+                  errors:
+                    type: 'array'
+  /drug/interactions:
+    get:
+      summary: 'Check drug interactions for a medication list'
+      tags:
+        - 'Drug Interactions'
+      security:
+        - X402Auth:
+[]
+      parameters:
+        - in: 'query'
+          name: 'meds'
+          required: true
+          schema:
+            type: 'string'
+            minLength: 1
+            maxLength: 1619
+          description: 'Comma-separated medication names. Each medication name is limited to 80 characters.'
+      responses:
+        200:
+          description: 'Drug interaction results'
+        400:
+          description: 'Validation error'
+  /pharmacy/order:
+    post:
+      summary: 'Submit a paid pharmacy order'
+      tags:
+        - 'Pharmacy Payments'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: 'object'
+              properties:
+                drug:
+                  type: 'string'
+                  minLength: 1
+                  maxLength: 80
+                pharmacy:
+                  type: 'string'
+                  minLength: 1
+                  maxLength: 80
+                amount:
+                  oneOf:
+                    - type: 'number'
+                      minimum: 0.01
+                      maximum: 10000
+                    - type: 'string'
+              required:
+                - 'drug'
+                - 'pharmacy'
+                - 'amount'
+      responses:
+        200:
+          description: 'Order confirmed'
+        400:
+          description: 'Validation error'
+        402:
+          description: 'Payment required'
+  /docs:
+    get:
+      summary: 'API documentation UI'
+      tags:
+        - 'Documentation'
+      responses:
+        200:
+          description: 'Scalar UI serving this OpenAPI spec'

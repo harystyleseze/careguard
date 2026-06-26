@@ -80,13 +80,15 @@ export default function Dashboard() {
             loading={state.loading}
             activeTask={state.activeTask}
             onRunTask={state.runAgentTask}
+            onCancelTask={state.cancelAgentTask}
+            recipient={recipient}
           />
         )}
         {activeTab === "medications" && (
           <MedicationsTab agentResult={state.agentResult} recipient={recipient} />
         )}
         {activeTab === "bills" && (
-          <BillsTab agentResult={state.agentResult} recipient={recipient} />
+          <BillsTab agentResult={state.agentResult} recipient={recipient} caregiverName={caregiver.name} />
         )}
         {activeTab === "approvals" && (
           <ApprovalsTab agentConnected={state.agentConnected} />
