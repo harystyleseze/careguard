@@ -2,7 +2,11 @@
   "name": "dashboard",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
+    "preinstall": "node ../scripts/check-node-version.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

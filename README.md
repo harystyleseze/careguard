@@ -90,6 +90,8 @@ For a full runtime flow diagram, module map, and integration details, see [docs/
 
 See [QUICKSTART.md](QUICKSTART.md) for the full setup guide.
 
+Prerequisite: Node.js 22 or later. If you use nvm, run `nvm use` from the repository root.
+
 ```bash
 # 1. Clone and install
 git clone https://github.com/harystyleseze/careguard
