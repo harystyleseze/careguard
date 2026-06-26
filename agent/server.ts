@@ -60,6 +60,7 @@ import {
 } from "./tool-result.ts";
 import { getPendingAdherences } from "../shared/adherence.ts";
 import { notify } from "../shared/notifications.ts";
+import { resolveStellarNetwork, validateSignerKeyForNetwork } from "../shared/stellar-network.ts";
 
 const PORT = parseInt(process.env.AGENT_PORT || "3004");
 
@@ -69,13 +70,40 @@ if (!process.env.AGENT_SECRET_KEY) throw new Error("AGENT_SECRET_KEY required in
 const LLM_BASE_URL = process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1";
 const LLM_MODEL = process.env.LLM_MODEL || "llama-3.3-70b-versatile";
 
+// LLM Temperature configuration
+// For tool-driven, deterministic agent behavior:
+// - Tool-call rounds: temperature 0 (no variance, focused on function calling)
+// - Final summary: temperature 0.3 (slight variance for natural phrasing)
+const LLM_TOOL_TEMPERATURE = parseFloat(process.env.LLM_TOOL_TEMPERATURE || "0");
+const LLM_SUMMARY_TEMPERATURE = parseFloat(process.env.LLM_SUMMARY_TEMPERATURE || "0.3");
+
+// LLM max_tokens heuristic (Issue #280)
+// Context-aware token budgeting to reduce wasted budget on simple queries:
+// - 512: Tool-call result processing (small context window, just processing previous results)
+// - 1024: Simple answers ("Did Rosa take her med?" style queries)
+// - 4096: Full summaries with complex reasoning (default, most conservative)
+const LLM_MAX_TOKENS_TOOL_RESULT = parseInt(process.env.LLM_MAX_TOKENS_TOOL_RESULT || "512", 10);
+const LLM_MAX_TOKENS_SIMPLE = parseInt(process.env.LLM_MAX_TOKENS_SIMPLE || "1024", 10);
+const LLM_MAX_TOKENS_SUMMARY = parseInt(process.env.LLM_MAX_TOKENS_SUMMARY || "4096", 10);
+
+// Token tracking for alerting when usage is high
+interface TokenStats {
+  totalTokens: number;
+  runCount: number;
+  averagePerRun: number;
+}
+let tokenStats: TokenStats = { totalTokens: 0, runCount: 0, averagePerRun: 0 };
+const TOKEN_USAGE_THRESHOLD_RATIO = 0.5; // Alert if average > 50% of LLM_MAX_TOKENS_SUMMARY
+
 const llm = new OpenAI({
   apiKey: process.env.LLM_API_KEY,
   baseURL: LLM_BASE_URL,
 });
 
+const STELLAR_CONFIG = resolveStellarNetwork();
 const agentKeypair = Keypair.fromSecret(process.env.AGENT_SECRET_KEY);
-const horizonServer = new Horizon.Server("https://horizon-testnet.stellar.org");
+validateSignerKeyForNetwork(process.env.AGENT_SECRET_KEY, STELLAR_CONFIG);
+const horizonServer = new Horizon.Server(STELLAR_CONFIG.horizonUrl);
 
 const SYSTEM_PROMPT = `You are CareGuard, an AI agent that manages healthcare spending for elderly care recipients on the Stellar blockchain. You work on behalf of a family caregiver to ensure their loved ones get the best prices on medications and catches errors in medical bills.
 
@@ -225,6 +253,33 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
 }
 
 
+// Calculate max_tokens based on iteration context and prior complexity
+// Heuristic: 512 for processing tool results, 1024 for simple queries, 4096 for summaries
+function calculateMaxTokens(iteration: number, toolCallCount: number, previousToolResultCount: number): number {
+  // First iteration with no priors: likely a simple query
+  if (iteration === 0) {
+    return LLM_MAX_TOKENS_SIMPLE; // 1024
+  }
+
+  // Just processed multiple tool results: need to synthesize them (still modest)
+  if (previousToolResultCount > 0 && previousToolResultCount <= 3) {
+    return LLM_MAX_TOKENS_TOOL_RESULT; // 512
+  }
+
+  // Multiple tool results or complex scenario: save budget but allow more
+  if (previousToolResultCount > 3) {
+    return LLM_MAX_TOKENS_SIMPLE; // 1024
+  }
+
+  // Late iterations: likely final summary, give full budget
+  if (iteration > 8) {
+    return LLM_MAX_TOKENS_SUMMARY; // 4096
+  }
+
+  // Default: conservative middle ground
+  return LLM_MAX_TOKENS_SIMPLE; // 1024
+}
+
 // Run the agent with a task — full agentic loop
 async function runAgent(task: string) {
   const userTask = _scrubSession ? scrubText(task, _scrubSession) : task;
@@ -244,9 +299,19 @@ async function runAgent(task: string) {
   for (let iteration = 0; iteration < 15; iteration++) {
     let response;
     try {
+      // Determine temperature based on whether this is a tool-call round or final summary
+      // Tool-call rounds use temperature=0 for deterministic tool selection
+      // Final summary (when no tools will be called) uses temperature=0.3 for natural phrasing
+      const isToolCallRound = toolCalls.length > 0 || iteration < 14; // Assume tool calls unless it's the last iteration
+      const temperature = isToolCallRound ? LLM_TOOL_TEMPERATURE : LLM_SUMMARY_TEMPERATURE;
+      
+      // Calculate max_tokens based on iteration context to optimize budget
+      const maxTokens = calculateMaxTokens(iteration, runToolCalls, toolCalls.length);
+      
       response = await llm.chat.completions.create({
         model: LLM_MODEL,
-        max_tokens: 4096,
+        temperature,
+        max_tokens: maxTokens,
         tools: LLM_TOOLS,
         messages,
       });
@@ -373,6 +438,26 @@ async function runAgent(task: string) {
     }
 
     if (choice.finish_reason === "stop") break;
+  }
+
+  // Track token usage for alerting on sustained high consumption
+  const totalRunTokens = llmUsage.promptTokens + llmUsage.completionTokens;
+  tokenStats.totalTokens += totalRunTokens;
+  tokenStats.runCount += 1;
+  tokenStats.averagePerRun = tokenStats.totalTokens / tokenStats.runCount;
+  
+  const averageUsageRatio = tokenStats.averagePerRun / LLM_MAX_TOKENS_SUMMARY;
+  if (averageUsageRatio > TOKEN_USAGE_THRESHOLD_RATIO) {
+    logger.warn(
+      {
+        currentRunTokens: totalRunTokens,
+        averageTokensPerRun: Math.round(tokenStats.averagePerRun),
+        averageUsageRatio: (averageUsageRatio * 100).toFixed(1) + "%",
+        runCount: tokenStats.runCount,
+        maxTokensPerRun: LLM_MAX_TOKENS_SUMMARY,
+      },
+      "LLM token usage exceeds 50% of budget threshold — consider optimizing prompts or increasing max_tokens"
+    );
   }
 
   return { response: finalResponse, toolCalls, spending: getSpendingSummary(), llmUsage, truncated };
@@ -746,7 +831,19 @@ app.get("/ready", (_req, res) => {
 export { app };
 
 const server = app.listen(PORT, async () => {
-  logger.info({ port: PORT, network: "stellar:testnet", llm: LLM_MODEL, llmBaseUrl: LLM_BASE_URL, wallet: agentKeypair.publicKey() }, "CareGuard Agent started");
+  logger.info(
+    {
+      port: PORT,
+      network: STELLAR_CONFIG.networkType,
+      horizonUrl: STELLAR_CONFIG.horizonUrl,
+      llm: LLM_MODEL,
+      llmBaseUrl: LLM_BASE_URL,
+      llmToolTemperature: LLM_TOOL_TEMPERATURE,
+      llmSummaryTemperature: LLM_SUMMARY_TEMPERATURE,
+      wallet: agentKeypair.publicKey(),
+    },
+    "CareGuard Agent started"
+  );
   await verifyWallet();
 });
 

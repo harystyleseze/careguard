@@ -61,6 +61,11 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const [policySaved, setPolicySaved] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
 
+  // Individual loading states for each data source (Issue #283)
+  const [loadingAgentInfo, setLoadingAgentInfo] = useState(false);
+  const [loadingSpending, setLoadingSpending] = useState(false);
+  const [loadingTransactions, setLoadingTransactions] = useState(false);
+
   const activeTabRef = useRef(activeTab);
   const policyDirtyRef = useRef(policyDirty);
   const lastConnectionStateRef = useRef<string | null>(null);
@@ -100,9 +105,14 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   }, []);
 
   const fetchAgentInfo = useCallback(async () => {
+    setLoadingAgentInfo(true);
     try {
       const res = await fetch(`${AGENT_URL}/`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        setAgentConnected(false);
+        setLoadingAgentInfo(false);
+        return;
+      }
       const data = await res.json();
       setAgentInfo(data);
       setAgentConnected(true);
@@ -123,14 +133,20 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       }
     } catch {
       setAgentConnected(false);
+    } finally {
+      setLoadingAgentInfo(false);
     }
   }, []);
 
   const fetchSpending = useCallback(
     async (opts?: { forcePolicySync?: boolean }) => {
+      setLoadingSpending(true);
       try {
         const res = await fetch(`${AGENT_URL}/agent/spending`);
-        if (!res.ok) return;
+        if (!res.ok) {
+          setLoadingSpending(false);
+          return;
+        }
         const data = SpendingDataSchema.parse(await res.json());
         setSpending(data);
         const forcePolicySync = Boolean(opts?.forcePolicySync);
@@ -141,19 +157,25 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
           setPolicyForm(data.policy);
           setPolicyDirty(false);
         }
-      } catch {}
+      } catch {} finally {
+        setLoadingSpending(false);
+      }
     },
     [],
   );
 
   const fetchTransactions = useCallback(
     async (limit?: number, offset?: number) => {
+      setLoadingTransactions(true);
       try {
         const params = new URLSearchParams();
         if (limit) params.append('limit', limit.toString());
         if (offset) params.append('offset', offset.toString());
         const res = await fetch(`${AGENT_URL}/agent/transactions?${params}`);
-        if (!res.ok) return;
+        if (!res.ok) {
+          setLoadingTransactions(false);
+          return;
+        }
         const data = await res.json();
         const txs = Array.isArray(data.transactions)
           ? data.transactions.map((t: unknown) => TransactionSchema.parse(t))
@@ -161,6 +183,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         setAllTransactions(txs);
         if (data.pagination) setPagination(data.pagination);
 
+        // Fetch audit events independently (don't block on this)
         const auditRes = await fetch(`${AGENT_URL}/agent/audit?limit=100`);
         if (auditRes.ok) {
           const auditData = await auditRes.json();
@@ -169,7 +192,9 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
             : [];
           setAuditEvents(logs);
         }
-      } catch {}
+      } catch {} finally {
+        setLoadingTransactions(false);
+      }
     },
     [],
   );
@@ -386,6 +411,10 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     policyDirty,
     setPolicyDirty,
     policySaved,
+    // individual loading states (Issue #283)
+    loadingAgentInfo,
+    loadingSpending,
+    loadingTransactions,
     // actions
     fetchSpending,
     runAgentTask,

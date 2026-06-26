@@ -19,6 +19,7 @@ import 'dotenv/config';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
 import { z } from 'zod';
 import { logger } from '../shared/logger.ts';
+import { resolveStellarNetwork, validateSignerKeyForNetwork } from '../shared/stellar-network.ts';
 import {
   BillAuditValidationError,
   validateLineItems,
@@ -74,6 +75,11 @@ import {
 
 assertMockNetworkAllowed();
 
+// Resolve Stellar network configuration
+const STELLAR_CONFIG = resolveStellarNetwork();
+const STELLAR_NETWORK_PASSPHRASE = STELLAR_CONFIG.networkPassphrase;
+const HORIZON_URL = STELLAR_CONFIG.horizonUrl;
+
 // Environment
 const AGENT_SECRET_KEY = process.env.AGENT_SECRET_KEY;
 const PHARMACY_API = process.env.PHARMACY_API_URL || 'http://localhost:3001';
@@ -86,7 +92,6 @@ const PHARMACY_PAYMENT_API =
 const USDC_ISSUER =
   process.env.USDC_ISSUER ||
   'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
-const HORIZON_URL = 'https://horizon-testnet.stellar.org';
 const MIN_FEE_STROOPS = 100;
 const MAX_FEE_STROOPS = parseInt(process.env.MAX_FEE_STROOPS || '100000');
 const STELLAR_TIMEBOUNDS_SECONDS = parseInt(process.env.STELLAR_TIMEBOUNDS_SECONDS || "60", 10);
@@ -94,6 +99,10 @@ const STELLAR_TIMEBOUNDS_SECONDS = parseInt(process.env.STELLAR_TIMEBOUNDS_SECON
 if (!AGENT_SECRET_KEY) throw new Error('AGENT_SECRET_KEY required in .env');
 
 const agentKeypair = Keypair.fromSecret(AGENT_SECRET_KEY);
+
+// Validate signer key matches configured network
+validateSignerKeyForNetwork(AGENT_SECRET_KEY, STELLAR_CONFIG);
+
 const horizonServer = new Horizon.Server(HORIZON_URL);
 
 // Helper: calculate recommended fee based on network conditions
@@ -180,7 +189,7 @@ async function submitTransactionWithFeeBump(
     try {
       const tx = new TransactionBuilder(account, {
         fee: currentFee,
-        networkPassphrase: Networks.TESTNET,
+        networkPassphrase: STELLAR_NETWORK_PASSPHRASE,
       });
 
       for (const op of operations) {
@@ -234,14 +243,16 @@ async function waitForStellarSettlement(
 }
 
 // --- x402 Client: Auto-handles 402 Payment Required for API queries ---
+// Use stellar:testnet or stellar:public scheme based on STELLAR_NETWORK env
+const x402SchemeId = `stellar:${STELLAR_CONFIG.networkType}`;
 const x402Fetch = isMockNetwork()
   ? fetch
   : wrapFetchWithPayment(
       fetch,
       new x402Client().register(
-        'stellar:testnet',
+        x402SchemeId,
         new ExactStellarScheme(
-          createEd25519Signer(AGENT_SECRET_KEY, 'stellar:testnet'),
+          createEd25519Signer(AGENT_SECRET_KEY, x402SchemeId),
         ),
       ),
     );

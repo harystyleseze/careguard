@@ -17,6 +17,7 @@ import { Horizon, Keypair } from "@stellar/stellar-sdk";
 import { pauseAgent, isPaused, getAgentState } from "./agent-state.ts";
 import { notify } from "./notifications.ts";
 import { appendAuditEntry } from "./audit-log.ts";
+import { resolveStellarNetwork } from "./stellar-network.ts";
 
 export interface BalanceSnapshot {
   usdc: number;
@@ -40,9 +41,12 @@ export interface WalletCheckOptions {
   loadBalances?: (address: string) => Promise<BalanceSnapshot>;
 }
 
-const DEFAULT_HORIZON = "https://horizon-testnet.stellar.org";
 const DEFAULT_USDC_ISSUER =
   process.env.USDC_ISSUER || "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+
+// Resolve at module load time to get configured Horizon URL
+const STELLAR_CONFIG = resolveStellarNetwork();
+const DEFAULT_HORIZON = STELLAR_CONFIG.horizonUrl;
 
 export function getThresholds(opts?: WalletCheckOptions): { usdc: number; xlm: number } {
   const usdc = opts?.usdcThreshold ?? parseFloat(process.env.WALLET_LOW_USDC_THRESHOLD || "1");
