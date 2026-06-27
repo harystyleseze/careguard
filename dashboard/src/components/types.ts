@@ -20,6 +20,8 @@ export interface AgentInfo {
   paused?: boolean;
 }
 
+export type WalletBalanceStatus = "loading" | "ok" | "error";
+
 export interface AgentLogEntry {
   id: string;
   timestamp: number;

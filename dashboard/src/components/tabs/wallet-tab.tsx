@@ -3,16 +3,27 @@
 import { useState } from "react";
 import { copyText } from "../../lib/clipboard";
 import { Toast } from "../primitives/toast";
-import type { AgentInfo } from "../types";
+import type { AgentInfo, WalletBalanceStatus } from "../types";
 import { EXPLORER_ACCOUNT_URL, NETWORK_LABEL } from "../../lib/stellar-network";
 
 export interface WalletTabProps {
   agentInfo: AgentInfo | null;
   walletBalance: string | null;
   walletXlm: string | null;
+  walletBalanceStatus: WalletBalanceStatus;
+  walletBalanceError: string | null;
+  onRetryWalletBalance: () => void;
+  loadingAgentInfo?: boolean;
 }
 
-export function WalletTab({ agentInfo, walletBalance, walletXlm }: WalletTabProps) {
+export function WalletTab({
+  agentInfo,
+  walletBalance,
+  walletXlm,
+  walletBalanceStatus,
+  walletBalanceError,
+  onRetryWalletBalance,
+}: WalletTabProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [toastFallback, setToastFallback] = useState<string | undefined>(undefined);
@@ -52,18 +63,53 @@ export function WalletTab({ agentInfo, walletBalance, walletXlm }: WalletTabProp
           {NETWORK_LABEL.replace('Stellar ', '').toLowerCase()}.
         </p>
         <div className="grid grid-cols-2 gap-4 mb-6">
-          <div className="bg-sky-50 rounded-lg p-4 text-center border border-sky-200">
-            <div className="text-2xl font-bold text-sky-700">
-              ${walletBalance ?? "0.00"}
+          {walletBalanceStatus === "loading" && (
+            <div
+              className="col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-4"
+              aria-live="polite"
+            >
+              <div className="text-sm font-semibold text-slate-700">
+                Loading wallet balances
+              </div>
+              <div className="mt-2 h-7 w-32 rounded bg-slate-200" />
             </div>
-            <div className="text-xs text-slate-500 mt-1">USDC Balance</div>
-          </div>
-          <div className="bg-slate-50 rounded-lg p-4 text-center border border-slate-200">
-            <div className="text-2xl font-bold text-slate-700">
-              {walletXlm ?? "0.00"}
+          )}
+          {walletBalanceStatus === "error" && (
+            <div
+              role="alert"
+              className="col-span-2 rounded-lg border border-amber-200 bg-amber-50 p-4"
+            >
+              <div className="text-sm font-semibold text-amber-800">
+                Balance unavailable
+              </div>
+              <p className="mt-1 text-xs text-amber-700">
+                {walletBalanceError || "Unable to load wallet balances."}
+              </p>
+              <button
+                type="button"
+                onClick={onRetryWalletBalance}
+                className="mt-3 px-3 py-1.5 rounded-lg bg-amber-100 text-xs font-medium text-amber-800 hover:bg-amber-200 cursor-pointer transition-all"
+              >
+                Try again
+              </button>
             </div>
-            <div className="text-xs text-slate-500 mt-1">XLM Balance</div>
-          </div>
+          )}
+          {walletBalanceStatus === "ok" && (
+            <>
+              <div className="bg-sky-50 rounded-lg p-4 text-center border border-sky-200">
+                <div className="text-2xl font-bold text-sky-700">
+                  ${walletBalance ?? "0.00"}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">USDC Balance</div>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center border border-slate-200">
+                <div className="text-2xl font-bold text-slate-700">
+                  {walletXlm ?? "0.00"}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">XLM Balance</div>
+              </div>
+            </>
+          )}
         </div>
         <div className="space-y-3">
           <div>
