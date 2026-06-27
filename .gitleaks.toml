@@ -1,7 +1,6 @@
 # Gitleaks configuration file with custom rules for CareGuard secrets
 
-[title]
-"CareGuard custom secret patterns"
+title = "CareGuard custom secret patterns"
 
 [[rules]]
 id = "stellar-secret-seed"
