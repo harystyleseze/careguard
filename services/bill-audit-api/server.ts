@@ -17,6 +17,7 @@ import express from "express";
 import { readFileSync } from "fs";
 import {
   BillAuditValidationError,
+  createBillAuditMaxItemsMiddleware,
   type LineItem,
   validateBillAuditRequest,
 } from "../../shared/bill-audit.ts";
@@ -27,6 +28,7 @@ import { logger } from "../../shared/logger.ts";
 import { requestContextMiddleware } from "../../shared/request-context.ts";
 import { requestLoggerMiddleware } from "../../shared/request-logger.ts";
 import { sanitizeUserString } from "../../shared/sanitize.ts";
+import { billAuditOversizedRejectionsTotal } from "../../shared/metrics.ts";
 
 const PORT = parseInt(process.env.BILL_AUDIT_API_PORT || "3002");
 const PAY_TO = process.env.BILL_PROVIDER_PUBLIC_KEY;
@@ -241,6 +243,13 @@ app.get("/bill/sample", (req, res) => {
     ],
   });
 });
+
+const billAuditMaxItemsMiddleware = createBillAuditMaxItemsMiddleware({
+  onReject: () => billAuditOversizedRejectionsTotal.inc(),
+});
+
+// Reject oversized bill audits before x402 settlement.
+app.post("/bill/audit", billAuditMaxItemsMiddleware);
 
 // x402 payment middleware
 applyX402Middleware(app, {
