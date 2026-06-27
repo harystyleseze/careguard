@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { downloadTransactionPDF } from "../../app/pdf";
+import { copyText } from "../../lib/clipboard";
 import type { RecipientProfile } from "../../lib/types";
 import { ConfirmDialog } from "../primitives/confirm-dialog";
 import { TxLink } from "../primitives/tx-link";
@@ -46,6 +47,10 @@ export function ActivityTab({
 }: ActivityTabProps) {
   const [showAllLogEntries, setShowAllLogEntries] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [copiedLogId, setCopiedLogId] = useState<string | null>(null);
 
   // allTransactions arrives pre-sorted newest-first from fetchTransactions (#220).
   // useMemo ensures the merge only reruns when transactions or audit events change,
@@ -150,9 +155,57 @@ export function ActivityTab({
                 </div>
               )}
               {(showAllLogEntries ? agentLog : agentLog.slice(-50)).map(
-                (entry) => (
-                  <div key={entry.id}>{entry.message}</div>
-                ),
+                (entry) => {
+                  const expanded = expandedLogIds.has(entry.id);
+                  return (
+                    <div key={entry.id} className="py-0.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span>{entry.message}</span>
+                        {entry.details && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExpandedLogIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(entry.id)) next.delete(entry.id);
+                                else next.add(entry.id);
+                                return next;
+                              });
+                            }}
+                            className="text-sky-300 hover:text-sky-200 underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-300 rounded"
+                          >
+                            {expanded ? "Hide details" : "Show details"}
+                          </button>
+                        )}
+                      </div>
+                      {entry.details && expanded && (
+                        <div className="mt-2 rounded border border-slate-700 bg-slate-950 p-2 text-slate-100">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <span className="text-[11px] uppercase text-slate-400">
+                              Full error
+                            </span>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const result = await copyText(entry.details!);
+                                if (result === "ok" || result === "fallback") {
+                                  setCopiedLogId(entry.id);
+                                  window.setTimeout(() => setCopiedLogId(null), 1500);
+                                }
+                              }}
+                              className="text-sky-300 hover:text-sky-200 underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-300 rounded"
+                            >
+                              {copiedLogId === entry.id ? "Copied" : "Copy"}
+                            </button>
+                          </div>
+                          <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed">
+                            {entry.details}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  );
+                },
               )}
               {showAllLogEntries && agentLog.length > 50 && (
                 <div className="text-slate-400 mt-2">
