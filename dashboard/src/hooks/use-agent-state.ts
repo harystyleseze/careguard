@@ -26,7 +26,7 @@ const DEFAULT_POLICY = {
   monthlyLimit: 800,
   medicationMonthlyBudget: 300,
   billMonthlyBudget: 500,
-  approvalThreshold: 75,
+  approvalThreshold: 75, holdTimeSeconds: 86400,
   holdTimeSeconds: 0,
 };
 
@@ -177,8 +177,12 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
           return;
         }
         const data = await res.json();
+        // Sort newest-first once here so downstream consumers never need to
+        // sort on every render (Issue #220).
         const txs = Array.isArray(data.transactions)
-          ? data.transactions.map((t: unknown) => TransactionSchema.parse(t))
+          ? data.transactions
+              .map((t: unknown) => TransactionSchema.parse(t))
+              .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
           : [];
         setAllTransactions(txs);
         if (data.pagination) setPagination(data.pagination);

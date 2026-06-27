@@ -319,3 +319,40 @@ describe("checkSpendingPolicy — basic rules (Issue #35)", () => {
     ).toThrow(/monthlyLimit/);
   });
 });
+
+// --- Concurrency / budget atomicity (Issue #209) ---
+
+describe("payForMedication — concurrent calls cannot exceed budget (Issue #209)", () => {
+  it("5 parallel calls totaling more than budget: only as many succeed as the budget allows", async () => {
+    // Budget: $150 medication, $500 daily, each call $50 → exactly 3 should succeed
+    setSpendingPolicy("rosa", {
+      ...DEFAULT_POLICY,
+      dailyLimit: 500,
+      medicationMonthlyBudget: 150,
+      billMonthlyBudget: 500,
+      approvalThreshold: 500, // no approval gate
+    });
+
+    // All MPP calls succeed instantly
+    mockMppFetch.mockResolvedValue({
+      json: async () => ({ success: true, order: { id: "order-concurrent" } }),
+      headers: { get: () => null },
+    });
+
+    const results = await Promise.all([
+      payForMedication("p1", "Pharma", "DrugA", 50),
+      payForMedication("p1", "Pharma", "DrugA", 50),
+      payForMedication("p1", "Pharma", "DrugA", 50),
+      payForMedication("p1", "Pharma", "DrugA", 50),
+      payForMedication("p1", "Pharma", "DrugA", 50),
+    ]);
+
+    const successes = results.filter((r) => r.success);
+    const blocked = results.filter(
+      (r) => !r.success && (r as any).error?.includes("BLOCKED BY SPENDING POLICY"),
+    );
+
+    expect(successes.length).toBe(3);
+    expect(blocked.length).toBe(2);
+  });
+});

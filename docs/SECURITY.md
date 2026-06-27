@@ -114,6 +114,10 @@ The dashboard must never persist data to `localStorage` or `sessionStorage`. Bot
 
 Today the dashboard keeps all session state in React (component state / context), which is cleared on reload. This is intentional and should stay the default.
 
+### Bearer Token Storage Recommendation
+
+If using Bearer Tokens for authentication, the frontend client JavaScript must read and store the token from `sessionStorage`. Unlike `localStorage`, `sessionStorage` is strictly scoped to the tab lifetime and cleared automatically when the tab is closed, preventing the authentication token from leaking on shared or unattended devices.
+
 ### Enforcement
 
 - `dashboard/eslint.config.mjs` defines a `no-restricted-properties` rule for `dashboard/src/**` that errors on `localStorage.setItem` and `sessionStorage.setItem`.

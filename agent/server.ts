@@ -11,7 +11,7 @@
 import "dotenv/config";
 import { createHash } from "crypto";
 import { existsSync, mkdirSync } from "fs";
-import express from "express";
+import express, { type Express } from "express";
 import OpenAI from "openai";
 import { Keypair, Horizon } from "@stellar/stellar-sdk";
 import { createCorsMiddleware } from "../shared/cors.ts";
@@ -30,7 +30,7 @@ import {
   agentToolCallsTotal,
   agentLlmTokensTotal,
   agentLlmIterationTokens,
-  agentLlmContextUsageRatio,
+  agentLlmContextUsageRatio, agentLlmErrorTotal,
 } from "../shared/metrics.ts";
 import {
   comparePharmacyPrices,
@@ -67,6 +67,9 @@ const PORT = parseInt(process.env.AGENT_PORT || "3004");
 
 if (!process.env.LLM_API_KEY) throw new Error("LLM_API_KEY required in .env");
 if (!process.env.AGENT_SECRET_KEY) throw new Error("AGENT_SECRET_KEY required in .env");
+if (!process.env.CAREGIVER_TOKEN) throw new Error("CAREGIVER_TOKEN required in .env");
+
+const CAREGIVER_TOKEN = process.env.CAREGIVER_TOKEN;
 
 const LLM_BASE_URL = process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1";
 const LLM_MODEL = process.env.LLM_MODEL || "llama-3.3-70b-versatile";
@@ -464,9 +467,51 @@ async function runAgent(task: string) {
   return { response: finalResponse, toolCalls, spending: getSpendingSummary(), llmUsage, truncated };
 }
 
-// Express API
-const app = express();
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  const list: Record<string, string> = {};
+  if (!cookieHeader) return list;
+  cookieHeader.split(";").forEach((cookie) => {
+    const parts = cookie.split("=");
+    list[parts.shift()!.trim()] = decodeURIComponent(parts.join("="));
+  });
+  return list;
+}
 
+function requireCaregiverToken(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const auth = req.headers.authorization;
+  let token: string | undefined;
+
+  if (auth?.startsWith("Bearer ")) {
+    token = auth.slice("Bearer ".length);
+  } else {
+    const cookies = parseCookies(req.headers.cookie);
+    token = cookies["caregiver_token"];
+    
+    if (token) {
+      const csrfHeader = req.headers["x-csrf-token"];
+      const csrfCookie = cookies["csrf_token"];
+      if (!csrfHeader || !csrfCookie || csrfHeader !== csrfCookie) {
+        res.status(403).json({ error: "CSRF token mismatch or missing" });
+        return;
+      }
+    }
+  }
+
+  if (!token) {
+    res.status(401).setHeader("WWW-Authenticate", "Bearer").json({ error: "Missing caregiver token" });
+    return;
+  }
+  if (token !== CAREGIVER_TOKEN) {
+    res.status(403).json({ error: "Invalid caregiver token" });
+    return;
+  }
+  next();
+}
+
+// Express API
+const app: Express = express();
+
+app.use("/agent", requireCaregiverToken);
 app.use("/agent/audit", auditRouter);
 app.use("/agent", rateLimiters.agent);
 app.use("/health", rateLimiters.health);

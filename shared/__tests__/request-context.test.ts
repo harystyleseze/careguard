@@ -71,18 +71,36 @@ describe("setAgentRunId / getAgentRunId", () => {
   });
 });
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 describe("requestContextMiddleware", () => {
   function buildApp() {
     const app = express();
     app.use(requestContextMiddleware());
-    app.get("/test", (_req, res) => res.json({ requestId: getRequestId() }));
+    app.get("/test", (req, res) => res.json({ requestId: getRequestId(), reqRequestId: req.requestId }));
     return app;
   }
 
-  it("sets X-Request-Id response header", async () => {
+  it("sets X-Request-ID response header", async () => {
     const res = await supertest(buildApp()).get("/test");
     expect(res.headers["x-request-id"]).toBeTruthy();
     expect(typeof res.headers["x-request-id"]).toBe("string");
+  });
+
+  it("generates a UUID v4 when no incoming header is present", async () => {
+    const res = await supertest(buildApp()).get("/test");
+    expect(res.headers["x-request-id"]).toMatch(UUID_RE);
+  });
+
+  it("sets req.requestId on the request object", async () => {
+    const res = await supertest(buildApp()).get("/test");
+    expect(res.body.reqRequestId).toBeTruthy();
+    expect(res.body.reqRequestId).toBe(res.headers["x-request-id"]);
+  });
+
+  it("req.requestId matches the AsyncLocalStorage value", async () => {
+    const res = await supertest(buildApp()).get("/test");
+    expect(res.body.reqRequestId).toBe(res.body.requestId);
   });
 
   it("reuses x-request-id from incoming request header", async () => {
@@ -91,6 +109,7 @@ describe("requestContextMiddleware", () => {
       .set("x-request-id", "my-custom-id");
     expect(res.headers["x-request-id"]).toBe("my-custom-id");
     expect(res.body.requestId).toBe("my-custom-id");
+    expect(res.body.reqRequestId).toBe("my-custom-id");
   });
 
   it("generates a different ID for each request when no header is present", async () => {

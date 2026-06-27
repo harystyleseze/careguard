@@ -37,7 +37,7 @@ if (!RECIPIENT) throw new Error("PHARMACY_1_PUBLIC_KEY required in .env");
 if (!MPP_SECRET_KEY) throw new Error("MPP_SECRET_KEY required in .env");
 
 // Order storage (persisted to file)
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import lock from "proper-lockfile";
 
 const DATA_DIR = new URL("../../data", import.meta.url).pathname;
@@ -47,13 +47,19 @@ if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
 function loadOrders(): any[] {
   if (!existsSync(ORDERS_FILE)) return [];
-  return JSON.parse(readFileSync(ORDERS_FILE, "utf-8"));
+  try {
+    return JSON.parse(readFileSync(ORDERS_FILE, "utf-8"));
+  } catch (err: any) {
+    logger.warn({ err: err.message }, 'Failed to parse orders file, starting with empty array');
+    return [];
+  }
 }
 
 /**
  * Save a new order to the orders file with file-level locking to prevent race conditions.
+ * Uses atomic writes (temp file + rename) to ensure reads always see consistent state (Issue #203).
  * Ensures that concurrent calls don't lose data due to simultaneous read-modify-write operations.
- * 
+ *
  * Trade-off: File-based locking is slower than in-memory storage but is sufficient for the demo.
  * For production, consider switching to SQLite (#168) or a proper database.
  */
@@ -62,13 +68,20 @@ async function saveOrder(order: any) {
   try {
     // Acquire exclusive lock on the orders file
     release = await lock.lock(ORDERS_FILE, { retries: 10, stale: 5000 });
-    
-    // Safe read-modify-write within lock
+
+    // Safe read-modify-write within lock, using atomic writes
     const orders = loadOrders();
     orders.push(order);
-    writeFileSync(ORDERS_FILE, JSON.stringify(orders, null, 2));
-    
-    logger.info({ orderId: order.id || 'unknown' }, 'Order saved successfully with lock');
+    const tempFile = `${ORDERS_FILE}.tmp-${Date.now()}`;
+    try {
+      writeFileSync(tempFile, JSON.stringify(orders, null, 2), 'utf-8');
+      renameSync(tempFile, ORDERS_FILE);
+    } catch (err) {
+      try { writeFileSync(ORDERS_FILE, '', 'utf-8'); } catch {}
+      throw err;
+    }
+
+    logger.info({ orderId: order.id || 'unknown' }, 'Order saved successfully with atomic write and lock');
   } catch (err: any) {
     logger.error({ err: err.message, orderId: order.id || 'unknown' }, 'Failed to save order');
     throw err;
@@ -152,7 +165,7 @@ app.post("/pharmacy/order", async (req, res) => {
 
   // Run MPP charge flow
   const result = await mppx.charge({
-    amount: order.amount.toFixed(2),
+    amount: Number(order.amount).toFixed(2),
     description: `Medication: ${safeDrug} from ${safePharmacy}`,
   })(webReq);
 
@@ -166,24 +179,24 @@ app.post("/pharmacy/order", async (req, res) => {
   }
 
   // Payment verified and settled on Stellar — create order
-  const order = {
+  const newOrder = {
     id: `order-${Date.now()}`,
     drug: safeDrug,
     pharmacy: safePharmacy,
-    amount: order.amount,
+    amount: Number(order.amount),
     status: "confirmed",
     timestamp: new Date().toISOString(),
     network: NETWORK,
     protocol: "MPP Charge",
   };
-  await saveOrder(order);
+  await saveOrder(newOrder);
 
   // Return response with payment receipt headers
   const response = result.withReceipt(
     Response.json({
       success: true,
-      order,
-      message: `Payment of $${order.amount} USDC settled on Stellar. ${safeDrug} order from ${safePharmacy} confirmed.`,
+      order: newOrder,
+      message: `Payment of $${newOrder.amount} USDC settled on Stellar. ${safeDrug} order from ${safePharmacy} confirmed.`,
     })
   );
 

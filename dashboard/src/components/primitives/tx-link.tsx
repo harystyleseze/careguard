@@ -6,9 +6,21 @@ const STELLAR_TX_HASH_RE = /^[0-9a-f]{64}$/i;
 
 export interface TxLinkProps {
   hash?: string;
+  txHashStatus?: 'extracted' | 'extraction_failed';
 }
 
-export function TxLink({ hash }: TxLinkProps) {
+export function TxLink({ hash, txHashStatus }: TxLinkProps) {
+  if (txHashStatus === 'extraction_failed') {
+    return (
+      <span
+        className="text-xs text-yellow-500 font-medium"
+        title="x402 payment hash could not be extracted — transaction cannot be verified on-chain"
+      >
+        ⚠ unverifiable
+      </span>
+    );
+  }
+
   if (!hash || !STELLAR_TX_HASH_RE.test(hash)) {
     return <span className="text-xs text-slate-300">-</span>;
   }

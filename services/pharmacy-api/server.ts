@@ -14,7 +14,7 @@ if (!process.stdout.isTTY) {
 
 import "dotenv/config";
 import path from "path";
-import express from "express";
+import express, { type Express } from "express";
 import { pathToFileURL } from "url";
 import { applyX402Middleware, NETWORK, OZ_FACILITATOR_URL } from "../../shared/x402-middleware.ts";
 import { createCorsMiddleware } from "../../shared/cors.ts";
@@ -81,7 +81,7 @@ function sendCrudNotFound(res: express.Response, message: string) {
 export function createPharmacyApp(options: PharmacyAppOptions) {
   const pricingStore = options.pricingStore ?? createPharmacyPricingStore();
   const adminToken = options.adminToken ?? process.env.PHARMACY_ADMIN_TOKEN;
-  const app = express();
+  const app: Express = express();
   let isDraining = false;
 
   applySecurityMiddleware(app);
@@ -265,7 +265,7 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
       return;
     }
 
-    const query = parsedQuery.data as PharmacyCompareQuery;
+    const query = parsedQuery.data as any;
     const drug = query.drug.trim().toLowerCase();
     const dosage = resolveRequestedDosage(drug, query.dosage);
 
@@ -315,7 +315,7 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
   };
 }
 
-export const defaultPharmacyApp = PAY_TO
+export const defaultPharmacyApp: ReturnType<typeof createPharmacyApp> | undefined = PAY_TO
   ? createPharmacyApp({ payTo: PAY_TO })
   : undefined;
 

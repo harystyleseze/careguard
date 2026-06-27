@@ -5,8 +5,9 @@
 
 import { appendFileSync, existsSync, mkdirSync, statSync, unlinkSync, renameSync, readFileSync } from "fs";
 import { Router, Request, Response } from "express";
+import { fileURLToPath } from "url";
 
-const DATA_DIR = new URL("../data", import.meta.url).pathname;
+const DATA_DIR = process.env.DATA_DIR || fileURLToPath(new URL("../data", import.meta.url));
 const AUDIT_FILE = `${DATA_DIR}/audit.log.jsonl`;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_ARCHIVES = 12;
@@ -54,7 +55,7 @@ export function appendAuditEntry(entry: AuditEntry): void {
 
 export const AUDIT_FILE_PATH = AUDIT_FILE;
 
-export const auditRouter = Router();
+export const auditRouter: import("express").Router = Router();
 
 // Middleware to check admin (assuming a basic check or skipped for now as per instructions)
 const requireAdmin = (req: Request, res: Response, next: Function) => {

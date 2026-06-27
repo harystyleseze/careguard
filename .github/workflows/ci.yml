@@ -30,7 +30,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Type check
-        run: pnpm typecheck
+        run: npx tsc --noEmit -p tsconfig.json && npx tsc --noEmit -p dashboard/tsconfig.json
 
       - name: Lint
         run: pnpm lint

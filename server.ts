@@ -10,13 +10,14 @@
 
 import "dotenv/config";
 import { createHash } from "crypto";
-import express from "express";
+import express, { type Express } from "express";
 import { Keypair, Horizon } from "@stellar/stellar-sdk";
 import OpenAI from "openai";
 import { Mppx, Store } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { fileURLToPath } from "url";
 import { z } from "zod";
 
 // x402 middleware
@@ -115,7 +116,22 @@ const envSchema = z.object({
   CAREGIVER_TOKEN: z.string().min(1, "CAREGIVER_TOKEN required"),
   OZ_FACILITATOR_API_KEY: z.string().min(1).optional(),
   X402_FACILITATOR_URL: z.string().min(1).optional(),
-});
+  BILL_AUDIT_OVERCHARGE_MULTIPLIER: z.coerce.number().positive().default(1.5),
+  BILL_AUDIT_SUGGESTED_MULTIPLIER: z.coerce.number().positive().default(1.2),
+  BILL_AUDIT_UPCODED_MULTIPLIER: z.coerce.number().positive().default(3.0),
+}).refine(
+  (data) => {
+    return (
+      data.BILL_AUDIT_UPCODED_MULTIPLIER > data.BILL_AUDIT_OVERCHARGE_MULTIPLIER &&
+      data.BILL_AUDIT_OVERCHARGE_MULTIPLIER > data.BILL_AUDIT_SUGGESTED_MULTIPLIER &&
+      data.BILL_AUDIT_SUGGESTED_MULTIPLIER > 1.0
+    );
+  },
+  {
+    message: "Invalid bill-audit multipliers config: must satisfy UPCODED > OVERCHARGE > SUGGESTED > 1.0",
+    path: ["BILL_AUDIT_UPCODED_MULTIPLIER"],
+  }
+);
 
 const env = envSchema.safeParse(process.env);
 if (!env.success) {
@@ -175,16 +191,44 @@ let _profileData = {
 };
 
 // --- Express App ---
-const app = express();
+const app: Express = express();
 let isDraining = false;
+
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  const list: Record<string, string> = {};
+  if (!cookieHeader) return list;
+  cookieHeader.split(";").forEach((cookie) => {
+    const parts = cookie.split("=");
+    list[parts.shift()!.trim()] = decodeURIComponent(parts.join("="));
+  });
+  return list;
+}
 
 function requireCaregiverToken(req: express.Request, res: express.Response, next: express.NextFunction) {
   const auth = req.headers.authorization;
-  if (!auth?.startsWith("Bearer ")) {
+  let token: string | undefined;
+
+  if (auth?.startsWith("Bearer ")) {
+    token = auth.slice("Bearer ".length);
+  } else {
+    const cookies = parseCookies(req.headers.cookie);
+    token = cookies["caregiver_token"];
+    
+    if (token) {
+      const csrfHeader = req.headers["x-csrf-token"];
+      const csrfCookie = cookies["csrf_token"];
+      if (!csrfHeader || !csrfCookie || csrfHeader !== csrfCookie) {
+        res.status(403).json({ error: "CSRF token mismatch or missing" });
+        return;
+      }
+    }
+  }
+
+  if (!token) {
     res.status(401).setHeader("WWW-Authenticate", "Bearer").json({ error: "Missing caregiver token" });
     return;
   }
-  if (auth.slice("Bearer ".length) !== CAREGIVER_TOKEN) {
+  if (token !== CAREGIVER_TOKEN) {
     res.status(403).json({ error: "Invalid caregiver token" });
     return;
   }
@@ -765,7 +809,8 @@ app.get("/drug/interactions", (req, res) => {
 // MPP PHARMACY PAYMENT (was port 3005)
 // ============================================================
 
-const DATA_DIR = new URL("./data", import.meta.url).pathname;
+const DATA_DIR = process.env.DATA_DIR || fileURLToPath(new URL("./data", import.meta.url));
+const DATA_DIR = process.env.DATA_DIR || new URL("./data", import.meta.url).pathname;
 const ORDERS_FILE = `${DATA_DIR}/orders.json`;
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 

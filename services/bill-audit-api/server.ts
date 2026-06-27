@@ -71,21 +71,39 @@ process.on('SIGHUP', () => {
 });
 
 // Audit threshold configuration
+export const BILL_AUDIT_OVERCHARGE_MULTIPLIER = parseFloat(process.env.BILL_AUDIT_OVERCHARGE_MULTIPLIER || "1.5");
+export const BILL_AUDIT_SUGGESTED_MULTIPLIER = parseFloat(process.env.BILL_AUDIT_SUGGESTED_MULTIPLIER || "1.2");
+export const BILL_AUDIT_UPCODED_MULTIPLIER = parseFloat(process.env.BILL_AUDIT_UPCODED_MULTIPLIER || "3.0");
+
+if (
+  isNaN(BILL_AUDIT_OVERCHARGE_MULTIPLIER) ||
+  isNaN(BILL_AUDIT_SUGGESTED_MULTIPLIER) ||
+  isNaN(BILL_AUDIT_UPCODED_MULTIPLIER) ||
+  !(BILL_AUDIT_UPCODED_MULTIPLIER > BILL_AUDIT_OVERCHARGE_MULTIPLIER &&
+    BILL_AUDIT_OVERCHARGE_MULTIPLIER > BILL_AUDIT_SUGGESTED_MULTIPLIER &&
+    BILL_AUDIT_SUGGESTED_MULTIPLIER > 1.0)
+) {
+  throw new Error("Invalid bill-audit multipliers config: must satisfy UPCODED > OVERCHARGE > SUGGESTED > 1.0");
+}
+
 interface AuditThresholdConfig {
   default: number;
   byCpt: Record<string, number>;
 }
 
-let auditThresholds: AuditThresholdConfig = { default: 1.5, byCpt: {} };
+let auditThresholds: AuditThresholdConfig = { default: BILL_AUDIT_OVERCHARGE_MULTIPLIER, byCpt: {} };
 
 function loadAuditThresholds() {
   try {
     const thresholdsPath = new URL('./audit_thresholds.json', import.meta.url).pathname;
     auditThresholds = JSON.parse(readFileSync(thresholdsPath, 'utf-8')) as AuditThresholdConfig;
+    if (process.env.BILL_AUDIT_OVERCHARGE_MULTIPLIER) {
+      auditThresholds.default = BILL_AUDIT_OVERCHARGE_MULTIPLIER;
+    }
     logger.info({ default: auditThresholds.default, cptCount: Object.keys(auditThresholds.byCpt).length }, 'Loaded audit thresholds configuration');
   } catch (err: any) {
-    logger.error({ err: err.message }, 'Failed to load audit_thresholds.json, using default threshold of 1.5');
-    auditThresholds = { default: 1.5, byCpt: {} };
+    logger.error({ err: err.message }, `Failed to load audit_thresholds.json, using default threshold of ${BILL_AUDIT_OVERCHARGE_MULTIPLIER}`);
+    auditThresholds = { default: BILL_AUDIT_OVERCHARGE_MULTIPLIER, byCpt: {} };
   }
 }
 
@@ -139,7 +157,7 @@ checkRatesFreshness();
 
 interface BillItem { description: string; cptCode: string; quantity: number; chargedAmount: number; }
 
-function auditBill(lineItems: BillItem[]) {
+export function auditBill(lineItems: BillItem[]) {
   const results: any[] = [];
   let totalCharged = 0, totalCorrect = 0, errorCount = 0;
   const seenCodes: Record<string, number> = {};
@@ -159,18 +177,19 @@ function auditBill(lineItems: BillItem[]) {
 
     if (fairAmount !== null && item.chargedAmount > fairAmount * threshold) {
       errorCount++;
-      const suggestedAmount = +(fairAmount * 1.2).toFixed(2);
+      const suggestedAmount = +(fairAmount * BILL_AUDIT_SUGGESTED_MULTIPLIER).toFixed(2);
       totalCorrect += suggestedAmount;
-      results.push({ description: item.description, cptCode: item.cptCode, quantity: item.quantity, chargedAmount: item.chargedAmount, fairMarketRate: fairAmount, status: item.chargedAmount > fairAmount * 3 ? "upcoded" : "overcharged", errorDescription: `Charged $${item.chargedAmount} — CMS fair market rate is $${fairAmount}. Overcharged by $${(item.chargedAmount - fairAmount).toFixed(2)}.`, suggestedAmount });
+      results.push({ description: item.description, cptCode: item.cptCode, quantity: item.quantity, chargedAmount: item.chargedAmount, fairMarketRate: fairAmount, status: item.chargedAmount > fairAmount * BILL_AUDIT_UPCODED_MULTIPLIER ? "upcoded" : "overcharged", errorDescription: `Charged $${item.chargedAmount} — CMS fair market rate is $${fairAmount}. Overcharged by $${(item.chargedAmount - fairAmount).toFixed(2)}.`, suggestedAmount });
       continue;
     }
 
-    const suggested = fairAmount !== null ? Math.min(item.chargedAmount, +(fairAmount * 1.2).toFixed(2)) : item.chargedAmount;
+    const suggested = fairAmount !== null ? Math.min(item.chargedAmount, +(fairAmount * BILL_AUDIT_SUGGESTED_MULTIPLIER).toFixed(2)) : item.chargedAmount;
     totalCorrect += suggested;
     results.push({ description: item.description, cptCode: item.cptCode, quantity: item.quantity, chargedAmount: item.chargedAmount, fairMarketRate: fairAmount, status: "valid", errorDescription: null, suggestedAmount: suggested });
   }
 
   const totalOvercharge = +(totalCharged - totalCorrect).toFixed(2);
+
   const savingsPercent = totalCharged > 0 ? +((totalOvercharge / totalCharged) * 100).toFixed(1) : 0;
   const now = new Date();
   const validUntil = new Date(RATES_VALID_UNTIL);

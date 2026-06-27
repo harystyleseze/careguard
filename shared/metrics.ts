@@ -91,6 +91,12 @@ export const agentTransactionsTotal = new Counter({
   registers: [registry],
 });
 
+export const x402TxExtractionFailedTotal = new Counter({
+  name: "x402_tx_extraction_failed_total",
+  help: "Total x402 payment response header extraction failures",
+  registers: [registry],
+});
+
 export const agentLlmErrorTotal = new Counter({
   name: "agent_llm_error_total",
   help: "Total LLM API errors during agent runs",

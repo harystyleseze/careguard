@@ -24,10 +24,18 @@ const mockSetProperties = vi.fn();
 const mockGetNumberOfPages = vi.fn(() => capturedPageCount);
 const mockSetPage = vi.fn();
 const mockAddPage = vi.fn(() => { capturedPageCount++; });
+// splitTextToSize: split on every 80 chars to approximate real jsPDF behaviour.
+const mockSplitTextToSize = vi.fn((text: string, _maxWidth: number): string[] => {
+  const lines: string[] = [];
+  for (let i = 0; i < text.length; i += 80) lines.push(text.slice(i, i + 80));
+  return lines.length ? lines : [''];
+});
 
 let capturedPageCount = 1;
 let capturedAutoTableCalls: any[] = [];
 let lastDidDrawPageCallback: ((data: any) => void) | undefined;
+// Mutable so individual tests can push finalY near the page bottom.
+let mockFinalY = 200;
 
 vi.mock('jspdf', () => ({
   default: vi.fn().mockImplementation(() => ({
@@ -41,7 +49,8 @@ vi.mock('jspdf', () => ({
     getNumberOfPages: mockGetNumberOfPages,
     setPage: mockSetPage,
     addPage: mockAddPage,
-    lastAutoTable: { finalY: 200 },
+    splitTextToSize: mockSplitTextToSize,
+    get lastAutoTable() { return { finalY: mockFinalY }; },
   })),
 }));
 
@@ -92,8 +101,15 @@ describe('downloadBillAuditPDF — pagination (#225)', () => {
     capturedPageCount = 1;
     capturedAutoTableCalls = [];
     lastDidDrawPageCallback = undefined;
+    mockFinalY = 200;
     vi.clearAllMocks();
     mockGetNumberOfPages.mockReturnValue(capturedPageCount);
+    // Restore default splitTextToSize implementation after vi.clearAllMocks().
+    mockSplitTextToSize.mockImplementation((text: string, _maxWidth: number): string[] => {
+      const lines: string[] = [];
+      for (let i = 0; i < text.length; i += 80) lines.push(text.slice(i, i + 80));
+      return lines.length ? lines : [''];
+    });
   });
 
   it('calls autoTable with showHead: "everyPage"', () => {
@@ -153,5 +169,64 @@ describe('downloadBillAuditPDF — pagination (#225)', () => {
     const joinedTextArgs = mockText.mock.calls.map((call) => String(call[0])).join(" ");
     expect(joinedTextArgs).toContain("Ada Lovelace");
     expect(mockSetProperties).toHaveBeenCalled();
+  });
+});
+
+// --- Recommendation text wrapping / overflow (Issue #227) ---
+
+describe("downloadBillAuditPDF — recommendation wrapping (#227)", () => {
+  beforeEach(() => {
+    capturedPageCount = 1;
+    capturedAutoTableCalls = [];
+    mockFinalY = 200;
+    vi.clearAllMocks();
+    mockGetNumberOfPages.mockReturnValue(capturedPageCount);
+    mockSplitTextToSize.mockImplementation((text: string, _maxWidth: number): string[] => {
+      const lines: string[] = [];
+      for (let i = 0; i < text.length; i += 80) lines.push(text.slice(i, i + 80));
+      return lines.length ? lines : [''];
+    });
+  });
+
+  it("calls splitTextToSize with the recommendation text and maxWidth 182", () => {
+    const rec = "Review all charges carefully.";
+    downloadBillAuditPDF({ ...makeAuditResult(1), recommendation: rec });
+    expect(mockSplitTextToSize).toHaveBeenCalledWith(rec, 182);
+  });
+
+  it("1k-char recommendation renders without overflow when finalY is low (no addPage)", () => {
+    // finalY=200: recStartY=208. 13 lines * 5mm = 65, total 273 < 275 → fits.
+    mockFinalY = 200;
+    const rec = "A".repeat(1000);
+    downloadBillAuditPDF({ ...makeAuditResult(1), recommendation: rec });
+    // splitTextToSize was called with the full text
+    expect(mockSplitTextToSize).toHaveBeenCalledWith(rec, 182);
+    // doc.text was called with an array (the wrapped lines), not the raw 1k string
+    const textCalls = mockText.mock.calls;
+    const recCall = textCalls.find((args) => Array.isArray(args[0]));
+    expect(recCall).toBeDefined();
+    expect(Array.isArray(recCall![0])).toBe(true);
+    // addPage was NOT called for the recommendation (table was only 1 item)
+    expect(mockAddPage).not.toHaveBeenCalled();
+  });
+
+  it("adds a page when wrapped lines would overflow the page bottom", () => {
+    // finalY=260: recStartY=268. Even 2 lines = 10mm → 278 > 275 → must add page.
+    mockFinalY = 260;
+    // Return 3 lines regardless of text so the overflow is deterministic.
+    mockSplitTextToSize.mockReturnValue(["line1", "line2", "line3"]);
+    downloadBillAuditPDF({ ...makeAuditResult(1), recommendation: "short" });
+    expect(mockAddPage).toHaveBeenCalled();
+  });
+
+  it("renders lines on the new page starting at y=58 after a page break", () => {
+    mockFinalY = 260;
+    mockSplitTextToSize.mockReturnValue(["line1", "line2", "line3"]);
+    downloadBillAuditPDF({ ...makeAuditResult(1), recommendation: "short" });
+    // The last doc.text call with an array arg should be at y=58 (after the new page)
+    const textCalls = mockText.mock.calls;
+    const recCall = textCalls.findLast((args) => Array.isArray(args[0]));
+    expect(recCall).toBeDefined();
+    expect(recCall![2]).toBe(58); // y position
   });
 });

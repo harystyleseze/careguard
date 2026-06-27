@@ -59,8 +59,8 @@ export function makePriceComparisonResult(overrides?: Partial<PriceComparisonRes
     dosage: "10 mg",
     zipCode: "90210",
     prices,
-    cheapest: { pharmacyName: sorted[0].pharmacyName, pharmacyId: sorted[0].pharmacyId, price: sorted[0].price, distance: sorted[0].distance },
-    mostExpensive: { pharmacyName: sorted[sorted.length - 1].pharmacyName, pharmacyId: sorted[sorted.length - 1].pharmacyId, price: sorted[sorted.length - 1].price },
+    cheapest: { pharmacyName: sorted[0].pharmacyName, pharmacyId: sorted[0].pharmacyId, price: sorted[0].price, distance: sorted[0].distance, inStock: sorted[0].inStock },
+    mostExpensive: { pharmacyName: sorted[sorted.length - 1].pharmacyName, pharmacyId: sorted[sorted.length - 1].pharmacyId, price: sorted[sorted.length - 1].price, inStock: sorted[sorted.length - 1].inStock },
     potentialSavings: +(sorted[sorted.length - 1].price - sorted[0].price).toFixed(2),
     ...overrides,
   };
@@ -103,6 +103,7 @@ export function makeSpendingPolicy(overrides?: Partial<SpendingPolicy>): Spendin
     medicationMonthlyBudget: 300,
     billMonthlyBudget: 500,
     approvalThreshold: 75,
+    holdTimeSeconds: 86400,
     ...overrides,
   };
 }

@@ -150,11 +150,29 @@ export function downloadBillAuditPDF(
     },
   });
 
-  // Recommendation
+  // Recommendation — split so jsPDF can measure line count for page-break logic.
+  // maxWidth option on doc.text() wraps visually but doesn't let us count lines,
+  // so use splitTextToSize and handle overflow explicitly (Issue #227).
+  const REC_MAX_WIDTH = 182;
+  const REC_LINE_HEIGHT = 5; // mm at fontSize 9
+  const PAGE_BOTTOM = 275;  // leave room above footer
+
   const finalY = doc.lastAutoTable?.finalY || 200;
+  const recLines: string[] = doc.splitTextToSize(auditResult.recommendation || "", REC_MAX_WIDTH);
+  const recStartY = finalY + 8;
+
   doc.setFontSize(9);
   doc.setTextColor(15, 23, 42);
-  doc.text(auditResult.recommendation || "", 14, finalY + 8, { maxWidth: 180 });
+
+  if (recStartY + recLines.length * REC_LINE_HEIGHT > PAGE_BOTTOM) {
+    doc.addPage();
+    addHeader(doc, "Medical Bill Audit Report (cont.)", subtitle, theme);
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text(recLines, 14, 58);
+  } else {
+    doc.text(recLines, 14, recStartY);
+  }
 
   addFooter(doc);
   doc.save("careguard-bill-audit-report.pdf");

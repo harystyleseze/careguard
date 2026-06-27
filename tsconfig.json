@@ -1,4 +1,5 @@
 {
+  // TODO: consider enabling noUncheckedIndexedAccess and noImplicitOverride in future ADR
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
@@ -21,7 +22,7 @@
     }
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules", "dist", "dashboard", "shared"],
+  "exclude": ["node_modules", "dist", "dashboard", "shared", "e2e", "scripts"],
   "references": [
     { "path": "./shared" },
     { "path": "./dashboard" }

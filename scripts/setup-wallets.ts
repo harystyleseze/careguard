@@ -18,6 +18,7 @@ const HORIZON_URL = "https://horizon-testnet.stellar.org";
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
 const USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 export const DEV_SEED_FILE = ".dev-seed";
+export const SETUP_CHECKPOINT_FILE = ".setup-wallets-checkpoint.json";
 export const WALLET_NAMES = [
   "AGENT",
   "CAREGIVER",
@@ -162,44 +163,132 @@ export async function resolveSetupSeed(options: {
   return { seed, source: "generated", path: seedPath };
 }
 
+const MAX_FRIENDBOT_RETRIES = 5;
+const FRIENDBOT_RETRY_BASE_MS = 1000;
+
 async function fundAccount(publicKey: string): Promise<void> {
-  const response = await fetch(`${FRIENDBOT_URL}?addr=${publicKey}`);
-  if (!response.ok) {
-    const text = await response.text();
-    // Friendbot returns an error if already funded, which is fine
-    if (!text.includes("createAccountAlreadyExist")) {
-      throw new Error(`Friendbot failed for ${publicKey}: ${text}`);
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < MAX_FRIENDBOT_RETRIES; attempt++) {
+    try {
+      const response = await fetch(`${FRIENDBOT_URL}?addr=${publicKey}`);
+      if (!response.ok) {
+        const text = await response.text();
+        if (text.includes("createAccountAlreadyExist")) {
+          logger.info({ wallet: publicKey.slice(0, 8) }, "account already funded");
+          return;
+        }
+
+        const status = response.status;
+        if (status === 429 || status === 503 || status >= 500) {
+          lastError = new Error(`Friendbot ${status}: ${text}`);
+          if (attempt < MAX_FRIENDBOT_RETRIES - 1) {
+            const delayMs = FRIENDBOT_RETRY_BASE_MS * Math.pow(2, attempt);
+            logger.warn(
+              { wallet: publicKey.slice(0, 8), attempt: attempt + 1, delayMs },
+              "transient Friendbot error, retrying"
+            );
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            continue;
+          }
+        }
+        throw new Error(`Friendbot failed permanently for ${publicKey}: ${text}`);
+      }
+      logger.info({ wallet: publicKey.slice(0, 8) }, "account funded");
+      return;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      if (msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND") || msg.includes("ETIMEDOUT")) {
+        lastError = err;
+        if (attempt < MAX_FRIENDBOT_RETRIES - 1) {
+          const delayMs = FRIENDBOT_RETRY_BASE_MS * Math.pow(2, attempt);
+          logger.warn(
+            { wallet: publicKey.slice(0, 8), attempt: attempt + 1, error: msg, delayMs },
+            "network error, retrying"
+          );
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+      }
+      throw err;
     }
   }
+
+  throw lastError || new Error(`Failed to fund ${publicKey} after ${MAX_FRIENDBOT_RETRIES} attempts`);
 }
 
-async function addUsdcTrustline(keypair: Keypair): Promise<void> {
-  const server = new Horizon.Server(HORIZON_URL);
-  const account = await server.loadAccount(keypair.publicKey());
+interface SetupCheckpoint {
+  fundedWallets: string[];
+  trustedWallets: string[];
+  timestamp: number;
+}
 
+function loadCheckpoint(cwd?: string): SetupCheckpoint {
+  const checkpointPath = path.join(cwd || process.cwd(), SETUP_CHECKPOINT_FILE);
+  if (existsSync(checkpointPath)) {
+    try {
+      return JSON.parse(readFileSync(checkpointPath, "utf-8"));
+    } catch {
+      logger.warn("failed to load checkpoint, starting fresh");
+    }
+  }
+  return { fundedWallets: [], trustedWallets: [], timestamp: Date.now() };
+}
+
+function saveCheckpoint(checkpoint: SetupCheckpoint, cwd?: string): void {
+  const checkpointPath = path.join(cwd || process.cwd(), SETUP_CHECKPOINT_FILE);
+  writeFileSync(checkpointPath, JSON.stringify(checkpoint, null, 2), { mode: 0o600 });
+}
+
+async function addUsdcTrustline(keypair: Keypair, maxRetries = 1): Promise<void> {
+  const server = new Horizon.Server(HORIZON_URL);
+  const publicKey = keypair.publicKey();
   const usdc = new Asset("USDC", USDC_ISSUER);
 
-  // Check if trustline already exists
-  const hasTrustline = account.balances.some(
-    (b: any) => b.asset_code === "USDC" && b.asset_issuer === USDC_ISSUER
-  );
+  let lastError: Error | null = null;
 
-  if (hasTrustline) {
-    logger.info({ wallet: keypair.publicKey().slice(0, 8) }, "USDC trustline already exists");
-    return;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const account = await server.loadAccount(publicKey);
+
+      const hasTrustline = account.balances.some(
+        (b: any) => b.asset_code === "USDC" && b.asset_issuer === USDC_ISSUER
+      );
+
+      if (hasTrustline) {
+        logger.info({ wallet: publicKey.slice(0, 8) }, "USDC trustline already exists");
+        return;
+      }
+
+      const tx = new TransactionBuilder(account, {
+        fee: "100",
+        networkPassphrase: Networks.TESTNET,
+      })
+        .addOperation(Operation.changeTrust({ asset: usdc }))
+        .setTimeout(30)
+        .build();
+
+      tx.sign(keypair);
+      await server.submitTransaction(tx);
+      logger.info({ wallet: publicKey.slice(0, 8) }, "USDC trustline added");
+      return;
+    } catch (err: any) {
+      lastError = err;
+      const msg = err?.message ?? String(err);
+
+      if (msg.includes("tx_bad_seq") && attempt < maxRetries) {
+        logger.warn(
+          { wallet: publicKey.slice(0, 8), attempt: attempt + 1 },
+          "tx_bad_seq detected, reloading account and retrying"
+        );
+        continue;
+      }
+
+      throw err;
+    }
   }
 
-  const tx = new TransactionBuilder(account, {
-    fee: "100",
-    networkPassphrase: Networks.TESTNET,
-  })
-    .addOperation(Operation.changeTrust({ asset: usdc }))
-    .setTimeout(30)
-    .build();
-
-  tx.sign(keypair);
-  await server.submitTransaction(tx);
-  logger.info({ wallet: keypair.publicKey().slice(0, 8) }, "USDC trustline added");
+  throw lastError || new Error(`Failed to add USDC trustline for ${publicKey}`);
 }
 
 async function main() {
@@ -209,6 +298,9 @@ async function main() {
     .find((arg) => arg.startsWith("--seed="))
     ?.slice("--seed=".length);
   logger.info("CareGuard Wallet Setup starting");
+
+  const cwd = process.cwd();
+  const checkpoint = loadCheckpoint(cwd);
 
   const seed = await resolveSetupSeed({ seed: seedArg, yes });
   if (seed.source === "generated") {
@@ -227,8 +319,15 @@ async function main() {
 
   logger.info("step 1: funding accounts via Friendbot");
   for (const wallet of wallets) {
+    if (checkpoint.fundedWallets.includes(wallet.publicKey)) {
+      logger.info({ name: wallet.name, wallet: wallet.publicKey.slice(0, 8) }, "already funded (from checkpoint)");
+      continue;
+    }
+
     try {
       await fundAccount(wallet.publicKey);
+      checkpoint.fundedWallets.push(wallet.publicKey);
+      saveCheckpoint(checkpoint, cwd);
       logger.info({ name: wallet.name, wallet: wallet.publicKey.slice(0, 8) }, "funded");
     } catch (err: any) {
       logger.error({ name: wallet.name, err: err.message }, "failed to fund wallet");
@@ -237,9 +336,16 @@ async function main() {
 
   logger.info("step 2: adding USDC trustlines");
   for (const wallet of wallets) {
+    if (checkpoint.trustedWallets.includes(wallet.publicKey)) {
+      logger.info({ name: wallet.name, wallet: wallet.publicKey.slice(0, 8) }, "trustline already added (from checkpoint)");
+      continue;
+    }
+
     try {
       const keypair = Keypair.fromSecret(wallet.secretKey);
       await addUsdcTrustline(keypair);
+      checkpoint.trustedWallets.push(wallet.publicKey);
+      saveCheckpoint(checkpoint, cwd);
     } catch (err: any) {
       logger.error({ name: wallet.name, err: err.message }, "failed to add trustline");
     }

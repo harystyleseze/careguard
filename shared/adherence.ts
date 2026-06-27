@@ -7,8 +7,9 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { fileURLToPath } from "url";
 
-const DATA_DIR = new URL("../data", import.meta.url).pathname;
+const DATA_DIR = process.env.DATA_DIR || fileURLToPath(new URL("../data", import.meta.url));
 const ADHERENCE_FILE = `${DATA_DIR}/adherence.jsonl`;
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });

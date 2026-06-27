@@ -127,6 +127,9 @@ export interface Transaction {
   // Always a real 64-char hex Stellar tx hash, or undefined. Never a raw/base64
   // payment receipt — the backend normalizes that before recording the transaction (#14).
   stellarTxHash?: string;
+  // 'extracted': hash was successfully parsed from the x402 PAYMENT-RESPONSE header.
+  // 'extraction_failed': header was present but all parse strategies failed (#191).
+  txHashStatus?: 'extracted' | 'extraction_failed';
   mppOrderId?: string;
   status:
     | 'pending'

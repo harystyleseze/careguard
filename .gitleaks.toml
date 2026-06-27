@@ -1,0 +1,22 @@
+# Gitleaks configuration file with custom rules for CareGuard secrets
+
+[title]
+"CareGuard custom secret patterns"
+
+[[rules]]
+id = "stellar-secret-seed"
+description = "Stellar Secret Seed Key"
+regex = '''S[A-Z2-7]{55}'''
+tags = ["key", "stellar"]
+
+[[rules]]
+id = "groq-api-key"
+description = "Groq API Key"
+regex = '''gsk_[a-zA-Z0-9]{40,}'''
+tags = ["key", "groq"]
+
+[[rules]]
+id = "openai-api-key"
+description = "OpenAI API Key"
+regex = '''sk-[a-zA-Z0-9]{20,}'''
+tags = ["key", "openai"]
