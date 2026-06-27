@@ -4,6 +4,7 @@ dist/
 .env.prod
 .env.local
 .dev-seed
+.setup-wallets-checkpoint.json
 *.log
 data/audit.log.jsonl
 data/spending.json
