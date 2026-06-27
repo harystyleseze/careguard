@@ -8,7 +8,14 @@ export interface Interaction {
   recommendation: string;
 }
 
-export const INTERACTIONS: Interaction[] = [
+import { readFileSync, existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const HARDCODED_FALLBACK: Interaction[] = [
   {
     drugs: ["lisinopril", "potassium"],
     severity: "severe",
@@ -74,6 +81,32 @@ export const INTERACTIONS: Interaction[] = [
       "Monitor for excessive blood pressure lowering (dizziness, lightheadedness).",
   },
 ];
+
+function loadInteractions(): Interaction[] {
+  const pathsToTry = [
+    join(process.cwd(), "shared/reference/drug-interactions.json"),
+    join(process.cwd(), "../shared/reference/drug-interactions.json"),
+    join(process.cwd(), "../../shared/reference/drug-interactions.json"),
+    join(__dirname, "../../../shared/reference/drug-interactions.json"),
+  ];
+
+  for (const p of pathsToTry) {
+    if (existsSync(p)) {
+      try {
+        const data = JSON.parse(readFileSync(p, "utf8"));
+        if (Array.isArray(data)) {
+          return data;
+        }
+      } catch (err) {
+        console.error(`Failed to parse drug-interactions.json at ${p}:`, err);
+      }
+    }
+  }
+
+  return HARDCODED_FALLBACK;
+}
+
+export const INTERACTIONS: Interaction[] = loadInteractions();
 
 export const NORMALIZED_INTERACTIONS = INTERACTIONS.map((interaction) => ({
   ...interaction,

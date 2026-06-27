@@ -4,21 +4,28 @@ import { AGENT_URL } from "./agent-url";
 import { fetchProfile, DEFAULT_RECIPIENT, DEFAULT_CAREGIVER } from "./fetchProfile";
 
 export function useProfile() {
-  // If running on the server (e.g. Next.js Server Components or test environments where window is undefined),
-  // return the cached server profile if available, otherwise return defaults.
-  if (typeof window === "undefined") {
-    const cached = typeof globalThis !== "undefined" ? (globalThis as any).__SERVER_PROFILE__ : null;
-    return {
-      recipient: cached?.recipient || DEFAULT_RECIPIENT,
-      caregiver: cached?.caregiver || DEFAULT_CAREGIVER,
-      updateProfile: async () => {},
-    };
-  }
+  const isServer = typeof window === "undefined";
 
-  const [recipient, setRecipient] = useState<RecipientProfile>(DEFAULT_RECIPIENT);
-  const [caregiver, setCaregiver] = useState<CaregiverProfile>(DEFAULT_CAREGIVER);
+  const [recipient, setRecipient] = useState<RecipientProfile>(() => {
+    if (!isServer) {
+      const cached = (window as any).__SERVER_PROFILE__;
+      if (cached?.recipient) return cached.recipient;
+    }
+    const cached = typeof globalThis !== "undefined" ? (globalThis as any).__SERVER_PROFILE__ : null;
+    return cached?.recipient || DEFAULT_RECIPIENT;
+  });
+
+  const [caregiver, setCaregiver] = useState<CaregiverProfile>(() => {
+    if (!isServer) {
+      const cached = (window as any).__SERVER_PROFILE__;
+      if (cached?.caregiver) return cached.caregiver;
+    }
+    const cached = typeof globalThis !== "undefined" ? (globalThis as any).__SERVER_PROFILE__ : null;
+    return cached?.caregiver || DEFAULT_CAREGIVER;
+  });
 
   useEffect(() => {
+    if (isServer) return;
     let mounted = true;
     const load = async () => {
       const data = await fetchProfile();
@@ -30,13 +37,14 @@ export function useProfile() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [isServer]);
 
   const updateProfile = useCallback(
     async (patch: {
       recipient?: Partial<RecipientProfile>;
       caregiver?: Partial<CaregiverProfile>;
     }) => {
+      if (isServer) return;
       const prevRecipient = recipient;
       const prevCaregiver = caregiver;
       // Optimistic update
@@ -57,7 +65,7 @@ export function useProfile() {
         setCaregiver(prevCaregiver);
       }
     },
-    [recipient, caregiver],
+    [isServer, recipient, caregiver],
   );
 
   return { recipient, caregiver, updateProfile };

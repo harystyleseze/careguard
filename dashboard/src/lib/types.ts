@@ -65,8 +65,11 @@ export const TransactionSchema = z.object({
   // Always a real 64-char hex Stellar tx hash, or undefined (#14).
   stellarTxHash: z.string().optional(),
   mppOrderId: z.string().optional(),
+  txHashStatus: z.enum(["extracted", "extraction_failed"]).optional(),
   status: z.string(),
   category: z.string(),
+  pendingUntil: z.string().optional(),
+  submittedAt: z.string().optional(),
 });
 
 export type Transaction = z.infer<typeof TransactionSchema>;

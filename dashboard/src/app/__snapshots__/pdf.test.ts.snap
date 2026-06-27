@@ -1,0 +1,53 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`PDF Report Snapshot Tests > should generate a correct Bill Audit PDF report 1`] = `
+"
+
+CareGuard
+AI Healthcare Agent on Stellar
+Medical Bill Audit Report
+Patient: Rosa Garcia, 78 | Facility: General Hospital
+Generated: 6/27/2026, 9:38:42 AM
+Total Charged: $1200Overcharges Found: $200Corrected Amount: $1000
+2 errors found (16.67% of total bill)
+DescriptionCPT CodeQtyChargedStatusSuggested
+Comprehensive office visit992141$150OK-
+Electrocardiogram report930002$100DUPLICATE$50
+Review the duplicated CPT codes at General Hospital.
+CareGuard | Stellar Testnet | All transactions verifiable on stellar.expertPage 1 of 1"
+`;
+
+exports[`PDF Report Snapshot Tests > should generate a correct Medication Price Comparison PDF report 1`] = `
+"
+
+CareGuard
+AI Healthcare Agent on Stellar
+Medication Price Comparison Report
+Patient: Rosa Garcia, 78 | 1 Medications Compared
+Generated: 6/27/2026, 9:38:42 AM
+Total Potential Savings: $35.00/month ($420.00/year)
+Lisinopril 10mgSave $35/mo (77.78%)
+PharmacyPriceDistanceIn Stock
+Costco$102.1 milesYes
+CVS$451.2 milesYes
+Drug Interactions
+Drug 1Drug 2SeverityRecommendation
+LisinoprilMetforminModerateMonitor blood pressure regularly.
+CareGuard | Stellar Testnet | All transactions verifiable on stellar.expertPage 1 of 1"
+`;
+
+exports[`PDF Report Snapshot Tests > should generate a correct Transaction PDF report 1`] = `
+"
+
+CareGuard
+AI Healthcare Agent on Stellar
+Transaction Report
+Patient: Rosa Garcia, 78 | 1 Transactions
+Generated: 6/27/2026, 9:38:42 AM
+Medications: $10.00Bills: $0.00API Fees (x402): $0.0300
+Total: $10.03
+TimeTypeDescriptionAmountStatusStellar Tx
+6/27/2026, 9:00:00 AMmedicationLisinopril purchase at Costco$10.00completeda1b2c3d4e5f6a1b2.
+..
+CareGuard | Stellar Testnet | All transactions verifiable on stellar.expertPage 1 of 1"
+`;

@@ -13,6 +13,8 @@ import type { AgentResult } from "../types";
 export interface BillsTabProps {
   agentResult: AgentResult | null;
   recipient: RecipientProfile;
+  caregiverName?: string;
+  loadingTransactions?: boolean;
 }
 
 export function BillsTab({ agentResult, recipient }: BillsTabProps) {

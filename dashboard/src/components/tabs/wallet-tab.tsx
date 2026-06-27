@@ -10,6 +10,7 @@ export interface WalletTabProps {
   agentInfo: AgentInfo | null;
   walletBalance: string | null;
   walletXlm: string | null;
+  loadingAgentInfo?: boolean;
 }
 
 export function WalletTab({ agentInfo, walletBalance, walletXlm }: WalletTabProps) {

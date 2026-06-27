@@ -16,6 +16,7 @@ export interface SettingsTabProps {
     recipient?: Partial<RecipientProfile>;
     caregiver?: Partial<CaregiverProfile>;
   }) => Promise<void>;
+  loadingAgentInfo?: boolean;
 }
 
 export function SettingsTab({
