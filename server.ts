@@ -56,6 +56,7 @@ import { checkWalletBalance, formatResult } from "./shared/wallet-balance.ts";
 import { appendAuditEntry, auditRouter } from "./shared/audit-log.ts";
 import { rateLimiters } from "./shared/rate-limit.ts";
 import { agentQueue } from "./shared/agent-queue.ts";
+import { resolveDrugInteractionPayTo } from "./shared/pharmacy-config.ts";
 
 // Agent tools
 import {
@@ -109,6 +110,8 @@ const envSchema = z.object({
   LLM_API_KEY: z.string().min(1, "LLM_API_KEY required"),
   AGENT_SECRET_KEY: z.string().min(1, "AGENT_SECRET_KEY required"),
   PHARMACY_1_PUBLIC_KEY: z.string().min(1, "PHARMACY_1_PUBLIC_KEY required"),
+  PHARMACY_2_PUBLIC_KEY: z.string().min(1).optional(),
+  MULTI_PHARMACY_MODE: z.string().optional(),
   BILL_PROVIDER_PUBLIC_KEY: z
     .string()
     .min(1, "BILL_PROVIDER_PUBLIC_KEY required"),
@@ -154,6 +157,14 @@ if (env.data.STELLAR_NETWORK === "public" && !env.data.OZ_FACILITATOR_API_KEY) {
 
 if (env.data.STELLAR_NETWORK !== "public" && !env.data.OZ_FACILITATOR_API_KEY) {
   logger.warn("OZ_FACILITATOR_API_KEY not set — x402 routes will fail until configured");
+}
+
+let drugInteractionPayTo: string;
+try {
+  drugInteractionPayTo = resolveDrugInteractionPayTo(env.data);
+} catch (err: any) {
+  process.stderr.write(`${err.message}\n`);
+  process.exit(1);
 }
 
 const PORT = env.data.PORT;
@@ -780,8 +791,7 @@ applyX402Middleware(app, {
     accepts: {
       scheme: "exact",
       network: NETWORK,
-      payTo:
-        process.env.PHARMACY_2_PUBLIC_KEY || process.env.PHARMACY_1_PUBLIC_KEY!,
+      payTo: drugInteractionPayTo,
       price: "$0.001",
     },
     description: "Drug interaction check — $0.001 USDC",
