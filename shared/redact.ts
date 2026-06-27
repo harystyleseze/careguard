@@ -44,9 +44,18 @@ const SECRET_FIELD_NAMES = new Set([
 const STELLAR_SECRET_RE = /\bS[A-Z2-7]{55}\b/g;
 // Bearer tokens / JWT-ish
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._\-+/=]{20,}\b/gi;
+const CARE_PERSON_RE = /\b(?:Rosa(?:\s+Garcia)?|Maria(?:\s+Garcia)?)\b/gi;
+const MEDICATION_RE =
+  /\b(?:Lisinopril|Metformin|Atorvastatin|Amlodipine)\b/gi;
 
 export function redactString(value: string): string {
   return value.replace(STELLAR_SECRET_RE, REDACTED).replace(BEARER_RE, `Bearer ${REDACTED}`);
+}
+
+export function redactAgentTaskText(value: string): string {
+  return redactString(value)
+    .replace(CARE_PERSON_RE, "[REDACTED_PERSON]")
+    .replace(MEDICATION_RE, "[REDACTED_MEDICATION]");
 }
 
 export function redact<T>(value: T, depth = 0): T {
