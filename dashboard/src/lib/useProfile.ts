@@ -1,57 +1,32 @@
 import { useCallback, useEffect, useState } from "react";
 import type { CaregiverProfile, RecipientProfile } from "./types";
 import { AGENT_URL } from "./agent-url";
-
-
-const DEFAULT_RECIPIENT: RecipientProfile = {
-  name: "Rosa Garcia",
-  age: 78,
-  facility: "General Hospital",
-  medications: ["Lisinopril", "Metformin", "Atorvastatin", "Amlodipine"],
-  doctor: "Dr. Chen, General Hospital",
-  insurance: "Medicare Part D",
-};
-
-const DEFAULT_CAREGIVER: CaregiverProfile = {
-  name: "Maria Garcia",
-  relationship: "Daughter",
-  location: "Phoenix, AZ (800 miles from Rosa)",
-  notifications: "Email + SMS",
-};
+import { fetchProfile, DEFAULT_RECIPIENT, DEFAULT_CAREGIVER } from "./fetchProfile";
 
 export function useProfile() {
+  // If running on the server (e.g. Next.js Server Components or test environments where window is undefined),
+  // return the cached server profile if available, otherwise return defaults.
+  if (typeof window === "undefined") {
+    const cached = typeof globalThis !== "undefined" ? (globalThis as any).__SERVER_PROFILE__ : null;
+    return {
+      recipient: cached?.recipient || DEFAULT_RECIPIENT,
+      caregiver: cached?.caregiver || DEFAULT_CAREGIVER,
+      updateProfile: async () => {},
+    };
+  }
+
   const [recipient, setRecipient] = useState<RecipientProfile>(DEFAULT_RECIPIENT);
   const [caregiver, setCaregiver] = useState<CaregiverProfile>(DEFAULT_CAREGIVER);
 
   useEffect(() => {
     let mounted = true;
-    const fetchProfile = async () => {
-      try {
-        const res = await fetch(`${AGENT_URL}/agent/profile`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!mounted) return;
-        const r = data.recipient ?? {};
-        const c = data.caregiver ?? {};
-        setRecipient({
-          name: r.name?.trim() || DEFAULT_RECIPIENT.name,
-          age: typeof r.age === "number" ? r.age : DEFAULT_RECIPIENT.age,
-          facility: r.facility?.trim() || DEFAULT_RECIPIENT.facility,
-          medications: Array.isArray(r.medications) ? r.medications : DEFAULT_RECIPIENT.medications,
-          doctor: r.doctor?.trim() || DEFAULT_RECIPIENT.doctor,
-          insurance: r.insurance?.trim() || DEFAULT_RECIPIENT.insurance,
-        });
-        setCaregiver({
-          name: c.name?.trim() || DEFAULT_CAREGIVER.name,
-          relationship: c.relationship?.trim() || DEFAULT_CAREGIVER.relationship,
-          location: c.location?.trim() || DEFAULT_CAREGIVER.location,
-          notifications: c.notifications?.trim() || DEFAULT_CAREGIVER.notifications,
-        });
-      } catch {
-        // Keep defaults for dashboard demo mode.
-      }
+    const load = async () => {
+      const data = await fetchProfile();
+      if (!mounted) return;
+      setRecipient(data.recipient);
+      setCaregiver(data.caregiver);
     };
-    fetchProfile();
+    load();
     return () => {
       mounted = false;
     };
