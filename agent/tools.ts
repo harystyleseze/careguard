@@ -2326,7 +2326,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'audit_medical_bill',
     description:
-      'Audit a medical bill for errors (duplicates, upcoding, overcharges). 80% of medical bills contain errors. Pays $0.01 USDC per audit via x402 on Stellar. Pass line_items_json as a JSON string array of line items. Each line item must include description, cptCode, quantity, and chargedAmount. cptCode must match /^(?:\\d{5}|J\\d{4})$/, quantity must be > 0, and chargedAmount must be > 0.',
+      'Audit a medical bill for errors (duplicates, upcoding, overcharges). 80% of medical bills contain errors. Pays $0.01 USDC per audit via x402 on Stellar. Pass line_items_json as a JSON string array of line items. Each line item must include description, cptCode, quantity, and chargedAmount. cptCode must match /^(?:\\d{5}|J\\d{4})$/, quantity must be an integer from 1 to 999, and chargedAmount must be between 0 and 1000000.',
     input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
