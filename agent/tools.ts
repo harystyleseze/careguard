@@ -27,7 +27,7 @@
  */
 
 import 'dotenv/config';
-import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, renameSync } from 'fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, renameSync, promises as fsPromises } from 'fs';
 import { z } from 'zod';
 import { logger } from '../shared/logger.ts';
 import { resolveStellarNetwork, validateSignerKeyForNetwork } from '../shared/stellar-network.ts';
@@ -85,6 +85,30 @@ import {
 } from '../shared/network-mode.ts';
 
 assertMockNetworkAllowed();
+
+// Atomic file write helpers (Issues #203, #204)
+function writeAtomically(filePath: string, content: string): void {
+  const tempPath = `${filePath}.tmp-${Date.now()}`;
+  try {
+    writeFileSync(tempPath, content, 'utf-8');
+    renameSync(tempPath, filePath);
+  } catch (err) {
+    try { writeFileSync(filePath.slice(0, filePath.lastIndexOf('/')), '', 'utf-8'); } catch {}
+    throw err;
+  }
+}
+
+function rotateCorruptedFile(filePath: string): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const rotatedPath = `${filePath}.corrupt-${timestamp}`;
+  try {
+    renameSync(filePath, rotatedPath);
+    logger.error({ filePath, rotatedPath }, '[Persistence] Rotated corrupted file');
+  } catch (err) {
+    logger.error({ filePath, err }, '[Persistence] Failed to rotate corrupted file');
+  }
+  return rotatedPath;
+}
 
 // Resolve Stellar network configuration
 const STELLAR_CONFIG = resolveStellarNetwork();
@@ -413,6 +437,20 @@ interface SpendingTracker {
   transactions: Transaction[];
 }
 
+const SpendingTrackerSchema = z.object({
+  medications: z.number(),
+  bills: z.number(),
+  serviceFees: z.number(),
+  transactions: z.array(z.object({
+    id: z.string(),
+    category: z.string(),
+    amount: z.number(),
+    createdAt: z.string(),
+    description: z.string().optional(),
+    metadata: z.record(z.any()).optional(),
+  })),
+});
+
 type PaymentCategory =
   | typeof TRANSACTION_CATEGORY.MEDICATIONS
   | typeof TRANSACTION_CATEGORY.BILLS;
@@ -489,8 +527,25 @@ function readSpendingFromDisk(recipientId?: string): SpendingTracker {
   // --- Try new snapshot + JSONL tail path first ---
   if (existsSync(snapshotFile)) {
     try {
-      const snapshot = JSON.parse(readFileSync(snapshotFile, 'utf-8')) as SpendingTracker & { _snapshotTxCount?: number };
-      const snapshotTxCount = snapshot._snapshotTxCount ?? snapshot.transactions.length;
+      const raw = readFileSync(snapshotFile, 'utf-8');
+      let parsed: any;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (parseErr) {
+        logger.warn({ file: snapshotFile }, '[Persistence] JSON parse failed on snapshot');
+        rotateCorruptedFile(snapshotFile);
+        throw parseErr;
+      }
+
+      const validated = SpendingTrackerSchema.safeParse(parsed);
+      if (!validated.success) {
+        logger.warn({ file: snapshotFile, errors: validated.error.errors }, '[Persistence] Snapshot schema invalid');
+        rotateCorruptedFile(snapshotFile);
+        throw new Error('Snapshot schema validation failed');
+      }
+
+      const snapshot = validated.data as SpendingTracker & { _snapshotTxCount?: number };
+      const snapshotTxCount = (parsed as any)._snapshotTxCount ?? snapshot.transactions.length;
 
       // Replay transactions from the JSONL tail that came after the snapshot
       const tailTxs: Transaction[] = [];
@@ -529,16 +584,34 @@ function readSpendingFromDisk(recipientId?: string): SpendingTracker {
   // --- Legacy fallback: spending.json (full JSON blob) ---
   if (!existsSync(legacyFile)) return createEmptySpendingTracker();
   try {
-    const parsed = JSON.parse(readFileSync(legacyFile, 'utf-8')) as SpendingTracker;
-    const normalized = normalizeTransactionCategories(parsed, recipientId);
+    const raw = readFileSync(legacyFile, 'utf-8');
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (parseErr) {
+      logger.error({ file: legacyFile }, '[Persistence] JSON parse failed on spending.json');
+      const rotated = rotateCorruptedFile(legacyFile);
+      logger.error({ rotatedPath: rotated }, '[Persistence] CRITICAL: Corrupted spending file rotated, starting fresh');
+      return createEmptySpendingTracker();
+    }
+
+    const validated = SpendingTrackerSchema.safeParse(parsed);
+    if (!validated.success) {
+      logger.error({ file: legacyFile, errors: validated.error.errors }, '[Persistence] spending.json schema invalid');
+      const rotated = rotateCorruptedFile(legacyFile);
+      logger.error({ rotatedPath: rotated }, '[Persistence] CRITICAL: Invalid spending schema, starting fresh');
+      return createEmptySpendingTracker();
+    }
+
+    const normalized = normalizeTransactionCategories(validated.data, recipientId);
     if (normalized.migrated) {
       saveSpending(normalized.data, recipientId);
     }
     return normalized.data;
   } catch (err: any) {
-    logger.warn(
+    logger.error(
       { file: legacyFile, error: err.message },
-      '[Persistence] spending.json is corrupted; falling back to an empty tracker',
+      '[Persistence] CRITICAL: Unexpected error loading spending.json',
     );
     return createEmptySpendingTracker();
   }
@@ -580,15 +653,13 @@ export function appendTransaction(tx: Transaction, recipientId?: string): void {
  */
 export function compactSnapshot(data: SpendingTracker, recipientId?: string): void {
   const snapshotFile = getSnapshotFile(recipientId);
-  const tempFile = `${snapshotFile}.tmp-${Date.now()}`;
   const payload = {
     ...data,
     // Record how many JSONL lines this snapshot covers so the read path
     // knows where the tail starts.
     _snapshotTxCount: data.transactions.length,
   };
-  writeFileSync(tempFile, JSON.stringify(payload, null, 2), 'utf-8');
-  renameSync(tempFile, snapshotFile);
+  writeAtomically(snapshotFile, JSON.stringify(payload, null, 2));
   logger.info(
     { txCount: data.transactions.length, recipientId: recipientId || currentRecipientId },
     '[Persistence] Compacted spending snapshot',
@@ -602,9 +673,7 @@ export function compactSnapshot(data: SpendingTracker, recipientId?: string): vo
 export function saveSpending(data: SpendingTracker, recipientId?: string) {
   // 1. Legacy full-file (backward compat for external tooling)
   const file = getSpendingFile(recipientId);
-  const tempFile = `${file}.tmp-${Date.now()}`;
-  writeFileSync(tempFile, JSON.stringify(data, null, 2));
-  renameSync(tempFile, file);
+  writeAtomically(file, JSON.stringify(data, null, 2));
 
   // 2. Write / refresh the snapshot file so the new read path can find state
   compactSnapshot(data, recipientId);
@@ -1941,7 +2010,7 @@ function loadOrders(recipientId?: string): OrderRecord[] {
   return JSON.parse(readFileSync(file, "utf-8"));
 }
 function saveOrders(orders: OrderRecord[], recipientId?: string) {
-  writeFileSync(getOrdersFile(recipientId), JSON.stringify(orders, null, 2));
+  writeAtomically(getOrdersFile(recipientId), JSON.stringify(orders, null, 2));
 }
 
 // --- Tool: Schedule an adherence reminder after pharmacy order (Issue #264) ---
