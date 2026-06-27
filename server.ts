@@ -810,7 +810,6 @@ app.get("/drug/interactions", (req, res) => {
 // ============================================================
 
 const DATA_DIR = process.env.DATA_DIR || fileURLToPath(new URL("./data", import.meta.url));
-const DATA_DIR = process.env.DATA_DIR || new URL("./data", import.meta.url).pathname;
 const ORDERS_FILE = `${DATA_DIR}/orders.json`;
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
