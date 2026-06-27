@@ -9,6 +9,8 @@
 3. Store the `.dev-seed` mnemonic somewhere safe.
 4. Re-run `npm run setup` whenever you need the same test wallets again.
 
+Funding progress is checkpointed in `.setup-wallets-checkpoint.json`. If Friendbot rate-limits or returns a transient 5xx/network error, the script retries the current wallet up to five times. On rerun, wallets already funded in the checkpoint are skipped so the script resumes from the next wallet instead of starting from scratch.
+
 ## Using your own seed
 
 Pass a BIP-39 mnemonic directly:

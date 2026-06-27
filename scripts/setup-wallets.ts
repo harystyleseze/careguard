@@ -18,6 +18,8 @@ const HORIZON_URL = "https://horizon-testnet.stellar.org";
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
 const USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 export const DEV_SEED_FILE = ".dev-seed";
+export const SETUP_WALLET_CHECKPOINT_FILE = ".setup-wallets-checkpoint.json";
+export const FRIENDBOT_MAX_ATTEMPTS = 5;
 export const WALLET_NAMES = [
   "AGENT",
   "CAREGIVER",
@@ -34,6 +36,48 @@ export interface WalletInfo {
   name: string;
   publicKey: string;
   secretKey: string;
+}
+
+export interface SetupWalletCheckpoint {
+  version: 1;
+  funded: Record<string, { publicKey: string; fundedAt: string }>;
+}
+
+type FetchFn = typeof fetch;
+type SleepFn = (ms: number) => Promise<void>;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function checkpointPath(cwd = process.cwd()) {
+  return path.join(cwd, SETUP_WALLET_CHECKPOINT_FILE);
+}
+
+export function loadSetupWalletCheckpoint(filePath = checkpointPath()): SetupWalletCheckpoint {
+  if (!existsSync(filePath)) {
+    return { version: 1, funded: {} };
+  }
+
+  const parsed = JSON.parse(readFileSync(filePath, "utf-8")) as Partial<SetupWalletCheckpoint>;
+  return {
+    version: 1,
+    funded: parsed.funded || {},
+  };
+}
+
+export function saveSetupWalletCheckpoint(
+  checkpoint: SetupWalletCheckpoint,
+  filePath = checkpointPath(),
+) {
+  writeFileSync(filePath, `${JSON.stringify(checkpoint, null, 2)}\n`, { mode: 0o600 });
+}
+
+export function isWalletFundedInCheckpoint(
+  checkpoint: SetupWalletCheckpoint,
+  wallet: Pick<WalletInfo, "name" | "publicKey">,
+) {
+  return checkpoint.funded[wallet.name]?.publicKey === wallet.publicKey;
 }
 
 function normalizeSeedMaterial(seedMaterial: string) {
@@ -162,15 +206,106 @@ export async function resolveSetupSeed(options: {
   return { seed, source: "generated", path: seedPath };
 }
 
-async function fundAccount(publicKey: string): Promise<void> {
-  const response = await fetch(`${FRIENDBOT_URL}?addr=${publicKey}`);
-  if (!response.ok) {
-    const text = await response.text();
-    // Friendbot returns an error if already funded, which is fine
-    if (!text.includes("createAccountAlreadyExist")) {
-      throw new Error(`Friendbot failed for ${publicKey}: ${text}`);
+function isTransientFriendbotStatus(status: number) {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function retryDelayMs(attempt: number) {
+  return 250 * 2 ** (attempt - 1);
+}
+
+export async function fundAccount(
+  publicKey: string,
+  options: {
+    fetchFn?: FetchFn;
+    sleepFn?: SleepFn;
+    maxAttempts?: number;
+  } = {},
+): Promise<"funded" | "already_exists"> {
+  const fetchFn = options.fetchFn || fetch;
+  const sleepFn = options.sleepFn || sleep;
+  const maxAttempts = options.maxAttempts || FRIENDBOT_MAX_ATTEMPTS;
+  const url = `${FRIENDBOT_URL}?addr=${publicKey}`;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await fetchFn(url);
+      if (response.ok) {
+        return "funded";
+      }
+
+      const text = await response.text();
+      // Friendbot returns an error if already funded, which is fine.
+      if (text.includes("createAccountAlreadyExist")) {
+        return "already_exists";
+      }
+
+      if (isTransientFriendbotStatus(response.status)) {
+        if (attempt < maxAttempts) {
+          logger.warn(
+            { publicKey: publicKey.slice(0, 8), status: response.status, attempt, maxAttempts },
+            "Friendbot transient failure; retrying",
+          );
+          await sleepFn(retryDelayMs(attempt));
+          continue;
+        }
+        throw new Error(
+          `Friendbot failed for ${publicKey}: transient HTTP ${response.status} after ${maxAttempts} attempts: ${text}`,
+        );
+      }
+
+      throw new Error(`Friendbot failed for ${publicKey}: permanent HTTP ${response.status}: ${text}`);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith(`Friendbot failed for ${publicKey}:`)) {
+        throw err;
+      }
+
+      if (attempt < maxAttempts) {
+        logger.warn(
+          { publicKey: publicKey.slice(0, 8), attempt, maxAttempts, err: err instanceof Error ? err.message : String(err) },
+          "Friendbot network failure; retrying",
+        );
+        await sleepFn(retryDelayMs(attempt));
+        continue;
+      }
+
+      throw new Error(
+        `Friendbot failed for ${publicKey}: network error after ${maxAttempts} attempts: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   }
+
+  throw new Error(`Friendbot failed for ${publicKey}: exhausted retry attempts`);
+}
+
+export async function fundWalletWithCheckpoint(
+  wallet: WalletInfo,
+  options: {
+    cwd?: string;
+    checkpointFile?: string;
+    fetchFn?: FetchFn;
+    sleepFn?: SleepFn;
+    now?: () => Date;
+  } = {},
+): Promise<"funded" | "already_exists" | "skipped"> {
+  const filePath = options.checkpointFile || checkpointPath(options.cwd);
+  const checkpoint = loadSetupWalletCheckpoint(filePath);
+  if (isWalletFundedInCheckpoint(checkpoint, wallet)) {
+    return "skipped";
+  }
+
+  const result = await fundAccount(wallet.publicKey, {
+    fetchFn: options.fetchFn,
+    sleepFn: options.sleepFn,
+  });
+  checkpoint.funded[wallet.name] = {
+    publicKey: wallet.publicKey,
+    fundedAt: (options.now || (() => new Date()))().toISOString(),
+  };
+  saveSetupWalletCheckpoint(checkpoint, filePath);
+  return result;
 }
 
 async function addUsdcTrustline(keypair: Keypair): Promise<void> {
@@ -228,10 +363,11 @@ async function main() {
   logger.info("step 1: funding accounts via Friendbot");
   for (const wallet of wallets) {
     try {
-      await fundAccount(wallet.publicKey);
-      logger.info({ name: wallet.name, wallet: wallet.publicKey.slice(0, 8) }, "funded");
+      const result = await fundWalletWithCheckpoint(wallet);
+      logger.info({ name: wallet.name, wallet: wallet.publicKey.slice(0, 8), result }, "funded");
     } catch (err: any) {
       logger.error({ name: wallet.name, err: err.message }, "failed to fund wallet");
+      throw err;
     }
   }
 
