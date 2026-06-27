@@ -7,19 +7,21 @@ export function useProfile() {
   const isServer = typeof window === "undefined";
 
   const [recipient, setRecipient] = useState<RecipientProfile>(() => {
-    if (isServer) {
-      const cached = typeof globalThis !== "undefined" ? (globalThis as any).__SERVER_PROFILE__ : null;
-      return cached?.recipient || DEFAULT_RECIPIENT;
+    if (!isServer) {
+      const cached = (window as any).__SERVER_PROFILE__;
+      if (cached?.recipient) return cached.recipient;
     }
-    return DEFAULT_RECIPIENT;
+    const cached = typeof globalThis !== "undefined" ? (globalThis as any).__SERVER_PROFILE__ : null;
+    return cached?.recipient || DEFAULT_RECIPIENT;
   });
 
   const [caregiver, setCaregiver] = useState<CaregiverProfile>(() => {
-    if (isServer) {
-      const cached = typeof globalThis !== "undefined" ? (globalThis as any).__SERVER_PROFILE__ : null;
-      return cached?.caregiver || DEFAULT_CAREGIVER;
+    if (!isServer) {
+      const cached = (window as any).__SERVER_PROFILE__;
+      if (cached?.caregiver) return cached.caregiver;
     }
-    return DEFAULT_CAREGIVER;
+    const cached = typeof globalThis !== "undefined" ? (globalThis as any).__SERVER_PROFILE__ : null;
+    return cached?.caregiver || DEFAULT_CAREGIVER;
   });
 
   useEffect(() => {

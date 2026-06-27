@@ -69,17 +69,21 @@ export const viewport: Viewport = {
   themeColor: "#0ea5e9",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const profile = await fetchProfile();
+  const scriptContent = `window.__SERVER_PROFILE__ = ${JSON.stringify(profile)};`;
+
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">
+        <script dangerouslySetInnerHTML={{ __html: scriptContent }} />
         {children}
         <Toaster />
       </body>
