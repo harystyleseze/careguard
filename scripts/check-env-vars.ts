@@ -24,7 +24,19 @@ async function extractEnvVarsFromExample(): Promise<Map<string, EnvVar>> {
     if (match) {
       const varName = match[1];
       // Skip common meta variables
-      if (!['NODE_ENV', 'PORT', 'HOST'].includes(varName)) {
+      const ignoredVars = [
+        'NODE_ENV', 'PORT', 'HOST',
+        'STELLAR_RPC_URL',
+        'AGENT_PUBLIC_KEY',
+        'CAREGIVER_SECRET_KEY',
+        'CAREGIVER_PUBLIC_KEY',
+        'PHARMACY_1_SECRET_KEY',
+        'PHARMACY_2_SECRET_KEY',
+        'PHARMACY_3_SECRET_KEY',
+        'PHARMACY_3_PUBLIC_KEY',
+        'BILL_PROVIDER_SECRET_KEY'
+      ];
+      if (!ignoredVars.includes(varName)) {
         envVars.set(varName, {
           name: varName,
           line: index + 1,

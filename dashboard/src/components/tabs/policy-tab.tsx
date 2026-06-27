@@ -45,6 +45,7 @@ export interface PolicyTabProps {
   policySaved: boolean;
   onUpdatePolicy: () => Promise<{ ok: boolean; error?: string }>;
   onForceSync: () => void;
+  loadingSpending?: boolean;
 }
 
 function errorFor(field: keyof SpendingPolicyInput, errors: PolicyFieldError[]) {

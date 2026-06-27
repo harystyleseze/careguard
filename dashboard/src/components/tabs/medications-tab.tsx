@@ -13,6 +13,7 @@ const MEDS = ["Lisinopril", "Metformin", "Atorvastatin", "Amlodipine"] as const;
 export interface MedicationsTabProps {
   agentResult: AgentResult | null;
   recipient: RecipientProfile;
+  loadingTransactions?: boolean;
 }
 
 export function MedicationsTab({ agentResult, recipient }: MedicationsTabProps) {

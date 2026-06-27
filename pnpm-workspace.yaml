@@ -1,2 +1,5 @@
 allowBuilds:
   esbuild: set this to true or false
+minimumReleaseAgeExclude:
+  - '@tanstack/react-virtual@3.14.4'
+  - '@tanstack/virtual-core@3.17.2'
