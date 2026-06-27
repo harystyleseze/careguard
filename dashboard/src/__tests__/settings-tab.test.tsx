@@ -8,6 +8,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SettingsTab } from "../components/tabs/settings-tab";
 import type { SettingsTabProps } from "../components/tabs/settings-tab";
 
+const { copyTextMock } = vi.hoisted(() => ({
+  copyTextMock: vi.fn().mockResolvedValue("ok" as const),
+}));
+
+vi.mock("../lib/clipboard", () => ({
+  copyText: copyTextMock,
+}));
+
 const RECIPIENT = {
   name: "Rosa Garcia",
   age: 78,
@@ -34,6 +42,11 @@ function buildProps(overrides: Partial<SettingsTabProps> = {}): SettingsTabProps
     ...overrides,
   };
 }
+
+beforeEach(() => {
+  copyTextMock.mockReset();
+  copyTextMock.mockResolvedValue("ok");
+});
 
 describe("SettingsTab — load from props (Issue #79)", () => {
   it("renders recipient name from props (not hardcoded)", () => {
@@ -166,5 +179,28 @@ describe("SettingsTab — agent status (Issue #79)", () => {
     render(<SettingsTab {...buildProps({ onTogglePause })} />);
     fireEvent.click(screen.getByRole("button", { name: /Pause Agent/i }));
     expect(onTogglePause).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SettingsTab — clipboard fallback (Issue #218)", () => {
+  it("shows a fallback toast when wallet copy fails", async () => {
+    const wallet = "GDSETTINGSWALLET123456789";
+    copyTextMock.mockResolvedValueOnce("failed");
+
+    render(
+      <SettingsTab
+        {...buildProps({
+          agentInfo: { agentWallet: wallet, llm: "groq", network: "stellar:testnet" } as any,
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Copy/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toContain("Couldn't copy. Press Ctrl+C.");
+    });
+    expect((screen.getByLabelText(/Text that could not be copied/i) as HTMLInputElement).value)
+      .toBe(wallet);
   });
 });
