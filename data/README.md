@@ -17,4 +17,4 @@ These files contain **sensitive financial data**. They must never appear in a co
 
 All paths are listed in `.gitignore`. If you see them untracked in `git status`, do not stage them.
 
-CI will fail any PR where these files appear in the diff (see `.github/workflows/ci.yml`).
+CI will fail any PR where these files appear in the diff (see `.github/workflows/pr-meta.yml`).

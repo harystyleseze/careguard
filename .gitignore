@@ -5,9 +5,9 @@ dist/
 .env.local
 .dev-seed
 *.log
+data/*.json
+!data/.gitkeep
 data/audit.log.jsonl
-data/spending.json
-data/orders.json
 data/pharmacy-pricing.sqlite
 data/pharmacy-pricing.sqlite-*
 data/pharmacy-pricing.sqlite-shm

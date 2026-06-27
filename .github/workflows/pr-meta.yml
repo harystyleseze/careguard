@@ -1,0 +1,21 @@
+name: PR Metadata Guard
+
+on:
+  pull_request:
+
+jobs:
+  block-runtime-data:
+    name: Block committed runtime data
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Block data JSON files
+        run: |
+          base_ref="${{ github.base_ref }}"
+          if git diff --name-only --diff-filter=ACMR "origin/${base_ref}...HEAD" | grep -qE '^data/.*\.json$'; then
+            echo "::error::Runtime data files under data/*.json must not be committed. Keep them local or migrate to a managed database."
+            exit 1
+          fi
