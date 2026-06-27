@@ -19,6 +19,12 @@ import type {
 } from '../components/types';
 import { usePoll } from './use-poll';
 import { AGENT_URL } from '../lib/agent-url';
+import {
+  AGENT_TASK_CANCELLED_TOAST,
+  AGENT_TASK_TIMEOUT_MESSAGE,
+  AGENT_TASK_TIMEOUT_MS,
+  getAgentTaskAbortMessage,
+} from './agent-task-timeout';
 
 
 const DEFAULT_POLICY = {
@@ -247,11 +253,12 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       
       const controller = new AbortController();
       setAbortController(controller);
+      let timedOut = false;
       
       const timeoutId = setTimeout(() => {
+        timedOut = true;
         controller.abort();
-        addLogEntry(`[${new Date().toLocaleTimeString()}] Agent task timed out`);
-      }, 60000);
+      }, AGENT_TASK_TIMEOUT_MS);
       
       try {
         const res = await fetch(`${AGENT_URL}/agent/run`, {
@@ -292,10 +299,14 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         fetchAgentInfo();
       } catch (err: any) {
         if (err.name === 'AbortError') {
+          const message = getAgentTaskAbortMessage(timedOut);
           addLogEntry(
-            `[${new Date().toLocaleTimeString()}] Cancelled`,
+            `[${new Date().toLocaleTimeString()}] ${message}`,
           );
-          toast.error('Agent task cancelled');
+          setLiveMessage(message);
+          toast.error(
+            timedOut ? AGENT_TASK_TIMEOUT_MESSAGE : AGENT_TASK_CANCELLED_TOAST,
+          );
         } else {
           addLogEntry(
             `[${new Date().toLocaleTimeString()}] Connection error: ${err.message}`,
