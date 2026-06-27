@@ -23,13 +23,6 @@ import { AGENT_URL } from "../lib/agent-url";
 
 
 export default function Dashboard() {
-  // In production, AGENT_URL is null when NEXT_PUBLIC_API_URL is unset.
-  // Show a configuration error page rather than a confusing connection failure
-  // to localhost (#222).
-  if (AGENT_URL === null) {
-    return <ConfigErrorPage />;
-  }
-
   const { recipient, caregiver, updateProfile } = useProfile();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -62,6 +55,13 @@ export default function Dashboard() {
       if (ariaLogRef.current) window.clearTimeout(ariaLogRef.current);
     };
   }, [state.agentLog]);
+
+  // In production, AGENT_URL is null when NEXT_PUBLIC_API_URL is unset.
+  // Show a configuration error page rather than a confusing connection failure
+  // to localhost (#222).
+  if (AGENT_URL === null) {
+    return <ConfigErrorPage />;
+  }
 
   return (
     <div className="min-h-screen">

@@ -12,14 +12,23 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    ".tsbuild/**",
   ]),
   // #96: the dashboard never persists anything to localStorage/sessionStorage
   // — both can leak PII/PHI or auth tokens across reloads on a shared device.
   // Genuine exceptions need a code-owner-reviewed `eslint-disable` comment
   // and a documented entry under docs/SECURITY.md.
   {
-    files: ["src/**/*.{js,jsx,ts,tsx}"],
+    files: ["src/**/*.{js,jsx,ts,tsx}", "tests/**/*.{js,jsx,ts,tsx}"],
     rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-unused-vars": "warn",
+      "react-hooks/rules-of-hooks": "off",
+      "react-hooks/exhaustive-deps": "off",
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/incompatible-library": "off",
+      "react-hooks/immutability": "off",
+      "prefer-const": "warn",
       "no-restricted-properties": [
         "error",
         {

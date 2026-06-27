@@ -22,7 +22,7 @@ export async function generateMetadata({ params }: { params: any }): Promise<Met
     (globalThis as any).__SERVER_PROFILE__ = profile;
   }
 
-  const { recipient } = useProfile();
+  const recipient = profile.recipient;
 
   const title = `${recipient.name}'s CareGuard`;
   const description = "AI agent that autonomously manages elderly healthcare spending on Stellar";
