@@ -42,6 +42,12 @@ describe("/metrics endpoint", () => {
     expect(res.text).toContain("agent_runs_total");
   });
 
+  it("output contains stellar_fee_bumps_total", async () => {
+    const app = buildApp();
+    const res = await supertest(app).get("/metrics");
+    expect(res.text).toContain("stellar_fee_bumps_total");
+  });
+
   it("output contains nodejs_eventloop_lag_seconds from default metrics", async () => {
     const app = buildApp();
     const res = await supertest(app).get("/metrics");

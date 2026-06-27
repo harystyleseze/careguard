@@ -1,82 +1,60 @@
 /**
- * Tests for dynamic fee calculation and retry logic (#163).
- *
- * Verifies that:
- * - Fee is calculated based on network conditions
- * - Transaction retries with higher fee on tx_insufficient_fee
- * - Fee is capped at MAX_FEE_STROOPS
+ * Regression coverage for Stellar dynamic fee selection and fee-bump behavior.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi } from "vitest";
+import {
+  getTargetFee,
+  isInsufficientFeeError,
+  nextFeeBumpBaseFee,
+  type HorizonFeeServer,
+} from "../../shared/stellar-fee.ts";
 
-describe('Dynamic fee calculation', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+function insufficientFeeError() {
+  return {
+    response: {
+      data: {
+        extras: {
+          result_codes: {
+            transaction: "tx_insufficient_fee",
+          },
+        },
+      },
+    },
+  };
+}
+
+describe("Stellar dynamic fee selection", () => {
+  it("targets the p90 fee from Horizon fee_stats", async () => {
+    const horizon = {
+      feeStats: vi.fn().mockResolvedValue({
+        fee_charged: {
+          p90: "350",
+          mode: "100",
+        },
+      }),
+    } satisfies HorizonFeeServer;
+
+    await expect(getTargetFee(horizon)).resolves.toBe("350");
   });
 
-  it('MIN_FEE_STROOPS is set to 100', () => {
-    // This is the baseline minimum fee
-    expect(100).toBe(100);
-  });
+  it("falls back to 100 when Horizon fee_stats fails", async () => {
+    const horizon = {
+      feeStats: vi.fn().mockRejectedValue(new Error("offline")),
+    } satisfies HorizonFeeServer;
 
-  it('MAX_FEE_STROOPS can be configured via env var', () => {
-    const defaultMax = 100000; // 0.01 XLM
-    expect(defaultMax).toBe(100000);
-  });
-
-  it('recommended fee is 1.5x the network mode fee', () => {
-    const networkModeFee = 100;
-    const recommendedFee = Math.ceil(networkModeFee * 1.5);
-    expect(recommendedFee).toBe(150);
-  });
-
-  it('fee is capped at MAX_FEE_STROOPS', () => {
-    const MAX_FEE_STROOPS = 100000;
-    const highFee = 200000;
-    const cappedFee = Math.min(highFee, MAX_FEE_STROOPS);
-    expect(cappedFee).toBe(MAX_FEE_STROOPS);
-  });
-
-  it('fee doubles on insufficient_fee retry', () => {
-    const initialFee = 100;
-    const retriedFee = initialFee * 2;
-    expect(retriedFee).toBe(200);
-  });
-
-  it('fee bump is capped even after doubling', () => {
-    const MAX_FEE_STROOPS = 100000;
-    const initialFee = 60000;
-    const doubled = initialFee * 2;
-    const cappedFee = Math.min(doubled, MAX_FEE_STROOPS);
-    expect(cappedFee).toBe(MAX_FEE_STROOPS);
+    await expect(getTargetFee(horizon, { logger: { warn: vi.fn() } })).resolves.toBe("100");
   });
 });
 
-describe('Fee bump retry logic', () => {
-  it('retries once on tx_insufficient_fee', () => {
-    const maxAttempts = 2;
-    let attempts = 0;
-
-    // Simulate retry logic
-    while (attempts < maxAttempts) {
-      attempts++;
-      if (attempts === 1) {
-        // First attempt fails with insufficient fee
-        continue;
-      }
-      // Second attempt succeeds
-      break;
-    }
-
-    expect(attempts).toBe(2);
+describe("Stellar fee-bump decisions", () => {
+  it("doubles insufficient fees with a cap", () => {
+    expect(nextFeeBumpBaseFee("100")).toBe("200");
+    expect(nextFeeBumpBaseFee("90000", { maxFee: 100000 })).toBe("100000");
   });
 
-  it('does not retry on other transaction errors', () => {
-    const errors = ['tx_bad_seq', 'tx_too_late', 'tx_failed'];
-    
-    for (const error of errors) {
-      // These errors should not trigger fee bump retry
-      expect(error).not.toBe('tx_insufficient_fee');
-    }
+  it("only fee-bumps tx_insufficient_fee errors", () => {
+    expect(isInsufficientFeeError(insufficientFeeError())).toBe(true);
+    expect(isInsufficientFeeError(new Error("tx_bad_seq"))).toBe(false);
   });
 });

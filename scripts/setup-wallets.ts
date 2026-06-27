@@ -13,6 +13,7 @@ import { pathToFileURL } from "url";
 import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from "@scure/bip39";
 import { wordlist as englishWordlist } from "@scure/bip39/wordlists/english";
 import { logger } from "../shared/logger.ts";
+import { getTargetFee, submitWithFeeBump } from "../shared/stellar-fee.ts";
 
 const HORIZON_URL = "https://horizon-testnet.stellar.org";
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
@@ -189,8 +190,9 @@ async function addUsdcTrustline(keypair: Keypair): Promise<void> {
     return;
   }
 
+  const fee = await getTargetFee(server);
   const tx = new TransactionBuilder(account, {
-    fee: "100",
+    fee,
     networkPassphrase: Networks.TESTNET,
   })
     .addOperation(Operation.changeTrust({ asset: usdc }))
@@ -198,8 +200,11 @@ async function addUsdcTrustline(keypair: Keypair): Promise<void> {
     .build();
 
   tx.sign(keypair);
-  await server.submitTransaction(tx);
-  logger.info({ wallet: keypair.publicKey().slice(0, 8) }, "USDC trustline added");
+  const result = await submitWithFeeBump(server, tx, keypair, Networks.TESTNET);
+  logger.info(
+    { wallet: keypair.publicKey().slice(0, 8), txHash: result.hash, fee: result.fee },
+    "USDC trustline added",
+  );
 }
 
 async function main() {

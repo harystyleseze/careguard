@@ -50,6 +50,12 @@ export const stellarTxSubmittedTotal = new Counter({
   registers: [registry],
 });
 
+export const stellarFeeBumpsTotal = new Counter({
+  name: "stellar_fee_bumps_total",
+  help: "Total Stellar fee-bump envelopes submitted after tx_insufficient_fee",
+  registers: [registry],
+});
+
 export const policyBlocksTotal = new Counter({
   name: "policy_blocks_total",
   help: "Total spending policy blocks",

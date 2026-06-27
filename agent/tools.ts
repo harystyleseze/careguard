@@ -38,7 +38,6 @@ import {
 } from '../shared/bill-audit.ts';
 import {
   Keypair,
-  Networks,
   TransactionBuilder,
   Operation,
   Asset,
@@ -63,6 +62,7 @@ import { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds } from './tz.ts';
 export { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds };
 import { appendAuditEntry } from '../shared/audit-log.ts';
 import { notify } from '../shared/notifications.ts';
+import { getTargetFee, submitWithFeeBump } from '../shared/stellar-fee.ts';
 import {
   getAdherenceSummary,
   getPendingAdherences,
@@ -103,8 +103,6 @@ const PHARMACY_PAYMENT_API =
 const USDC_ISSUER =
   process.env.USDC_ISSUER ||
   'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
-const MIN_FEE_STROOPS = 100;
-const MAX_FEE_STROOPS = parseInt(process.env.MAX_FEE_STROOPS || '100000');
 const STELLAR_TIMEBOUNDS_SECONDS = parseInt(process.env.STELLAR_TIMEBOUNDS_SECONDS || "60", 10);
 
 if (!AGENT_SECRET_KEY) throw new Error('AGENT_SECRET_KEY required in .env');
@@ -115,21 +113,6 @@ const agentKeypair = Keypair.fromSecret(AGENT_SECRET_KEY);
 validateSignerKeyForNetwork(AGENT_SECRET_KEY, STELLAR_CONFIG);
 
 const horizonServer = new Horizon.Server(HORIZON_URL);
-
-// Helper: calculate recommended fee based on network conditions
-async function getRecommendedFee(): Promise<string> {
-  try {
-    const feeStats = await horizonServer.feeStats();
-    const recommendedFee = parseInt(feeStats.fee_charged.mode, 10);
-    // Use 1.5x the recommended fee to ensure acceptance during congestion
-    const adjustedFee = Math.max(MIN_FEE_STROOPS, Math.ceil(recommendedFee * 1.5));
-    const cappedFee = Math.min(adjustedFee, MAX_FEE_STROOPS);
-    return cappedFee.toString();
-  } catch (err) {
-    logger.warn({ err: (err as Error).message }, '[Stellar] Failed to fetch fee stats, using minimum fee');
-    return MIN_FEE_STROOPS.toString();
-  }
-}
 
 // Helper: extract real Stellar tx hash from x402 PAYMENT-RESPONSE header
 export function extractX402TxHash(response: Response): string | undefined {
@@ -147,93 +130,6 @@ export function extractX402TxHash(response: Response): string | undefined {
   }
 }
 
-// Helper: submitTransaction with timeout and retry
-async function submitTransactionWithRetry(
-  server: Horizon.Server,
-  tx: any,
-  maxRetries = 2,
-  timeoutMs = 35000,
-  rebuildTx?: () => Promise<any>
-): Promise<any> {
-  let lastError: any;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const result = await server.submitTransaction(tx, { timeout: timeoutMs } as any);
-      return result;
-    } catch (err: any) {
-      lastError = err;
-      if (err?.response?.status) throw err;
-      const msg = err?.message ?? "";
-      // tx_too_late: timebounds expired — retry once with fresh timebounds if rebuild fn provided
-      if (msg.includes("tx_too_late") && rebuildTx && attempt < maxRetries) {
-        logger.warn({ attempt: attempt + 1 }, "[Stellar] tx_too_late, rebuilding with fresh timebounds");
-        tx = await rebuildTx();
-        continue;
-      }
-      if (msg.includes("tx_bad_seq") || msg.includes("tx_too_early") || msg.includes("tx_too_late")) throw err;
-      if (attempt < maxRetries) {
-        const delay = Math.pow(2, attempt) * 500;
-        logger.warn(
-          { attempt: attempt + 1, maxRetries, delay },
-          '[Stellar] submitTransaction timeout, retrying',
-        );
-        await new Promise((r) => setTimeout(r, delay));
-      }
-    }
-  }
-  throw lastError;
-}
-
-// Helper: submit transaction with automatic fee bump on insufficient_fee error
-async function submitTransactionWithFeeBump(
-  server: Horizon.Server,
-  account: any,
-  operations: any[],
-  signer: Keypair,
-  initialFee?: string,
-): Promise<{ hash: string; fee: string }> {
-  let currentFee = initialFee || await getRecommendedFee();
-  let attempt = 0;
-  const maxAttempts = 2;
-
-  while (attempt < maxAttempts) {
-    try {
-      const tx = new TransactionBuilder(account, {
-        fee: currentFee,
-        networkPassphrase: STELLAR_NETWORK_PASSPHRASE,
-      });
-
-      for (const op of operations) {
-        tx.addOperation(op);
-      }
-
-      const builtTx = tx.setTimeout(30).build();
-      builtTx.sign(signer);
-
-      const result = await submitTransactionWithRetry(server, builtTx);
-      return { hash: result.hash, fee: currentFee };
-    } catch (err: any) {
-      const resultCodes = err?.response?.data?.extras?.result_codes;
-      const isFeeError = resultCodes?.transaction === 'tx_insufficient_fee';
-
-      if (isFeeError && attempt < maxAttempts - 1) {
-        // Double the fee and retry
-        const newFee = Math.min(parseInt(currentFee) * 2, MAX_FEE_STROOPS);
-        logger.warn(
-          { oldFee: currentFee, newFee, attempt: attempt + 1 },
-          '[Stellar] Insufficient fee, retrying with higher fee',
-        );
-        currentFee = newFee.toString();
-        attempt++;
-        continue;
-      }
-
-      throw err;
-    }
-  }
-
-  throw new Error('Failed to submit transaction after fee bump retries');
-}
 
 // Helper: wait for a Stellar transaction to be confirmed on-chain
 async function waitForStellarSettlement(
@@ -1338,11 +1234,29 @@ async function executeBillPayment(
       amount: amount.toFixed(7),
     });
 
-    const result = await submitTransactionWithFeeBump(
+    const fee = await getTargetFee(horizonServer);
+    const stellarTx = new TransactionBuilder(account, {
+      fee,
+      networkPassphrase: STELLAR_NETWORK_PASSPHRASE,
+    })
+      .addOperation(paymentOp)
+      .setTimeout(STELLAR_TIMEBOUNDS_SECONDS)
+      .build();
+    stellarTx.sign(agentKeypair);
+
+    const sigHint = stellarTx.signatures[0]?.hint();
+    if (!sigHint || !sigHint.equals(agentKeypair.signatureHint())) {
+      throw new Error(
+        `Signer mismatch: expected ${agentKeypair.publicKey()} — refusing to submit`,
+      );
+    }
+
+    const result = await submitWithFeeBump(
       horizonServer,
-      account,
-      [paymentOp],
+      stellarTx,
       agentKeypair,
+      STELLAR_NETWORK_PASSPHRASE,
+      { timeoutMs: 35000 },
     );
 
     stellarTxHash = result.hash;
@@ -1648,67 +1562,17 @@ export async function payBill(
     };
   }
 
-  // Execute real Stellar USDC transfer
-  const recipientKey = process.env.BILL_PROVIDER_PUBLIC_KEY;
-  if (!recipientKey)
-    return { success: false, error: 'BILL_PROVIDER_PUBLIC_KEY not configured' };
-
-  logger.info(
-    { provider: providerName, amount },
-    '[Stellar] transferring USDC',
+  const paymentResult = await executeBillPayment(
+    providerId,
+    providerName,
+    description,
+    amount,
   );
-
-  let stellarTxHash: string | undefined;
-
-  try {
-    const buildStellarTx = async () => {
-      const account = await horizonServer.loadAccount(agentKeypair.publicKey());
-      const usdcAsset = new Asset("USDC", USDC_ISSUER);
-
-      const stellarTx = new TransactionBuilder(account, {
-        fee: "100",
-        networkPassphrase: Networks.TESTNET,
-      })
-        .addOperation(
-          Operation.payment({
-            destination: recipientKey,
-            asset: usdcAsset,
-            amount: amount.toFixed(7),
-          })
-        )
-        .setTimeout(STELLAR_TIMEBOUNDS_SECONDS)
-        .build();
-
-      stellarTx.sign(agentKeypair);
-
-      const sigHint = stellarTx.signatures[0]?.hint();
-      if (!sigHint || !sigHint.equals(agentKeypair.signatureHint())) {
-        throw new Error(
-          `Signer mismatch: expected ${agentKeypair.publicKey()} — refusing to submit`
-        );
-      }
-      return stellarTx;
-    };
-
-    let stellarTx = await buildStellarTx();
-    console.log(`  [Stellar] Signer verified: ${agentKeypair.publicKey().slice(0, 8)}...`);
-
-    const result = await submitTransactionWithRetry(horizonServer, stellarTx, 2, 35000, buildStellarTx);
-
-    stellarTxHash = result.hash;
-    logger.info({ txHash: stellarTxHash, fee: result.fee }, '[Stellar] TX confirmed');
-  } catch (err: any) {
-    stellarTxSubmittedTotal.inc({ result: 'error' });
-    const errorDetail =
-      err?.response?.data?.extras?.result_codes || err.message;
-    return {
-      success: false,
-      error: `Stellar USDC transfer failed: ${JSON.stringify(errorDetail)}`,
-    };
+  if (!paymentResult.success) {
+    return paymentResult;
   }
 
-  stellarTxSubmittedTotal.inc({ result: 'success' });
-  paymentsUsdcTotal.inc({ type: 'bill' });
+  const stellarTxHash = paymentResult.stellarTxHash;
 
   const tx: Transaction = {
     id: `tx-${Date.now()}`,
