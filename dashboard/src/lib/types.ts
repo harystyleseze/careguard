@@ -111,6 +111,7 @@ export type RecipientProfile = {
   medications?: string[];
   doctor?: string;
   insurance?: string;
+  avatar?: string;
 };
 
 export type CaregiverProfile = {
