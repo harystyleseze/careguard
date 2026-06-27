@@ -56,7 +56,7 @@ describe("PDF Report Snapshot Tests", () => {
     if (!pdfParse) {
       pdfParse = (await import("pdf-parse")).default;
     }
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-27T08:38:42.000Z"));
   });
 
