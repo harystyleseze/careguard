@@ -26,7 +26,7 @@ const DEFAULT_POLICY = {
   monthlyLimit: 800,
   medicationMonthlyBudget: 300,
   billMonthlyBudget: 500,
-  approvalThreshold: 75,
+  approvalThreshold: 75, holdTimeSeconds: 86400,
   holdTimeSeconds: 0,
 };
 
@@ -182,7 +182,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         const txs = Array.isArray(data.transactions)
           ? data.transactions
               .map((t: unknown) => TransactionSchema.parse(t))
-              .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+              .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
           : [];
         setAllTransactions(txs);
         if (data.pagination) setPagination(data.pagination);

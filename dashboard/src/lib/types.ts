@@ -86,7 +86,7 @@ export const SpendingDataSchema = z.object({
     monthlyLimit: z.number(),
     medicationMonthlyBudget: z.number(),
     billMonthlyBudget: z.number(),
-    approvalThreshold: z.number(),
+    approvalThreshold: z.number(), holdTimeSeconds: z.number().optional().default(86400),
   }),
   spending: z.object({
     medications: z.number(),

@@ -165,7 +165,7 @@ app.post("/pharmacy/order", async (req, res) => {
 
   // Run MPP charge flow
   const result = await mppx.charge({
-    amount: order.amount.toFixed(2),
+    amount: Number(order.amount).toFixed(2),
     description: `Medication: ${safeDrug} from ${safePharmacy}`,
   })(webReq);
 
@@ -179,24 +179,24 @@ app.post("/pharmacy/order", async (req, res) => {
   }
 
   // Payment verified and settled on Stellar — create order
-  const order = {
+  const newOrder = {
     id: `order-${Date.now()}`,
     drug: safeDrug,
     pharmacy: safePharmacy,
-    amount: order.amount,
+    amount: Number(order.amount),
     status: "confirmed",
     timestamp: new Date().toISOString(),
     network: NETWORK,
     protocol: "MPP Charge",
   };
-  await saveOrder(order);
+  await saveOrder(newOrder);
 
   // Return response with payment receipt headers
   const response = result.withReceipt(
     Response.json({
       success: true,
-      order,
-      message: `Payment of $${order.amount} USDC settled on Stellar. ${safeDrug} order from ${safePharmacy} confirmed.`,
+      order: newOrder,
+      message: `Payment of $${newOrder.amount} USDC settled on Stellar. ${safeDrug} order from ${safePharmacy} confirmed.`,
     })
   );
 

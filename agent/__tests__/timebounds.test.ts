@@ -92,7 +92,7 @@ describe("#284 Stellar timebounds", () => {
     expect(mockLoadAccount).toHaveBeenCalledTimes(2);
     expect(mockSubmit).toHaveBeenCalledTimes(2);
     expect(result.success).toBe(true);
-    expect(result.transaction.stellarTxHash).toBe("RETRYHASH");
+    expect((result as any).transaction?.stellarTxHash).toBe("RETRYHASH");
   });
 
   it("gives up after retry if tx_too_late persists", async () => {

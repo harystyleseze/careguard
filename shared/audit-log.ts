@@ -55,7 +55,7 @@ export function appendAuditEntry(entry: AuditEntry): void {
 
 export const AUDIT_FILE_PATH = AUDIT_FILE;
 
-export const auditRouter = Router();
+export const auditRouter: import("express").Router = Router();
 
 // Middleware to check admin (assuming a basic check or skipped for now as per instructions)
 const requireAdmin = (req: Request, res: Response, next: Function) => {

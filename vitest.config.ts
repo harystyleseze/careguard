@@ -15,9 +15,9 @@ export default defineConfig({
     environment: "node",
     // Dashboard component tests need jsdom (DOM APIs + React)
     environmentMatchGlobs: [
-      ["dashboard/src/__tests__/**/*.test.tsx", "jsdom"],
+      ["dashboard/src/**/*.test.tsx", "jsdom"],
     ],
-    include: ["**/__tests__/**/*.test.{ts,tsx}", "**/test/**/*.test.{ts,tsx}", "**/evals/**/*.spec.{ts,tsx}"],
+    include: ["**/__tests__/**/*.test.{ts,tsx}", "**/test/**/*.test.{ts,tsx}", "**/tests/**/*.test.{ts,tsx}", "dashboard/src/**/*.test.{ts,tsx}", "**/evals/**/*.spec.{ts,tsx}"],
     setupFiles: ["./vitest.setup.ts"],
     coverage: {
       provider: "v8",

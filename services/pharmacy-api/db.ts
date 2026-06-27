@@ -54,7 +54,7 @@ function defaultDbPath() {
 }
 
 export class PharmacyPricingStore {
-  private readonly db: DatabaseSync;
+  private readonly db: any;
 
   constructor(options: PharmacyPricingStoreOptions = {}) {
     const dbPath = options.dbPath ?? defaultDbPath();

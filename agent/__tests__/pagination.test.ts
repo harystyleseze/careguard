@@ -30,7 +30,7 @@ describe('Transaction Pagination', () => {
       .expect(200);
 
     expect(response.body.pagination.limit).toBe(10);
-    expect(response.body.transactions).toHaveLength.lessThanOrEqual(10);
+    expect(response.body.transactions.length).toBeLessThanOrEqual(10);
   });
 
   it('should respect offset parameter', async () => {
