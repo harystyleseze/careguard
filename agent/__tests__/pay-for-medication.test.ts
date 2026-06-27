@@ -65,6 +65,7 @@ import {
   payForMedication,
   payBill,
   checkSpendingPolicy,
+  getSpendingTracker,
   resetSpendingTracker,
   setSpendingPolicy,
 } from "../tools.ts";
@@ -173,6 +174,29 @@ describe("payForMedication — MPP failure (Issue #35)", () => {
     const r = await payForMedication("p1", "Pharma", "Drug", 50);
     expect(r.success).toBe(false);
     expect(r.error).toContain("MPP payment failed");
+  });
+
+  it("returns a structured malformed-response rejection without debiting spending", async () => {
+    mockMppFetch.mockResolvedValueOnce({
+      json: async () => {
+        throw new SyntaxError("Unexpected token '<'");
+      },
+      text: async () => "<html>gateway error</html>",
+      headers: { get: () => null },
+    });
+
+    const r = await payForMedication("p1", "Pharma", "Drug", 50);
+    const tracker = getSpendingTracker();
+
+    expect(r).toMatchObject({
+      success: false,
+      ok: false,
+      reason: "MALFORMED_RESPONSE",
+    });
+    expect(r.error).toContain("malformed response");
+    expect((r as any).responsePreview).toContain("gateway error");
+    expect(tracker.medications).toBe(0);
+    expect(tracker.transactions).toHaveLength(0);
   });
 });
 
