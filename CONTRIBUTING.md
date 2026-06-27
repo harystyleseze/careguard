@@ -12,6 +12,10 @@ npm run setup   # generates testnet wallets
 
 See [QUICKSTART.md](QUICKSTART.md) for full environment setup.
 
+## Runtime Version
+
+CareGuard targets Node.js 22 for local development, CI, and deployment. Use `nvm use` from the repo root to pick up `.nvmrc`, or install any Node.js version that satisfies `package.json`'s `engines.node` policy (`>=22.0.0`).
+
 ## Development Workflow
 
 1. Fork the repo and create a branch from `main`
