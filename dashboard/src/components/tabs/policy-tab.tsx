@@ -77,8 +77,8 @@ export function PolicyTab({
         Spending Policy for {recipient.name}
       </h2>
       <p className="text-xs text-slate-500 mb-6">
-        These limits are enforced by Soroban smart contracts on Stellar. The
-        agent cannot exceed them.
+        Enforced server-side by the agent before every payment. See
+        docs/SPENDING-POLICY.md for how.
       </p>
       <form
         noValidate
