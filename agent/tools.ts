@@ -129,6 +129,17 @@ const PHARMACY_PAYMENT_API =
 const USDC_ISSUER =
   process.env.USDC_ISSUER ||
   'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+
+// On public network, USDC_ISSUER must be explicitly set.
+// Falling back to the testnet issuer on mainnet causes silent incorrect balance reads
+// (the issuer address is different on each network). See docs/security/asset-spoofing.md.
+if (STELLAR_CONFIG.networkType === 'public' && !process.env.USDC_ISSUER) {
+  throw new Error(
+    'USDC_ISSUER env var must be explicitly set when STELLAR_NETWORK=public. ' +
+    'Set it to the Circle USDC issuer for Stellar mainnet.',
+  );
+}
+
 const MIN_FEE_STROOPS = 100;
 const MAX_FEE_STROOPS = parseInt(process.env.MAX_FEE_STROOPS || '100000');
 const STELLAR_TIMEBOUNDS_SECONDS = parseInt(process.env.STELLAR_TIMEBOUNDS_SECONDS || "60", 10);
@@ -300,19 +311,38 @@ async function waitForStellarSettlement(
 }
 
 // --- x402 Client: Auto-handles 402 Payment Required for API queries ---
-// Use stellar:testnet or stellar:public scheme based on STELLAR_NETWORK env
+// Use stellar:testnet or stellar:public scheme based on STELLAR_NETWORK env.
+// getSigner() re-reads AGENT_SECRET_KEY on a 60s TTL so the key can be rotated
+// without a full process restart. SIGHUP triggers immediate cache invalidation
+// (zero-downtime reload). See docs/runbooks/rotate-agent-key.md.
 const x402SchemeId = `stellar:${STELLAR_CONFIG.networkType}` as `${string}:${string}`;
-const x402Fetch = isMockNetwork()
-  ? fetch
-  : wrapFetchWithPayment(
+export const X402_SIGNER_TTL_MS = 60_000;
+let _x402Fetch: typeof fetch | null = null;
+let _x402FetchCreatedAt = 0;
+
+export function getX402Fetch(): typeof fetch {
+  if (isMockNetwork()) return fetch;
+  const now = Date.now();
+  if (!_x402Fetch || now - _x402FetchCreatedAt > X402_SIGNER_TTL_MS) {
+    const key = process.env.AGENT_SECRET_KEY;
+    if (!key) throw new Error('AGENT_SECRET_KEY required');
+    _x402Fetch = wrapFetchWithPayment(
       fetch,
       new x402Client().register(
         x402SchemeId,
-        new ExactStellarScheme(
-          createEd25519Signer(AGENT_SECRET_KEY, x402SchemeId),
-        ),
+        new ExactStellarScheme(createEd25519Signer(key, x402SchemeId)),
       ),
     );
+    _x402FetchCreatedAt = now;
+  }
+  return _x402Fetch;
+}
+
+process.on('SIGHUP', () => {
+  _x402Fetch = null;
+  _x402FetchCreatedAt = 0;
+  logger.info('[x402] SIGHUP received — signer cache invalidated, will reload on next call');
+});
 
 // --- MPP Client: Auto-handles 402 for medication order payments ---
 // Use factory function to create client instance (supports DI for testing)
@@ -474,13 +504,35 @@ type PaymentCategory =
   | typeof TRANSACTION_CATEGORY.MEDICATIONS
   | typeof TRANSACTION_CATEGORY.BILLS;
 
-type SpendingPolicyInput = Partial<SpendingPolicy> & {
-  dailyLimit: number;
-  monthlyLimit: number;
-  medicationMonthlyBudget: number;
-  billMonthlyBudget: number;
-  approvalThreshold: number;
-};
+// Zod schema for spending policy — enforces positive values, sane upper bounds,
+// and cross-field ordering. holdTimeSeconds uses .min(0) because DEFAULT_POLICY sets it to 0.
+export const SpendingPolicySchema = z.object({
+  dailyLimit: z.number().gt(0, 'dailyLimit must be greater than 0').max(10_000, 'dailyLimit cannot exceed $10,000'),
+  monthlyLimit: z.number().gt(0, 'monthlyLimit must be greater than 0').max(100_000, 'monthlyLimit cannot exceed $100,000'),
+  medicationMonthlyBudget: z.number().gt(0, 'medicationMonthlyBudget must be greater than 0').max(50_000, 'medicationMonthlyBudget cannot exceed $50,000'),
+  billMonthlyBudget: z.number().gt(0, 'billMonthlyBudget must be greater than 0').max(50_000, 'billMonthlyBudget cannot exceed $50,000'),
+  approvalThreshold: z.number().gt(0, 'approvalThreshold must be greater than 0').max(10_000, 'approvalThreshold cannot exceed $10,000'),
+  holdTimeSeconds: z.number().min(0).max(86_400).default(0),
+  timezone: z.string().optional(),
+  toolFees: z.record(z.number().min(0)).optional(),
+  notifications: z.object({
+    email: z.boolean(),
+    sms: z.boolean(),
+    emailAddress: z.string().email().optional(),
+    phoneNumber: z.string().optional(),
+  }).optional(),
+}).refine(
+  (p) => p.dailyLimit <= p.monthlyLimit,
+  { message: 'dailyLimit cannot exceed monthlyLimit', path: ['dailyLimit'] },
+).refine(
+  (p) => p.approvalThreshold <= p.dailyLimit,
+  { message: 'approvalThreshold cannot exceed dailyLimit', path: ['approvalThreshold'] },
+).refine(
+  (p) => p.medicationMonthlyBudget + p.billMonthlyBudget <= p.monthlyLimit,
+  { message: 'medicationMonthlyBudget + billMonthlyBudget cannot exceed monthlyLimit', path: ['medicationMonthlyBudget'] },
+);
+
+type SpendingPolicyInput = z.infer<typeof SpendingPolicySchema>;
 
 const SPENDING_CACHE_TTL_MS = 5000;
 /** Compact the JSONL log into a snapshot every this many transactions (Issue #205). */
@@ -819,27 +871,7 @@ function savePolicy(policy: SpendingPolicy, recipientId?: string) {
 }
 
 function assertValidSpendingPolicy(policy: SpendingPolicy) {
-  const fields = ["dailyLimit", "monthlyLimit", "medicationMonthlyBudget", "billMonthlyBudget", "approvalThreshold"] as const;
-  for (const f of fields) {
-    const v = policy[f];
-    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
-      throw new Error(`Invalid spending policy: ${f} must be a positive finite number`);
-    }
-  }
-  if (policy.dailyLimit > policy.monthlyLimit) {
-    throw new Error('Invalid spending policy: dailyLimit cannot exceed monthlyLimit');
-  }
-  if (policy.approvalThreshold > policy.dailyLimit) {
-    throw new Error('Invalid spending policy: approvalThreshold cannot exceed dailyLimit');
-  }
-  if (
-    policy.medicationMonthlyBudget + policy.billMonthlyBudget >
-    policy.monthlyLimit
-  ) {
-    throw new Error(
-      'Invalid spending policy: medicationMonthlyBudget + billMonthlyBudget cannot exceed monthlyLimit',
-    );
-  }
+  SpendingPolicySchema.parse(policy);
 }
 
 let currentPolicy: SpendingPolicy = loadPolicy();
@@ -980,7 +1012,7 @@ export async function comparePharmacyPrices(
     return data;
   }
 
-  const response = await x402Fetch(url);
+  const response = await getX402Fetch()(url);
 
   if (!response.ok) {
     const error = await response.text();
@@ -1129,7 +1161,7 @@ export async function auditBill(
 
   let response: Response;
   try {
-    response = await x402Fetch(`${BILL_AUDIT_API}/bill/audit`, {
+    response = await getX402Fetch()(`${BILL_AUDIT_API}/bill/audit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lineItems }),
@@ -1266,7 +1298,7 @@ export async function checkDrugInteractions(medications: string[]) {
     return data;
   }
 
-  const response = await x402Fetch(
+  const response = await getX402Fetch()(
     `${DRUG_INTERACTION_API}/drug/interactions?meds=${encodeURIComponent(
       medications.join(','),
     )}`,

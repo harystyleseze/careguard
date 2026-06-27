@@ -42,6 +42,7 @@ import lock from "proper-lockfile";
 
 const DATA_DIR = new URL("../../data", import.meta.url).pathname;
 const ORDERS_FILE = `${DATA_DIR}/orders.json`;
+const MPP_STORE_FILE = `${DATA_DIR}/mpp-store.json`;
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
@@ -127,7 +128,7 @@ const mppx = Mppx.create({
       recipient: RECIPIENT,
       currency: USDC_SAC_TESTNET,
       network: NETWORK,
-      store: Store.memory(),
+      store: Store.fileSystem(MPP_STORE_FILE),
     }),
   ],
 });

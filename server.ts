@@ -17,7 +17,6 @@ import { Mppx, Store } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import { fileURLToPath } from "url";
 import { z } from "zod";
 
 // x402 middleware
@@ -74,6 +73,7 @@ import {
   resetSpendingTracker,
   TOOL_DEFINITIONS,
   validateToolInput,
+  SpendingPolicySchema,
 } from "./agent/tools.ts";
 import { resolveRequestedDosage } from "./services/pharmacy-api/dosage.ts";
 import { createPharmacyPricingStore } from "./services/pharmacy-api/db.ts";
@@ -815,9 +815,9 @@ app.get("/drug/interactions", (req, res) => {
 // MPP PHARMACY PAYMENT (was port 3005)
 // ============================================================
 
-const DATA_DIR = process.env.DATA_DIR || fileURLToPath(new URL("./data", import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || new URL("./data", import.meta.url).pathname;
 const ORDERS_FILE = `${DATA_DIR}/orders.json`;
+const MPP_STORE_FILE = `${DATA_DIR}/mpp-store.json`;
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
 function loadOrders(): any[] {
@@ -840,7 +840,7 @@ const mppx = Mppx.create({
         env.data.STELLAR_NETWORK === "public"
           ? "stellar:pubnet"
           : "stellar:testnet",
-      store: Store.memory(),
+      store: Store.fileSystem(MPP_STORE_FILE),
     }),
   ],
 });
@@ -1184,19 +1184,12 @@ app.get("/agent/transactions", (req, res) => {
   });
 });
 app.post("/agent/policy", (req, res) => {
-  const body = req.body;
-  if (!body || typeof body !== "object") {
-    return res.status(400).json({ error: "Invalid policy" });
+  const result = SpendingPolicySchema.safeParse(req.body);
+  if (!result.success) {
+    return res.status(400).json({ error: "Invalid policy", issues: result.error.issues });
   }
-  const fields = ["dailyLimit", "monthlyLimit", "medicationMonthlyBudget", "billMonthlyBudget", "approvalThreshold"] as const;
-  const errors: string[] = [];
-  for (const f of fields) {
-    const v = body[f];
-    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) errors.push(`${f} must be a positive finite number`);
-  }
-  if (errors.length > 0) return res.status(400).json({ error: "Invalid policy", details: errors });
-  setSpendingPolicy(body);
-  res.json({ success: true, policy: body });
+  setSpendingPolicy(result.data);
+  res.json({ success: true, policy: result.data });
 });
 app.post("/agent/reset", (_req, res) => {
   resetSpendingTracker();
