@@ -57,6 +57,19 @@ export const policyBlocksTotal = new Counter({
   registers: [registry],
 });
 
+export const paymentRejectedTotal = new Counter({
+  name: "payment_rejected_total",
+  help: "Total payments rejected by spending policy, labeled by reason",
+  labelNames: ["reason"] as const,
+  registers: [registry],
+});
+
+export const agentIterationLimitTotal = new Counter({
+  name: "agent_iteration_limit_total",
+  help: "Total agent runs that hit the iteration limit before completing",
+  registers: [registry],
+});
+
 export const agentLlmTokensTotal = new Counter({
   name: "agent_llm_tokens_total",
   help: "Total LLM tokens consumed",

@@ -162,6 +162,15 @@ export function OverviewTab({
         )}
       </div>
 
+      {agentResult?.events?.some((e) => e.kind === "iteration_limit_reached") && (
+        <div
+          role="alert"
+          className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 text-sm text-yellow-800"
+        >
+          Task may be incomplete — agent ran out of steps
+        </div>
+      )}
+
       {agentResult && (
         <div
           className="bg-white rounded-xl border border-slate-200 p-6"

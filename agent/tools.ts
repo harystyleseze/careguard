@@ -76,6 +76,7 @@ import {
   paymentsUsdcTotal,
   stellarTxSubmittedTotal,
   policyBlocksTotal,
+  paymentRejectedTotal,
   agentSpendingUsd,
   agentTransactionsTotal,
   x402TxExtractionFailedTotal,
@@ -1363,28 +1364,9 @@ export function checkSpendingPolicy(
     spendingTracker.serviceFees;
   const globalRemaining = roundBudget(policy.monthlyLimit - totalMonthlySpending);
 
-  if (amount > globalRemaining) {
-    return {
-      allowed: false,
-      reason: `Payment of $${amount.toFixed(2)} would exceed overall monthly limit. Monthly limit: $${policy.monthlyLimit}, spent: $${totalMonthlySpending.toFixed(2)}, remaining: $${globalRemaining.toFixed(2)}`,
-      requiresApproval: false,
-      currentSpending,
-      budgetRemaining: remaining,
-      globalBudgetRemaining: globalRemaining,
-    };
-  }
-
-  if (amount > remaining) {
-    return {
-      allowed: false,
-      reason: `Payment of $${amount.toFixed(2)} exceeds ${category} monthly budget. Budget: $${budget}, spent: $${currentSpending.toFixed(2)}, remaining: $${remaining.toFixed(2)}`,
-      requiresApproval: false,
-      currentSpending,
-      budgetRemaining: remaining,
-    };
-  }
-
-  // Use the policy's per-recipient timezone if set; fall back to the global
+  // Compute today's spend in this category up-front so every return path can
+  // report the remaining daily budget to the caller (Issue #160). Use the
+  // policy's per-recipient timezone if set; fall back to the global
   // SPENDING_TIMEZONE env var so caregivers in non-UTC locales see the correct
   // "today" boundary for their wall clock (Issue #207).
   const effectiveTz = policy.timezone ?? SPENDING_TIMEZONE;
@@ -1404,6 +1386,34 @@ export function checkSpendingPolicy(
       },
     )
     .reduce((sum, t) => sum + t.amount, 0);
+  const dailyRemaining = roundBudget(policy.dailyLimit - totalToday);
+  // monthlyRemaining is the budget still available for this category this month.
+  const monthlyRemaining = remaining;
+
+  if (amount > globalRemaining) {
+    return {
+      allowed: false,
+      reason: `Payment of $${amount.toFixed(2)} would exceed overall monthly limit. Monthly limit: $${policy.monthlyLimit}, spent: $${totalMonthlySpending.toFixed(2)}, remaining: $${globalRemaining.toFixed(2)}`,
+      requiresApproval: false,
+      currentSpending,
+      budgetRemaining: remaining,
+      globalBudgetRemaining: globalRemaining,
+      dailyRemaining,
+      monthlyRemaining,
+    };
+  }
+
+  if (amount > remaining) {
+    return {
+      allowed: false,
+      reason: `Payment of $${amount.toFixed(2)} exceeds ${category} monthly budget. Budget: $${budget}, spent: $${currentSpending.toFixed(2)}, remaining: $${remaining.toFixed(2)}`,
+      requiresApproval: false,
+      currentSpending,
+      budgetRemaining: remaining,
+      dailyRemaining,
+      monthlyRemaining,
+    };
+  }
 
   if (totalToday + amount > policy.dailyLimit) {
     return {
@@ -1412,6 +1422,8 @@ export function checkSpendingPolicy(
       requiresApproval: false,
       currentSpending,
       budgetRemaining: remaining,
+      dailyRemaining,
+      monthlyRemaining,
     };
   }
 
@@ -1420,6 +1432,8 @@ export function checkSpendingPolicy(
     requiresApproval: amount >= policy.approvalThreshold,
     currentSpending,
     budgetRemaining: roundBudget(remaining - amount),
+    dailyRemaining,
+    monthlyRemaining,
   };
 }
 
@@ -1718,9 +1732,12 @@ export async function payForMedication(
     if (!policyCheck.allowed) {
       const reason = policyCheck.reason!.includes('daily')
         ? 'daily_limit'
-        : 'budget';
+        : policyCheck.reason!.includes('overall monthly limit')
+          ? 'monthly_limit'
+          : 'budget';
       policyBlocksTotal.inc({ reason });
-      
+      paymentRejectedTotal.inc({ reason });
+
       const tx = {
         id: `tx-${Date.now()}`,
         timestamp: new Date().toISOString(),
@@ -1734,10 +1751,26 @@ export async function payForMedication(
       spendingTracker.transactions.push(tx);
       appendTransaction(tx as any);
 
+      // Surface the full budget context so the LLM can decide whether to ask
+      // the caregiver for an override or pick a cheaper option (Issue #160).
+      const dailyRemaining = policyCheck.dailyRemaining ?? 0;
+      const monthlyRemaining = policyCheck.monthlyRemaining ?? 0;
+      const budgetContext = {
+        reason,
+        attempted: amount,
+        dailyRemaining,
+        monthlyRemaining,
+        suggestion:
+          `Relay this to the caregiver: the $${amount.toFixed(2)} payment was blocked by the spending policy. ` +
+          `Remaining budget is $${dailyRemaining.toFixed(2)} today and $${monthlyRemaining.toFixed(2)} this month for ${TRANSACTION_CATEGORY.MEDICATIONS}. ` +
+          `Ask them to approve a one-time override, or choose a cheaper option that fits the remaining budget.`,
+      };
+
       return {
         success: false,
         error: `BLOCKED BY SPENDING POLICY: ${policyCheck.reason}`,
         transaction: tx,
+        budgetContext,
       };
     }
     if (policyCheck.requiresApproval && !skipApproval) {
@@ -2373,7 +2406,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'pay_for_medication',
     description:
-      'Pay a pharmacy for a medication order via MPP Charge on Stellar (real USDC payment). Subject to spending policy limits. Amount must be between $0.01 and $10,000.',
+      'Pay a pharmacy for a medication order via MPP Charge on Stellar (real USDC payment). Subject to spending policy limits. Amount must be between $0.01 and $10,000. If the payment is blocked by spending policy, the result includes a budgetContext object { reason, attempted, dailyRemaining, monthlyRemaining, suggestion }: relay it to the caregiver so they can either approve a one-time override or pick a cheaper option within the remaining budget.',
     input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {

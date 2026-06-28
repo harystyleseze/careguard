@@ -138,6 +138,32 @@ describe("payForMedication — policy-blocked (Issue #35)", () => {
     expect(r.error).toContain("BLOCKED BY SPENDING POLICY");
     expect(mockMppFetch).not.toHaveBeenCalled();
   });
+
+  it("includes a budgetContext payload on a budget overrun (Issue #160)", async () => {
+    setSpendingPolicy("rosa", { ...DEFAULT_POLICY, medicationMonthlyBudget: 5 });
+    const r = await payForMedication("p1", "Pharma", "Drug", 50);
+    expect(r.success).toBe(false);
+    const ctx = (r as any).budgetContext;
+    expect(ctx).toBeDefined();
+    expect(ctx).toMatchObject({
+      reason: "budget",
+      attempted: 50,
+    });
+    expect(typeof ctx.dailyRemaining).toBe("number");
+    expect(typeof ctx.monthlyRemaining).toBe("number");
+    expect(ctx.monthlyRemaining).toBe(5);
+    expect(typeof ctx.suggestion).toBe("string");
+    expect(ctx.suggestion.toLowerCase()).toContain("caregiver");
+  });
+
+  it("labels the budgetContext reason as daily_limit when the daily cap is the binding constraint (Issue #160)", async () => {
+    setSpendingPolicy("rosa", { ...DEFAULT_POLICY, dailyLimit: 40, approvalThreshold: 40 });
+    const r = await payForMedication("p1", "Pharma", "Drug", 50);
+    expect(r.success).toBe(false);
+    const ctx = (r as any).budgetContext;
+    expect(ctx.reason).toBe("daily_limit");
+    expect(ctx.attempted).toBe(50);
+  });
 });
 
 // --- Approval-required path ---

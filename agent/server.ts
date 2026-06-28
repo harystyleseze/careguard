@@ -31,6 +31,7 @@ import {
   agentLlmTokensTotal,
   agentLlmIterationTokens,
   agentLlmContextUsageRatio, agentLlmErrorTotal,
+  agentIterationLimitTotal,
 } from "../shared/metrics.ts";
 import {
   comparePharmacyPrices,
@@ -81,6 +82,12 @@ const LLM_MODEL = process.env.LLM_MODEL || "llama-3.3-70b-versatile";
 // - Final summary: temperature 0.3 (slight variance for natural phrasing)
 const LLM_TOOL_TEMPERATURE = parseFloat(process.env.LLM_TOOL_TEMPERATURE || "0");
 const LLM_SUMMARY_TEMPERATURE = parseFloat(process.env.LLM_SUMMARY_TEMPERATURE || "0.3");
+
+// Maximum agentic loop iterations before the run is capped. Configurable via
+// AGENT_MAX_ITERATIONS (default 15). When the cap is hit, the run appends an
+// iteration_limit_reached event so the caller knows the task may be incomplete
+// (Issue #165).
+const MAX_ITERATIONS = Math.max(1, parseInt(process.env.AGENT_MAX_ITERATIONS || "15", 10) || 15);
 
 // LLM max_tokens heuristic (Issue #280)
 // Context-aware token budgeting to reduce wasted budget on simple queries:
@@ -304,14 +311,16 @@ async function runAgent(task: string) {
   let llmUsage: { promptTokens: number; completionTokens: number } = { promptTokens: 0, completionTokens: 0 };
   let runToolCalls = 0;
   let truncated = false;
+  const events: Array<{ kind: string }> = [];
 
-  for (let iteration = 0; iteration < 15; iteration++) {
+  let iteration = 0;
+  for (; iteration < MAX_ITERATIONS; iteration++) {
     let response;
     try {
       // Determine temperature based on whether this is a tool-call round or final summary
       // Tool-call rounds use temperature=0 for deterministic tool selection
       // Final summary (when no tools will be called) uses temperature=0.3 for natural phrasing
-      const isToolCallRound = toolCalls.length > 0 || iteration < 14; // Assume tool calls unless it's the last iteration
+      const isToolCallRound = toolCalls.length > 0 || iteration < MAX_ITERATIONS - 1; // Assume tool calls unless it's the last iteration
       const temperature = isToolCallRound ? LLM_TOOL_TEMPERATURE : LLM_SUMMARY_TEMPERATURE;
       
       // Calculate max_tokens based on iteration context to optimize budget
@@ -449,6 +458,20 @@ async function runAgent(task: string) {
     if (choice.finish_reason === "stop") break;
   }
 
+  // The loop only reaches MAX_ITERATIONS when it never broke out early (no
+  // natural completion, no tool-call cap, no LLM error). Signal that the task
+  // may have been truncated so the caller can warn the user (Issue #165).
+  if (iteration >= MAX_ITERATIONS) {
+    events.push({ kind: "iteration_limit_reached" });
+    agentIterationLimitTotal.inc();
+    appendAuditEntry({
+      event: "agent.iteration_limit_reached",
+      actor: "agent",
+      details: { maxIterations: MAX_ITERATIONS },
+    });
+    logger.warn({ maxIterations: MAX_ITERATIONS }, "agent run hit iteration limit");
+  }
+
   // Track token usage for alerting on sustained high consumption
   const totalRunTokens = llmUsage.promptTokens + llmUsage.completionTokens;
   tokenStats.totalTokens += totalRunTokens;
@@ -469,7 +492,7 @@ async function runAgent(task: string) {
     );
   }
 
-  return { response: finalResponse, toolCalls, spending: getSpendingSummary(), llmUsage, truncated };
+  return { response: finalResponse, toolCalls, spending: getSpendingSummary(), llmUsage, truncated, events };
 }
 
 function parseCookies(cookieHeader: string | undefined): Record<string, string> {

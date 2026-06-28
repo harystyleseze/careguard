@@ -2,6 +2,10 @@ import type { SpendingData, Transaction, AuditLogEvent } from "../lib/types";
 
 export type { SpendingData, Transaction, AuditLogEvent };
 
+export interface AgentEvent {
+  kind: string;
+}
+
 export interface AgentResult {
   response: string;
   toolCalls: Array<{ tool: string; input: unknown; result: any }>;
@@ -10,6 +14,7 @@ export interface AgentResult {
     promptTokens: number;
     completionTokens: number;
   };
+  events?: AgentEvent[];
 }
 
 export interface AgentInfo {
