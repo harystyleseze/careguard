@@ -219,9 +219,14 @@ app.get("/", (_req, res) => {
   });
 });
 
-app.get("/bill/sample", (_req, res) => {
+app.get("/bill/sample", (req, res) => {
+  // In standalone mode the recipient DB is unavailable; accept a patientName hint from the caller.
+  // In unified mode, server.ts intercepts this route and resolves the name from the recipients DB.
+  const patientName = typeof req.query.patientName === 'string'
+    ? req.query.patientName
+    : 'Rosa Garcia';
   res.json({
-    patientName: "Rosa Garcia", facilityName: "General Hospital", dateOfService: "2026-03-15",
+    patientName, facilityName: "General Hospital", dateOfService: "2026-03-15",
     lineItems: [
       { description: "Hospital care, high complexity", cptCode: "99233", quantity: 3, chargedAmount: 630 },
       { description: "Comprehensive metabolic panel", cptCode: "80053", quantity: 1, chargedAmount: 95 },

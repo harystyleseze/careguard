@@ -37,6 +37,34 @@ The default is `America/Phoenix` because it matches the CareGuard caregiver pers
 
 `agent/tz.ts` exports `getLocalDateStr(tz, date?)` which uses `Intl.DateTimeFormat('en-CA', { timeZone: tz })` to format a date as `YYYY-MM-DD` in the given timezone. `checkSpendingPolicy` in `agent/tools.ts` calls this to determine both "today" and the date of each past transaction before comparing.
 
+## Platform Cap (`MAX_SINGLE_TX_USDC`)
+
+A deployment-level ceiling sits **above** all caregiver-controlled policy limits.
+
+```
+MAX_SINGLE_TX_USDC=100   # default — set in .env or render.yaml
+```
+
+- Checked in `payForMedication` and `payBill` **before** `checkSpendingPolicy`.
+- Returns a distinct error: `BLOCKED BY PLATFORM CAP`.
+- Cannot be changed via the dashboard or API — only by redeploying with a different value.
+- Default is **$100**. Raise it only for deployments that have additional fraud controls in place.
+
+This prevents a compromised caregiver session or leaked API key from bumping `approvalThreshold` high enough to drain the agent wallet.
+
+## Float Precision Convention
+
+All budget arithmetic in `checkSpendingPolicy` (`agent/tools.ts`) passes through `roundBudget()`, which rounds to 4 decimal places (sub-cent precision):
+
+```typescript
+const BUDGET_SCALE = 10_000;
+function roundBudget(v: number): number {
+  return Math.round(v * BUDGET_SCALE) / BUDGET_SCALE;
+}
+```
+
+Without this, floating-point subtraction can yield `remaining = -0.0000000001` when the budget is exactly exhausted, causing the exhaustion check to be silently bypassed. Any value within `0.00005` of zero collapses to zero after rounding.
+
 ## Updating the Policy
 
 Use the **Policy** tab in the dashboard to update limits in real time. The agent reads the current policy before every payment attempt.

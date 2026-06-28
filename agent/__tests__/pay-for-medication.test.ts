@@ -60,7 +60,7 @@ vi.mock("mppx/client", () => ({
   Mppx: { create: vi.fn().mockReturnValue({ fetch: mockMppFetch }) },
 }));
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   payForMedication,
   payBill,
@@ -137,6 +137,32 @@ describe("payForMedication — policy-blocked (Issue #35)", () => {
     expect(r.success).toBe(false);
     expect(r.error).toContain("BLOCKED BY SPENDING POLICY");
     expect(mockMppFetch).not.toHaveBeenCalled();
+  });
+
+  it("includes a budgetContext payload on a budget overrun (Issue #160)", async () => {
+    setSpendingPolicy("rosa", { ...DEFAULT_POLICY, medicationMonthlyBudget: 5 });
+    const r = await payForMedication("p1", "Pharma", "Drug", 50);
+    expect(r.success).toBe(false);
+    const ctx = (r as any).budgetContext;
+    expect(ctx).toBeDefined();
+    expect(ctx).toMatchObject({
+      reason: "budget",
+      attempted: 50,
+    });
+    expect(typeof ctx.dailyRemaining).toBe("number");
+    expect(typeof ctx.monthlyRemaining).toBe("number");
+    expect(ctx.monthlyRemaining).toBe(5);
+    expect(typeof ctx.suggestion).toBe("string");
+    expect(ctx.suggestion.toLowerCase()).toContain("caregiver");
+  });
+
+  it("labels the budgetContext reason as daily_limit when the daily cap is the binding constraint (Issue #160)", async () => {
+    setSpendingPolicy("rosa", { ...DEFAULT_POLICY, dailyLimit: 40, approvalThreshold: 40 });
+    const r = await payForMedication("p1", "Pharma", "Drug", 50);
+    expect(r.success).toBe(false);
+    const ctx = (r as any).budgetContext;
+    expect(ctx.reason).toBe("daily_limit");
+    expect(ctx.attempted).toBe(50);
   });
 });
 
@@ -354,5 +380,41 @@ describe("payForMedication — concurrent calls cannot exceed budget (Issue #209
 
     expect(successes.length).toBe(3);
     expect(blocked.length).toBe(2);
+  });
+});
+
+// --- Platform cap (issue #83) ---
+
+describe("payForMedication — platform cap (issue #83)", () => {
+  const origCap = process.env.MAX_SINGLE_TX_USDC;
+
+  beforeEach(() => {
+    process.env.MAX_SINGLE_TX_USDC = "50";
+    resetSpendingTracker("rosa");
+    setSpendingPolicy("rosa", { ...DEFAULT_POLICY, medicationMonthlyBudget: 500, monthlyLimit: 1000, billMonthlyBudget: 500 });
+  });
+
+  afterEach(() => {
+    if (origCap === undefined) delete process.env.MAX_SINGLE_TX_USDC;
+    else process.env.MAX_SINGLE_TX_USDC = origCap;
+  });
+
+  it("blocks payForMedication above the platform cap", async () => {
+    const r = await payForMedication("p1", "Pharma", "Drug", 51);
+    expect(r.success).toBe(false);
+    expect((r as any).error).toContain("BLOCKED BY PLATFORM CAP");
+  });
+
+  it("blocks payBill above the platform cap", async () => {
+    const r = await payBill("provider1", "Hospital", "Visit", 51);
+    expect(r.success).toBe(false);
+    expect((r as any).error).toContain("BLOCKED BY PLATFORM CAP");
+  });
+
+  it("allows payForMedication equal to the platform cap (goes to policy check)", async () => {
+    // Amount equals cap — not blocked by platform cap; reaches policy check
+    const r = await payForMedication("p1", "Pharma", "Drug", 50);
+    // Either succeeds or is blocked by policy/approval — but NOT by platform cap
+    expect((r as any).error ?? "").not.toContain("BLOCKED BY PLATFORM CAP");
   });
 });

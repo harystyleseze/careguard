@@ -166,7 +166,24 @@ export async function resolveSetupSeed(options: {
 const MAX_FRIENDBOT_RETRIES = 5;
 const FRIENDBOT_RETRY_BASE_MS = 1000;
 
-async function fundAccount(publicKey: string): Promise<void> {
+export async function verifyFundedBalance(
+  publicKey: string,
+  horizonServer: Horizon.Server = new Horizon.Server(HORIZON_URL),
+): Promise<void> {
+  const account = await horizonServer.loadAccount(publicKey);
+  const xlm = account.balances.find((b: any) => b.asset_type === "native");
+  if (!xlm || parseFloat(xlm.balance) <= 0) {
+    throw new Error(
+      `Balance verification failed for ${publicKey}: XLM balance is ${xlm?.balance ?? "missing"}`,
+    );
+  }
+  logger.info({ wallet: publicKey.slice(0, 8), xlm: xlm.balance }, "XLM balance verified");
+}
+
+export async function fundAccountWithRetry(
+  publicKey: string,
+  horizonServer: Horizon.Server = new Horizon.Server(HORIZON_URL),
+): Promise<void> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < MAX_FRIENDBOT_RETRIES; attempt++) {
@@ -176,6 +193,7 @@ async function fundAccount(publicKey: string): Promise<void> {
         const text = await response.text();
         if (text.includes("createAccountAlreadyExist")) {
           logger.info({ wallet: publicKey.slice(0, 8) }, "account already funded");
+          await verifyFundedBalance(publicKey, horizonServer);
           return;
         }
 
@@ -195,6 +213,7 @@ async function fundAccount(publicKey: string): Promise<void> {
         throw new Error(`Friendbot failed permanently for ${publicKey}: ${text}`);
       }
       logger.info({ wallet: publicKey.slice(0, 8) }, "account funded");
+      await verifyFundedBalance(publicKey, horizonServer);
       return;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
@@ -216,6 +235,8 @@ async function fundAccount(publicKey: string): Promise<void> {
 
   throw lastError || new Error(`Failed to fund ${publicKey} after ${MAX_FRIENDBOT_RETRIES} attempts`);
 }
+
+const fundAccount = fundAccountWithRetry;
 
 interface SetupCheckpoint {
   fundedWallets: string[];

@@ -1,28 +1,11 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
-import { useProfile } from "../lib/useProfile";
 import { fetchProfile } from "../lib/fetchProfile";
 
-export async function generateMetadata({ params }: { params: any }): Promise<Metadata> {
+export async function generateMetadata(): Promise<Metadata> {
   const profile = await fetchProfile();
-  if (typeof globalThis !== "undefined") {
-    (globalThis as any).__SERVER_PROFILE__ = profile;
-  }
-
-  const { recipient } = useProfile();
+  const { recipient } = profile;
 
   const title = `${recipient.name}'s CareGuard`;
   const description = "AI agent that autonomously manages elderly healthcare spending on Stellar";
@@ -77,7 +60,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className="h-full antialiased"
     >
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">
         {children}

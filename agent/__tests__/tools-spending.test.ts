@@ -57,7 +57,8 @@ import {
   loadSpending,
   saveSpending,
   setCurrentRecipient,
-  getSpendingTracker
+  getSpendingTracker,
+  checkSpendingPolicy,
 } from "../tools.ts";
 
 describe("Non-payment tools persistence & validation", () => {
@@ -194,5 +195,56 @@ describe("Non-payment tools persistence & validation", () => {
 
     const spendingSaved = JSON.parse(readFileSync(join(testTempDir, "recipients", "test_recipient", "spending.json"), "utf-8"));
     expect(spendingSaved.medications).toBe(150);
+  });
+});
+
+describe("checkSpendingPolicy — float underflow (issue #287)", () => {
+  const POLICY = {
+    dailyLimit: 500,
+    monthlyLimit: 800,
+    medicationMonthlyBudget: 300,
+    billMonthlyBudget: 500,
+    approvalThreshold: 75,
+  };
+
+  // Helper: write a crafted spending object into the in-memory tracker by
+  // saving it to the cache (via saveSpending) then reloading via setCurrentRecipient.
+  function injectSpending(medications: number, bills = 0) {
+    saveSpending({ medications, bills, serviceFees: 0, transactions: [] });
+    setCurrentRecipient("test_recipient"); // reloads from the just-updated cache
+  }
+
+  beforeEach(() => {
+    setCurrentRecipient("test_recipient");
+    resetSpendingTracker();
+    setSpendingPolicy(POLICY);
+  });
+
+  it("blocks payment when remaining is a tiny negative float (synthetic underflow)", () => {
+    // Simulate floating-point underflow: budget fully consumed plus a rounding artifact
+    injectSpending(POLICY.medicationMonthlyBudget + 1e-10);
+
+    const result = checkSpendingPolicy(0.01, "medications");
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/budget/i);
+  });
+
+  it("blocks payment when global remaining is a tiny negative float", () => {
+    // totalMonthlySpending slightly over monthlyLimit due to float drift
+    injectSpending(400, POLICY.monthlyLimit - 400 + 1e-10);
+
+    const result = checkSpendingPolicy(0.01, "bills");
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/monthly limit/i);
+  });
+
+  it("returns non-negative budgetRemaining after rounding", () => {
+    // Set spending to exactly budget — underflow rounds to 0, budgetRemaining must be >= 0
+    injectSpending(POLICY.medicationMonthlyBudget);
+
+    const result = checkSpendingPolicy(0.01, "medications");
+    if (!result.allowed && result.budgetRemaining !== undefined) {
+      expect(result.budgetRemaining).toBeGreaterThanOrEqual(0);
+    }
   });
 });

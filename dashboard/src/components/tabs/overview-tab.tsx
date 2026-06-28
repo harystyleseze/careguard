@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Bar } from "../primitives/bar";
 import { Btn } from "../primitives/btn";
 import { Card } from "../primitives/card";
-import type { AgentResult, SpendingData } from "../types";
+import type { AgentResult, AgentLlmError, SpendingData } from "../types";
 import type { RecipientProfile } from "../../lib/types";
 
 export interface OverviewTabProps {
@@ -32,6 +32,7 @@ export function OverviewTab({
   activeTask,
   onRunTask,
   onCancelTask,
+  recipient,
 }: OverviewTabProps) {
   const savings = agentResult
     ? agentResult.toolCalls
@@ -162,6 +163,19 @@ export function OverviewTab({
         )}
       </div>
 
+      {agentResult?.events?.some((e) => e.kind === "iteration_limit_reached") && (
+        <div
+          role="alert"
+          className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 text-sm text-yellow-800"
+        >
+          Task may be incomplete — agent ran out of steps
+        </div>
+      )}
+
+      {agentResult?.error && (
+        <LlmErrorBanner error={agentResult.error} />
+      )}
+
       {agentResult && (
         <div
           className="bg-white rounded-xl border border-slate-200 p-6"
@@ -188,7 +202,7 @@ export function OverviewTab({
             Medication Adherence Check
           </h2>
           <p className="text-sm text-amber-700">
-            Did {profile.recipient?.name || "the care recipient"} take their medication today?
+            Did {recipient?.name || "the care recipient"} take their medication today?
           </p>
           <div className="mt-3 flex gap-2">
             <button className="px-4 py-2 bg-green-50 text-green-700 rounded-lg text-xs font-medium hover:bg-green-100 cursor-pointer transition-all">
@@ -200,6 +214,19 @@ export function OverviewTab({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function LlmErrorBanner({ error }: { error: AgentLlmError }) {
+  return (
+    <div
+      role="alert"
+      aria-live="assertive"
+      className="bg-red-50 border border-red-300 rounded-xl p-4 text-sm text-red-800"
+    >
+      <p className="font-semibold mb-1">⚠ LLM error at iteration {error.iteration} — results below are partial</p>
+      <p className="text-red-700">{error.message}{error.code ? ` (${error.code})` : ""}</p>
     </div>
   );
 }

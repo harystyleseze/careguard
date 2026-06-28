@@ -69,3 +69,5 @@ services:
         value: http://localhost:3004
       - key: PHARMACY_PAYMENT_URL
         value: http://localhost:3004
+      - key: MAX_SINGLE_TX_USDC
+        value: "100"

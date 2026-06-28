@@ -72,6 +72,40 @@ describe("OverviewTab Component", () => {
     expect(screen.getByText("I found $10.00 in savings.")).toBeInTheDocument();
   });
 
+  it("shows the iteration-limit banner when the run was capped (Issue #165)", () => {
+    render(
+      <OverviewTab
+        {...mockProps}
+        agentResult={{
+          response: "Partial result.",
+          spending: { spending: { serviceFees: 0.05 } } as any,
+          toolCalls: [],
+          events: [{ kind: "iteration_limit_reached" }],
+        }}
+      />
+    );
+    expect(
+      screen.getByText(/Task may be incomplete — agent ran out of steps/i)
+    ).toBeInTheDocument();
+  });
+
+  it("does not show the iteration-limit banner on a normal run (Issue #165)", () => {
+    render(
+      <OverviewTab
+        {...mockProps}
+        agentResult={{
+          response: "Done.",
+          spending: { spending: { serviceFees: 0.05 } } as any,
+          toolCalls: [],
+          events: [],
+        }}
+      />
+    );
+    expect(
+      screen.queryByText(/agent ran out of steps/i)
+    ).not.toBeInTheDocument();
+  });
+
   it("calls onRunTask when task buttons are clicked", () => {
     render(<OverviewTab {...mockProps} />);
 

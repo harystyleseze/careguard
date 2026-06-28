@@ -9,7 +9,6 @@
  */
 
 import "dotenv/config";
-import { createHash } from "crypto";
 import express, { type Express } from "express";
 import { Keypair, Horizon } from "@stellar/stellar-sdk";
 import OpenAI from "openai";
@@ -17,7 +16,6 @@ import { Mppx, Store } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import { fileURLToPath } from "url";
 import { z } from "zod";
 
 // x402 middleware
@@ -26,7 +24,6 @@ import { createCorsMiddleware } from "./shared/cors.ts";
 import { applySecurityMiddleware } from "./shared/security-middleware.ts";
 import { logger } from "./shared/logger.ts";
 import { validateTask, getSuspiciousTaskCount } from "./shared/task-validation.ts";
-import { buildScrubSession, scrubText } from "./shared/prompt-scrub.ts";
 import {
   BillAuditValidationError,
   validateBillAuditRequest,
@@ -37,7 +34,7 @@ import { sanitizeUserString } from "./shared/sanitize.ts";
 import { initSentry } from "./shared/sentry.ts";
 
 // Observability
-import { requestContextMiddleware, setAgentRunId, getRequestId } from "./shared/request-context.ts";
+import { requestContextMiddleware } from "./shared/request-context.ts";
 import { requestLoggerMiddleware } from "./shared/request-logger.ts";
 import {
   metricsHandler,
@@ -56,16 +53,11 @@ import {
 } from "./shared/agent-state.ts";
 import { checkWalletBalance, formatResult } from "./shared/wallet-balance.ts";
 import { appendAuditEntry, auditRouter } from "./shared/audit-log.ts";
-import { rateLimiters } from "./shared/rate-limit.ts";
+import { rateLimiters, perRouteLimiters, concurrentRequestsMiddleware } from "./shared/rate-limit.ts";
 import { agentQueue } from "./shared/agent-queue.ts";
 
 // Agent tools
 import {
-  comparePharmacyPrices,
-  auditBill,
-  fetchRosaBill,
-  fetchAndAuditBill,
-  checkDrugInteractions,
   payForMedication,
   payBill,
   checkSpendingPolicy,
@@ -73,11 +65,13 @@ import {
   setSpendingPolicy,
   getSpendingTracker,
   resetSpendingTracker,
-  TOOL_DEFINITIONS,
-  validateToolInput,
+  SpendingPolicySchema,
 } from "./agent/tools.ts";
+import { executeTool, runAgent } from "./agent/runner.ts";
 import { resolveRequestedDosage } from "./services/pharmacy-api/dosage.ts";
 import { createPharmacyPricingStore } from "./services/pharmacy-api/db.ts";
+import { createCareRecipientsStore } from "./services/care-recipients/db.ts";
+import type { CareRecipient } from "./services/care-recipients/db.ts";
 import {
   buildCompareResponse,
   DrugRecordSchema,
@@ -103,7 +97,7 @@ import {
 
 // --- Environment ---
 const envSchema = z.object({
-  PORT: z.coerce.number().int().positive().default(3004),
+  PORT: z.coerce.number().int().min(1, "PORT must be >= 1").max(65535, "PORT must be <= 65535").default(3004),
   STELLAR_NETWORK: z.enum(["testnet", "public"]).default("testnet"),
   LLM_API_KEY: z.string().min(1, "LLM_API_KEY required"),
   AGENT_SECRET_KEY: z.string().min(1, "AGENT_SECRET_KEY required"),
@@ -265,8 +259,8 @@ app.get("/", (_req, res) => {
     network: NETWORK,
     llm: `${LLM_BASE_URL} / ${LLM_MODEL}`,
     agentWallet: agentKeypair.publicKey(),
-    careRecipient: "Rosa Garcia",
-    caregiver: "Maria Garcia",
+    careRecipient: _profileData.recipient.name,
+    caregiver: _profileData.caregiver.name,
     paused: state.paused,
     pausedReason: state.pausedReason,
     pausedAt: state.pausedAt,
@@ -341,6 +335,7 @@ app.patch("/agent/profile", (req, res) => {
 
 const PHARMACY_ADMIN_TOKEN = process.env.PHARMACY_ADMIN_TOKEN || CAREGIVER_TOKEN;
 const pharmacyStore = createPharmacyPricingStore();
+const recipientsStore = createCareRecipientsStore();
 
 function requirePharmacyAdmin(
   req: express.Request,
@@ -518,7 +513,7 @@ applyX402Middleware(
   },
 );
 
-app.get("/pharmacy/compare", (req, res) => {
+app.get("/pharmacy/compare", perRouteLimiters.pharmacyCompare, concurrentRequestsMiddleware("pharmacy_compare"), (req, res) => {
   const parsedQuery = PharmacyCompareQuerySchema.safeParse({
     drug: req.query.drug,
     dosage: req.query.dosage,
@@ -660,9 +655,12 @@ function runBillAudit(lineItems: any[]) {
   };
 }
 
-app.get("/bill/sample", (_req, res) => {
+app.get("/bill/sample", (req, res) => {
+  const rid = typeof req.query.recipientId === 'string' ? req.query.recipientId : 'rosa_garcia';
+  const recipient = recipientsStore.getById(rid);
+  const patientName = recipient?.name ?? 'Rosa Garcia';
   res.json({
-    patientName: "Rosa Garcia",
+    patientName,
     facilityName: "General Hospital",
     dateOfService: "2026-03-15",
     lineItems: [
@@ -743,7 +741,7 @@ applyX402Middleware(app, {
   },
 });
 
-app.post("/bill/audit", (req, res) => {
+app.post("/bill/audit", perRouteLimiters.billAudit, concurrentRequestsMiddleware("bill_audit"), (req, res) => {
   try {
     const validatedBody = validateBillAuditRequest(req.body);
     const sanitizedLineItems = validatedBody.lineItems.map((lineItem) => ({
@@ -785,7 +783,7 @@ applyX402Middleware(app, {
   },
 });
 
-app.get("/drug/interactions", (req, res) => {
+app.get("/drug/interactions", perRouteLimiters.drugInteractions, concurrentRequestsMiddleware("drug_interactions"), (req, res) => {
   const parsedQuery = DrugInteractionsQuerySchema.safeParse({
     meds: req.query.meds,
   });
@@ -814,7 +812,15 @@ app.get("/drug/interactions", (req, res) => {
 
 const DATA_DIR = process.env.DATA_DIR || fileURLToPath(new URL("./data", import.meta.url));
 const ORDERS_FILE = `${DATA_DIR}/orders.json`;
+const MPP_STORE_FILE = `${DATA_DIR}/mpp-store.json`;
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+
+function createMppStore(filePath: string) {
+  const storeFactory = Store as typeof Store & {
+    fileSystem?: (path: string) => ReturnType<typeof Store.memory>;
+  };
+  return storeFactory.fileSystem?.(filePath) ?? Store.memory();
+}
 
 function loadOrders(): any[] {
   if (!existsSync(ORDERS_FILE)) return [];
@@ -836,7 +842,7 @@ const mppx = Mppx.create({
         env.data.STELLAR_NETWORK === "public"
           ? "stellar:pubnet"
           : "stellar:testnet",
-      store: Store.memory(),
+      store: createMppStore(MPP_STORE_FILE),
     }),
   ],
 });
@@ -845,7 +851,7 @@ app.get("/pharmacy/orders", (_req, res) => {
   res.json({ orders: loadOrders() });
 });
 
-app.post("/pharmacy/order", async (req, res) => {
+app.post("/pharmacy/order", perRouteLimiters.pharmacyOrder, concurrentRequestsMiddleware("pharmacy_order"), async (req, res) => {
   const parsedOrder = MedicationOrderSchema.safeParse(req.body);
   if (!parsedOrder.success) {
     res.status(400).json({
@@ -905,204 +911,36 @@ app.post("/pharmacy/order", async (req, res) => {
 });
 
 // ============================================================
+// CARE RECIPIENTS API
+// ============================================================
+
+app.get("/recipients", requireCaregiverToken, (_req, res) => {
+  res.json(recipientsStore.list());
+});
+
+app.post("/recipients", requireCaregiverToken, (req, res) => {
+  const body = req.body as Partial<CareRecipient>;
+  if (!body?.name || typeof body.name !== 'string' || !body.name.trim()) {
+    res.status(400).json({ error: 'name is required' });
+    return;
+  }
+  const created = recipientsStore.create({
+    name: body.name.trim(),
+    age: typeof body.age === 'number' ? body.age : null,
+    medications: Array.isArray(body.medications) ? body.medications : [],
+    primary_doctor: typeof body.primary_doctor === 'string' ? body.primary_doctor : null,
+    insurance: typeof body.insurance === 'string' ? body.insurance : null,
+    caregiver_user_id: null,
+  });
+  res.status(201).json(created);
+});
+
+// ============================================================
 // AI AGENT
 // ============================================================
 
-const SYSTEM_PROMPT = `You are CareGuard, an AI agent that manages healthcare spending for elderly care recipients on Stellar.
-
-Your responsibilities:
-1. Compare medication prices across pharmacies and order from cheapest. Check drug interactions first.
-2. Audit medical bills for errors (duplicates, upcoding, overcharges).
-3. Pay for medications and bills within spending policy limits.
-
-IMPORTANT RULES:
-- Check spending policy BEFORE any payment
-- When auditing a bill, use fetch_and_audit_bill which fetches Rosa's bill and audits it in one step. Never invent bill data.
-- When comparing medications, compare ALL at once, check interactions, then order from cheapest
-- Report savings found and API costs
-
-Current care recipient: Rosa Garcia (age 78)
-Caregiver: Maria Garcia (daughter)`;
-
 // PHI scrubbing — active unless LLM_PII_SCRUB=false (e.g. provider has a BAA)
 const _piiScrub = process.env.LLM_PII_SCRUB !== "false";
-const _scrubSession = _piiScrub
-  ? buildScrubSession(["Rosa Garcia"], ["Maria Garcia"])
-  : null;
-const SCRUBBED_SYSTEM_PROMPT = _scrubSession
-  ? scrubText(SYSTEM_PROMPT, _scrubSession)
-  : SYSTEM_PROMPT;
-
-const LLM_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] =
-  TOOL_DEFINITIONS.map((t) => ({
-    type: "function" as const,
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: { ...t.input_schema, additionalProperties: false },
-    },
-  }));
-
-async function executeTool(name: string, input: any): Promise<any> {
-  let result: any;
-  try {
-    input = validateToolInput(name, input);
-    switch (name) {
-      case "compare_pharmacy_prices":
-        result = await comparePharmacyPrices(input.drug_name, input.zip_code);
-        break;
-      case "audit_medical_bill": {
-        const items =
-          typeof input.line_items_json === "string"
-            ? JSON.parse(input.line_items_json)
-            : input.line_items || input.line_items_json;
-        result = await auditBill(items);
-        break;
-      }
-      case "fetch_rosa_bill":
-        result = await fetchRosaBill();
-        break;
-      case "fetch_and_audit_bill":
-        result = await fetchAndAuditBill();
-        break;
-      case "check_drug_interactions":
-        result = await checkDrugInteractions(input.medications);
-        break;
-      case "pay_for_medication":
-        result = await payForMedication(
-          input.pharmacy_id,
-          input.pharmacy_name,
-          input.drug_name,
-          parseFloat(input.amount),
-        );
-        break;
-      case "pay_bill":
-        result = await payBill(
-          input.provider_id,
-          input.provider_name,
-          input.description,
-          parseFloat(input.amount),
-        );
-        break;
-      case "check_spending_policy":
-        result = checkSpendingPolicy(parseFloat(input.amount), input.category);
-        break;
-      case "get_spending_summary":
-        result = getSpendingSummary();
-        break;
-      default:
-        result = { error: `Unknown tool: ${name}` };
-    }
-    agentToolCallsTotal.inc({ tool: name, status: "success" });
-    return result;
-  } catch (err: any) {
-    agentToolCallsTotal.inc({ tool: name, status: "error" });
-    throw err;
-  }
-}
-
-async function runAgent(task: string) {
-  const userTask = _scrubSession ? scrubText(task, _scrubSession) : task;
-  const runId = `run-${getRequestId() ?? Date.now()}`;
-  setAgentRunId(runId);
-
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: SCRUBBED_SYSTEM_PROMPT },
-    { role: "user", content: userTask },
-  ];
-  const toolCalls: Array<{ tool: string; input: any; result: any }> = [];
-  let finalResponse = "";
-  let runToolCalls = 0;
-  let truncated = false;
-
-  for (let iteration = 0; iteration < 15; iteration++) {
-    let response;
-    try {
-      response = await llm.chat.completions.create({
-        model: LLM_MODEL,
-        max_tokens: 4096,
-        tools: LLM_TOOLS,
-        messages,
-      });
-    } catch (err: any) {
-      logger.error({ err: err.message, iteration }, "LLM API error");
-      if (toolCalls.length > 0 && !finalResponse) {
-        finalResponse = toolCalls
-          .map((tc) => {
-            if (tc.result?.error) return `${tc.tool}: ${tc.result.error}`;
-            if (tc.tool === "compare_pharmacy_prices" && tc.result?.cheapest)
-              return `${tc.result.drug}: $${tc.result.cheapest.price} at ${tc.result.cheapest.pharmacyName} (save $${tc.result.potentialSavings}/mo)`;
-            if (
-              tc.tool === "fetch_and_audit_bill" &&
-              tc.result?.totalOvercharge
-            )
-              return `Bill audit: $${tc.result.totalOvercharge} overcharges (${tc.result.errorCount} errors)`;
-            if (tc.tool === "check_drug_interactions" && tc.result?.summary)
-              return tc.result.summary;
-            if (tc.tool === "pay_for_medication" && tc.result?.success)
-              return `Paid $${tc.result.transaction.amount} for ${tc.result.transaction.description}`;
-            return `${tc.tool}: completed`;
-          })
-          .join("\n");
-      } else if (!finalResponse) finalResponse = `LLM error: ${err.message}`;
-      break;
-    }
-
-    const choice = response.choices[0];
-    if (!choice) break;
-    messages.push(choice.message);
-    if (choice.message.content) finalResponse = choice.message.content;
-    if (!choice.message.tool_calls?.length) break;
-
-    // Cap total tool calls at iteration boundary to keep messages array consistent
-    if (runToolCalls + choice.message.tool_calls.length > MAX_TOOL_CALLS_PER_RUN) {
-      toolCallCapHitsTotal++;
-      truncated = true;
-      appendAuditEntry({ event: "agent.tool_cap_exceeded", actor: "agent", details: { max: MAX_TOOL_CALLS_PER_RUN, ran: runToolCalls } });
-      finalResponse = finalResponse || "Tool call limit reached; partial results returned.";
-      break;
-    }
-    runToolCalls += choice.message.tool_calls.length;
-
-    for (const tc of choice.message.tool_calls) {
-      if (tc.type !== "function") continue;
-      let args: any;
-      try {
-        args = JSON.parse(tc.function.arguments);
-      } catch {
-        args = {};
-      }
-      logger.info({ tool: tc.function.name, args: JSON.stringify(args).slice(0, 100) }, "tool call");
-      let result: any;
-      try {
-        result = await executeTool(tc.function.name, args);
-        toolCalls.push({ tool: tc.function.name, input: args, result });
-      } catch (err: any) {
-        logger.error({ tool: tc.function.name, err: err.message }, "tool error");
-        result = { error: err.message };
-        toolCalls.push({ tool: tc.function.name, input: args, result });
-      }
-
-      appendAuditEntry({
-        event: "tool_call",
-        actor: "agent",
-        details: {
-          tool: tc.function.name,
-          inputs: args,
-          resultHash: createHash("sha256").update(JSON.stringify(result || {})).digest("hex")
-        }
-      });
-      messages.push({
-        role: "tool",
-        tool_call_id: tc.id,
-        content: JSON.stringify(result),
-      });
-    }
-    if (choice.finish_reason === "stop") break;
-  }
-
-  return { response: finalResponse, toolCalls, spending: getSpendingSummary(), truncated };
-}
 
 // Agent endpoints
 app.get("/agent/status", (_req, res) => {
@@ -1151,26 +989,19 @@ app.get("/agent/transactions", (req, res) => {
   });
 });
 app.post("/agent/policy", (req, res) => {
-  const body = req.body;
-  if (!body || typeof body !== "object") {
-    return res.status(400).json({ error: "Invalid policy" });
+  const result = SpendingPolicySchema.safeParse(req.body);
+  if (!result.success) {
+    return res.status(400).json({ error: "Invalid policy", issues: result.error.issues });
   }
-  const fields = ["dailyLimit", "monthlyLimit", "medicationMonthlyBudget", "billMonthlyBudget", "approvalThreshold"] as const;
-  const errors: string[] = [];
-  for (const f of fields) {
-    const v = body[f];
-    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) errors.push(`${f} must be a positive finite number`);
-  }
-  if (errors.length > 0) return res.status(400).json({ error: "Invalid policy", details: errors });
-  setSpendingPolicy(body);
-  res.json({ success: true, policy: body });
+  setSpendingPolicy(result.data);
+  res.json({ success: true, policy: result.data });
 });
 app.post("/agent/reset", (_req, res) => {
   resetSpendingTracker();
   res.json({ success: true });
 });
 
-app.post("/agent/run", async (req, res) => {
+app.post("/agent/run", perRouteLimiters.agentRun, concurrentRequestsMiddleware("agent_run"), async (req, res) => {
   const validation = validateTask(req.body?.task);
   if (!validation.ok) {
     res.status(400).json({ error: validation.error });
@@ -1184,7 +1015,13 @@ app.post("/agent/run", async (req, res) => {
   const task = validation.task!;
   logger.info({ task, suspicious: validation.suspicious }, "agent task received");
   try {
-    const result = await agentQueue.enqueue(() => runAgent(task));
+    const result = await agentQueue.enqueue(() => runAgent({
+      task,
+      profile: _profileData,
+      llm,
+      model: LLM_MODEL,
+      piiScrub: _piiScrub,
+    }));
     agentRunsTotal.inc({ status: "success" });
     logger.info({ toolCalls: result.toolCalls.length, truncated: result.truncated }, "agent task complete");
     res.json(result);

@@ -6,7 +6,7 @@ Get CareGuard running on Stellar testnet with real x402 and MPP payments.
 
 ## Prerequisites
 
-- **Node.js** 20 or later
+- **Node.js** 22 or later
 - **npm** (comes with Node.js)
 - **A Groq API key** (free) — [console.groq.com](https://console.groq.com)
 - **An OZ Facilitator API key** (free) — [channels.openzeppelin.com/testnet/gen](https://channels.openzeppelin.com/testnet/gen)

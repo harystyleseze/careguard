@@ -6,6 +6,11 @@ import type { CaregiverProfile, RecipientProfile } from "../../lib/types";
 import { Toast } from "../primitives/toast";
 import type { AgentInfo } from "../types";
 
+export interface RecipientOption {
+  id: string;
+  name: string;
+}
+
 export interface SettingsTabProps {
   recipient: RecipientProfile;
   caregiver: CaregiverProfile;
@@ -16,6 +21,9 @@ export interface SettingsTabProps {
     recipient?: Partial<RecipientProfile>;
     caregiver?: Partial<CaregiverProfile>;
   }) => Promise<void>;
+  recipients?: RecipientOption[];
+  selectedRecipientId?: string;
+  onSelectRecipient?: (id: string) => void;
 }
 
 export function SettingsTab({
@@ -25,6 +33,9 @@ export function SettingsTab({
   agentPaused,
   onTogglePause,
   onUpdateProfile,
+  recipients,
+  selectedRecipientId,
+  onSelectRecipient,
 }: SettingsTabProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -113,7 +124,21 @@ export function SettingsTab({
       />
       <div className="bg-white rounded-xl border border-slate-200 p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-slate-700">Care Recipient</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-semibold text-slate-700">Care Recipient</h2>
+            {recipients && recipients.length > 1 && onSelectRecipient && (
+              <select
+                className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                value={selectedRecipientId ?? ''}
+                onChange={(e) => onSelectRecipient(e.target.value)}
+                aria-label="Switch care recipient"
+              >
+                {recipients.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
           {!editing && (
             <button
               onClick={startEditing}

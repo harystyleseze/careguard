@@ -18,6 +18,7 @@ import { WalletTab } from "../components/tabs/wallet-tab";
 import { DASHBOARD_TABS, type Tab } from "../components/types";
 import { useAgentState } from "../hooks/use-agent-state";
 import { useProfile } from "../lib/useProfile";
+import { useRecipients } from "../lib/useRecipients";
 import { ConfigErrorPage } from "../components/config-error-page";
 import { AGENT_URL } from "../lib/agent-url";
 
@@ -31,6 +32,9 @@ export default function Dashboard() {
   }
 
   const { recipient, caregiver, updateProfile } = useProfile();
+  const { recipients, selectedId, selectRecipient } = useRecipients((profile) => {
+    updateProfile({ recipient: profile });
+  });
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -80,6 +84,9 @@ export default function Dashboard() {
         agentPaused={state.agentPaused}
         walletBalance={state.walletBalance}
         onTogglePause={state.togglePause}
+        recipients={recipients}
+        selectedRecipientId={selectedId}
+        onSelectRecipient={selectRecipient}
       />
       <div className="max-w-7xl mx-auto px-4 py-6">
         <DashboardTabsNav activeTab={activeTab} pathname={pathname} />
@@ -93,23 +100,18 @@ export default function Dashboard() {
             onRunTask={state.runAgentTask}
             onCancelTask={state.cancelAgentTask}
             recipient={recipient}
-            loadingSpending={state.loadingSpending}
-            loadingAgentInfo={state.loadingAgentInfo}
           />
         )}
         {activeTab === "medications" && (
           <MedicationsTab
             agentResult={state.agentResult}
             recipient={recipient}
-            loadingTransactions={state.loadingTransactions}
           />
         )}
         {activeTab === "bills" && (
           <BillsTab
             agentResult={state.agentResult}
             recipient={recipient}
-            caregiverName={caregiver.name}
-            loadingTransactions={state.loadingTransactions}
           />
         )}
         {activeTab === "approvals" && (
@@ -125,7 +127,6 @@ export default function Dashboard() {
             policySaved={state.policySaved}
             onUpdatePolicy={state.updatePolicy}
             onForceSync={() => state.fetchSpending({ forcePolicySync: true })}
-            loadingSpending={state.loadingSpending}
           />
         )}
         {activeTab === "wallet" && (
@@ -133,6 +134,10 @@ export default function Dashboard() {
             agentInfo={state.agentInfo}
             walletBalance={state.walletBalance}
             walletXlm={state.walletXlm}
+            walletBalanceState={state.walletBalanceState}
+            walletBalanceError={state.walletBalanceError}
+            loadingWalletBalance={state.loadingWalletBalance}
+            onRetryWalletBalance={state.retryWalletBalance}
             loadingAgentInfo={state.loadingAgentInfo}
           />
         )}
@@ -162,7 +167,9 @@ export default function Dashboard() {
             agentPaused={state.agentPaused}
             onTogglePause={state.togglePause}
             onUpdateProfile={updateProfile}
-            loadingAgentInfo={state.loadingAgentInfo}
+            recipients={recipients}
+            selectedRecipientId={selectedId}
+            onSelectRecipient={selectRecipient}
           />
         )}
       </div>

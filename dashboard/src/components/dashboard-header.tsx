@@ -4,6 +4,11 @@ import type { RecipientProfile } from "../lib/types";
 import type { AgentInfo } from "./types";
 import { EXPLORER_ACCOUNT_URL } from "../lib/stellar-network";
 
+export interface RecipientOption {
+  id: string;
+  name: string;
+}
+
 export interface DashboardHeaderProps {
   recipient: RecipientProfile;
   recipientInitials: string;
@@ -12,6 +17,9 @@ export interface DashboardHeaderProps {
   agentPaused: boolean;
   walletBalance: string | null;
   onTogglePause: () => void;
+  recipients?: RecipientOption[];
+  selectedRecipientId?: string;
+  onSelectRecipient?: (id: string) => void;
 }
 
 export function DashboardHeader({
@@ -22,6 +30,9 @@ export function DashboardHeader({
   agentPaused,
   walletBalance,
   onTogglePause,
+  recipients,
+  selectedRecipientId,
+  onSelectRecipient,
 }: DashboardHeaderProps) {
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
@@ -75,10 +86,23 @@ export function DashboardHeader({
           <div className="flex items-center gap-2">
             <div className="text-right text-xs">
               <div className="text-slate-500">Care Recipient</div>
-              <div className="font-medium">
-                {recipient.name}
-                {typeof recipient.age === "number" ? `, ${recipient.age}` : ""}
-              </div>
+              {recipients && recipients.length > 1 && onSelectRecipient ? (
+                <select
+                  className="font-medium bg-transparent border-none outline-none cursor-pointer text-xs"
+                  value={selectedRecipientId ?? ''}
+                  onChange={(e) => onSelectRecipient(e.target.value)}
+                  aria-label="Select care recipient"
+                >
+                  {recipients.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="font-medium">
+                  {recipient.name}
+                  {typeof recipient.age === "number" ? `, ${recipient.age}` : ""}
+                </div>
+              )}
             </div>
             <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-sm font-medium">
               {recipientInitials}

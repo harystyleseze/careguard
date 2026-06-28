@@ -19,6 +19,10 @@ export function createCorsMiddleware(): RequestHandler {
 }
 
 function parseAllowedOrigins(): string[] {
+  // DASHBOARD_ORIGIN is the primary env var (Issue #236)
+  const dashboardOrigin = process.env.DASHBOARD_ORIGIN;
+  if (dashboardOrigin) return [dashboardOrigin];
+
   const raw = process.env.ALLOWED_ORIGINS ?? "";
   const fromEnv = raw
     .split(",")

@@ -42,8 +42,16 @@ import lock from "proper-lockfile";
 
 const DATA_DIR = new URL("../../data", import.meta.url).pathname;
 const ORDERS_FILE = `${DATA_DIR}/orders.json`;
+const MPP_STORE_FILE = `${DATA_DIR}/mpp-store.json`;
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+
+function createMppStore(filePath: string) {
+  const storeFactory = Store as typeof Store & {
+    fileSystem?: (path: string) => ReturnType<typeof Store.memory>;
+  };
+  return storeFactory.fileSystem?.(filePath) ?? Store.memory();
+}
 
 function loadOrders(): any[] {
   if (!existsSync(ORDERS_FILE)) return [];
@@ -127,7 +135,7 @@ const mppx = Mppx.create({
       recipient: RECIPIENT,
       currency: USDC_SAC_TESTNET,
       network: NETWORK,
-      store: Store.memory(),
+      store: createMppStore(MPP_STORE_FILE),
     }),
   ],
 });

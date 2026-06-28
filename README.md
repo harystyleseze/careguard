@@ -88,6 +88,8 @@ For a full runtime flow diagram, module map, and integration details, see [docs/
 
 ## Quick Start
 
+**Prerequisites:** Node.js 22 or later, npm.
+
 See [QUICKSTART.md](QUICKSTART.md) for the full setup guide.
 
 ```bash

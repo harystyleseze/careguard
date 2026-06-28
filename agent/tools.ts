@@ -76,6 +76,7 @@ import {
   paymentsUsdcTotal,
   stellarTxSubmittedTotal,
   policyBlocksTotal,
+  paymentRejectedTotal,
   agentSpendingUsd,
   agentTransactionsTotal,
   x402TxExtractionFailedTotal,
@@ -129,6 +130,17 @@ const PHARMACY_PAYMENT_API =
 const USDC_ISSUER =
   process.env.USDC_ISSUER ||
   'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+
+// On public network, USDC_ISSUER must be explicitly set.
+// Falling back to the testnet issuer on mainnet causes silent incorrect balance reads
+// (the issuer address is different on each network). See docs/security/asset-spoofing.md.
+if (STELLAR_CONFIG.networkType === 'public' && !process.env.USDC_ISSUER) {
+  throw new Error(
+    'USDC_ISSUER env var must be explicitly set when STELLAR_NETWORK=public. ' +
+    'Set it to the Circle USDC issuer for Stellar mainnet.',
+  );
+}
+
 const MIN_FEE_STROOPS = 100;
 const MAX_FEE_STROOPS = parseInt(process.env.MAX_FEE_STROOPS || '100000');
 const STELLAR_TIMEBOUNDS_SECONDS = parseInt(process.env.STELLAR_TIMEBOUNDS_SECONDS || "60", 10);
@@ -300,19 +312,38 @@ async function waitForStellarSettlement(
 }
 
 // --- x402 Client: Auto-handles 402 Payment Required for API queries ---
-// Use stellar:testnet or stellar:public scheme based on STELLAR_NETWORK env
+// Use stellar:testnet or stellar:public scheme based on STELLAR_NETWORK env.
+// getSigner() re-reads AGENT_SECRET_KEY on a 60s TTL so the key can be rotated
+// without a full process restart. SIGHUP triggers immediate cache invalidation
+// (zero-downtime reload). See docs/runbooks/rotate-agent-key.md.
 const x402SchemeId = `stellar:${STELLAR_CONFIG.networkType}` as `${string}:${string}`;
-const x402Fetch = isMockNetwork()
-  ? fetch
-  : wrapFetchWithPayment(
+export const X402_SIGNER_TTL_MS = 60_000;
+let _x402Fetch: typeof fetch | null = null;
+let _x402FetchCreatedAt = 0;
+
+export function getX402Fetch(): typeof fetch {
+  if (isMockNetwork()) return fetch;
+  const now = Date.now();
+  if (!_x402Fetch || now - _x402FetchCreatedAt > X402_SIGNER_TTL_MS) {
+    const key = process.env.AGENT_SECRET_KEY;
+    if (!key) throw new Error('AGENT_SECRET_KEY required');
+    _x402Fetch = wrapFetchWithPayment(
       fetch,
       new x402Client().register(
         x402SchemeId,
-        new ExactStellarScheme(
-          createEd25519Signer(AGENT_SECRET_KEY, x402SchemeId),
-        ),
+        new ExactStellarScheme(createEd25519Signer(key, x402SchemeId)),
       ),
     );
+    _x402FetchCreatedAt = now;
+  }
+  return _x402Fetch;
+}
+
+process.on('SIGHUP', () => {
+  _x402Fetch = null;
+  _x402FetchCreatedAt = 0;
+  logger.info('[x402] SIGHUP received — signer cache invalidated, will reload on next call');
+});
 
 // --- MPP Client: Auto-handles 402 for medication order payments ---
 // Use factory function to create client instance (supports DI for testing)
@@ -458,6 +489,15 @@ interface SpendingTracker {
   bills: number;
   serviceFees: number;
   transactions: Transaction[];
+  /** Persisted month-to-date totals keyed by yearMonth (e.g. "2026-04").
+   *  On month boundary crossing, running totals are rotated so budget
+   *  enforcement always sees the current month's spend (Issue #208). */
+  monthTotals?: {
+    yearMonth: string;
+    medications: number;
+    bills: number;
+    serviceFees: number;
+  };
 }
 
 const SpendingTrackerSchema = z.object({
@@ -468,19 +508,47 @@ const SpendingTrackerSchema = z.object({
   // and the upstream shape (createdAt/metadata). normalizeTransactionCategories
   // casts entries to Transaction after loading, so loose validation is intentional.
   transactions: z.array(z.record(z.unknown())),
+  monthTotals: z.object({
+    yearMonth: z.string(),
+    medications: z.number(),
+    bills: z.number(),
+    serviceFees: z.number(),
+  }).optional(),
 });
 
 type PaymentCategory =
   | typeof TRANSACTION_CATEGORY.MEDICATIONS
   | typeof TRANSACTION_CATEGORY.BILLS;
 
-type SpendingPolicyInput = Partial<SpendingPolicy> & {
-  dailyLimit: number;
-  monthlyLimit: number;
-  medicationMonthlyBudget: number;
-  billMonthlyBudget: number;
-  approvalThreshold: number;
-};
+// Zod schema for spending policy — enforces positive values, sane upper bounds,
+// and cross-field ordering. holdTimeSeconds uses .min(0) because DEFAULT_POLICY sets it to 0.
+export const SpendingPolicySchema = z.object({
+  dailyLimit: z.number().gt(0, 'dailyLimit must be greater than 0').max(10_000, 'dailyLimit cannot exceed $10,000'),
+  monthlyLimit: z.number().gt(0, 'monthlyLimit must be greater than 0').max(100_000, 'monthlyLimit cannot exceed $100,000'),
+  medicationMonthlyBudget: z.number().gt(0, 'medicationMonthlyBudget must be greater than 0').max(50_000, 'medicationMonthlyBudget cannot exceed $50,000'),
+  billMonthlyBudget: z.number().gt(0, 'billMonthlyBudget must be greater than 0').max(50_000, 'billMonthlyBudget cannot exceed $50,000'),
+  approvalThreshold: z.number().gt(0, 'approvalThreshold must be greater than 0').max(10_000, 'approvalThreshold cannot exceed $10,000'),
+  holdTimeSeconds: z.number().min(0).max(86_400).default(0),
+  timezone: z.string().optional(),
+  toolFees: z.record(z.number().min(0)).optional(),
+  notifications: z.object({
+    email: z.boolean(),
+    sms: z.boolean(),
+    emailAddress: z.string().email().optional(),
+    phoneNumber: z.string().optional(),
+  }).optional(),
+}).refine(
+  (p) => p.dailyLimit <= p.monthlyLimit,
+  { message: 'dailyLimit cannot exceed monthlyLimit', path: ['dailyLimit'] },
+).refine(
+  (p) => p.approvalThreshold <= p.dailyLimit,
+  { message: 'approvalThreshold cannot exceed dailyLimit', path: ['approvalThreshold'] },
+).refine(
+  (p) => p.medicationMonthlyBudget + p.billMonthlyBudget <= p.monthlyLimit,
+  { message: 'medicationMonthlyBudget + billMonthlyBudget cannot exceed monthlyLimit', path: ['medicationMonthlyBudget'] },
+);
+
+type SpendingPolicyInput = z.infer<typeof SpendingPolicySchema>;
 
 const SPENDING_CACHE_TTL_MS = 5000;
 /** Compact the JSONL log into a snapshot every this many transactions (Issue #205). */
@@ -494,7 +562,41 @@ type SpendingCacheEntry = {
 const spendingCache = new Map<string, SpendingCacheEntry>();
 
 function createEmptySpendingTracker(): SpendingTracker {
-  return { medications: 0, bills: 0, serviceFees: 0, transactions: [] };
+  return {
+    medications: 0,
+    bills: 0,
+    serviceFees: 0,
+    transactions: [],
+    monthTotals: {
+      yearMonth: getCurrentYearMonth(),
+      medications: 0,
+      bills: 0,
+      serviceFees: 0,
+    },
+  };
+}
+
+function getCurrentYearMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function rotateMonthIfNeeded(tracker: SpendingTracker): boolean {
+  const current = getCurrentYearMonth();
+  const stored = tracker.monthTotals?.yearMonth;
+  if (stored === current) return false;
+  // Month boundary crossed — rotate running totals
+  tracker.monthTotals = {
+    yearMonth: current,
+    medications: 0,
+    bills: 0,
+    serviceFees: 0,
+  };
+  tracker.medications = 0;
+  tracker.bills = 0;
+  tracker.serviceFees = 0;
+  logger.info({ from: stored, to: current }, '[Budget] Month boundary rotated spending totals');
+  return true;
 }
 
 function normalizeTransactionCategories(
@@ -749,6 +851,20 @@ function getBudgetMutex(recipientId: string): AsyncMutex {
 }
 
 const MAX_PAYMENT = 1000;
+// Platform-level single-transaction cap (issue #83). Sits above the caregiver policy's
+// approvalThreshold so a compromised session cannot bypass it. Only changeable by redeploying.
+// Read on every call so tests can override process.env.MAX_SINGLE_TX_USDC between runs.
+function getPlatformTxCap(): number {
+  return parseFloat(process.env.MAX_SINGLE_TX_USDC ?? '100');
+}
+
+// Budget values are rounded to 4 decimal places to eliminate float underflow (issue #287).
+// 4 dp = sub-cent precision; values within 0.5/BUDGET_SCALE of zero collapse cleanly to zero.
+const BUDGET_SCALE = 10_000;
+function roundBudget(v: number): number {
+  return Math.round(v * BUDGET_SCALE) / BUDGET_SCALE;
+}
+
 const MAX_ERROR_LENGTH = 500;
 
 function truncateError(message: string): string {
@@ -762,6 +878,7 @@ function recordServiceFee(
   stellarTxHash?: string,
   txHashStatus?: 'extracted' | 'extraction_failed',
 ) {
+  rotateMonthIfNeeded(spendingTracker);
   x402SettlementsTotal.inc();
   spendingTracker.serviceFees += amount;
   const tx: Transaction = {
@@ -805,27 +922,7 @@ function savePolicy(policy: SpendingPolicy, recipientId?: string) {
 }
 
 function assertValidSpendingPolicy(policy: SpendingPolicy) {
-  const fields = ["dailyLimit", "monthlyLimit", "medicationMonthlyBudget", "billMonthlyBudget", "approvalThreshold"] as const;
-  for (const f of fields) {
-    const v = policy[f];
-    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
-      throw new Error(`Invalid spending policy: ${f} must be a positive finite number`);
-    }
-  }
-  if (policy.dailyLimit > policy.monthlyLimit) {
-    throw new Error('Invalid spending policy: dailyLimit cannot exceed monthlyLimit');
-  }
-  if (policy.approvalThreshold > policy.dailyLimit) {
-    throw new Error('Invalid spending policy: approvalThreshold cannot exceed dailyLimit');
-  }
-  if (
-    policy.medicationMonthlyBudget + policy.billMonthlyBudget >
-    policy.monthlyLimit
-  ) {
-    throw new Error(
-      'Invalid spending policy: medicationMonthlyBudget + billMonthlyBudget cannot exceed monthlyLimit',
-    );
-  }
+  SpendingPolicySchema.parse(policy);
 }
 
 let currentPolicy: SpendingPolicy = loadPolicy();
@@ -966,7 +1063,7 @@ export async function comparePharmacyPrices(
     return data;
   }
 
-  const response = await x402Fetch(url);
+  const response = await getX402Fetch()(url);
 
   if (!response.ok) {
     const error = await response.text();
@@ -1006,8 +1103,9 @@ export async function comparePharmacyPrices(
 }
 
 // --- Tool: Fetch Rosa's hospital bill (free endpoint, no x402 payment) ---
-export async function fetchRosaBill() {
-  logger.info("[fetch] getting Rosa's hospital bill");
+export async function fetchRosaBill(recipientId?: string) {
+  const rid = recipientId ?? currentRecipientId;
+  logger.info({ recipientId: rid }, '[fetch] getting care recipient bill');
 
   if (isMockNetwork()) {
     return {
@@ -1025,7 +1123,9 @@ export async function fetchRosaBill() {
     };
   }
 
-  const response = await fetch(`${BILL_AUDIT_API}/bill/sample`);
+  const url = new URL(`${BILL_AUDIT_API}/bill/sample`);
+  if (rid) url.searchParams.set('recipientId', rid);
+  const response = await fetch(url.toString());
 
   if (!response.ok) {
     throw new Error(
@@ -1036,12 +1136,13 @@ export async function fetchRosaBill() {
   return await response.json();
 }
 
-// --- Tool: Fetch Rosa's bill AND audit it in one step (pays via x402) ---
-export async function fetchAndAuditBill() {
-  logger.info("[fetch+audit] getting Rosa's bill and auditing it");
+// --- Tool: Fetch care recipient's bill AND audit it in one step (pays via x402) ---
+export async function fetchAndAuditBill(recipientId?: string) {
+  const rid = recipientId ?? currentRecipientId;
+  logger.info({ recipientId: rid }, "[fetch+audit] getting care recipient bill and auditing it");
 
   // Step 1: Fetch the bill (free)
-  const bill = await fetchRosaBill();
+  const bill = await fetchRosaBill(rid);
 
   // Step 2: Audit it (pays via x402)
   return await auditBill(bill.lineItems);
@@ -1111,7 +1212,7 @@ export async function auditBill(
 
   let response: Response;
   try {
-    response = await x402Fetch(`${BILL_AUDIT_API}/bill/audit`, {
+    response = await getX402Fetch()(`${BILL_AUDIT_API}/bill/audit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lineItems }),
@@ -1248,7 +1349,7 @@ export async function checkDrugInteractions(medications: string[]) {
     return data;
   }
 
-  const response = await x402Fetch(
+  const response = await getX402Fetch()(
     `${DRUG_INTERACTION_API}/drug/interactions?meds=${encodeURIComponent(
       medications.join(','),
     )}`,
@@ -1306,35 +1407,16 @@ export function checkSpendingPolicy(
     category === TRANSACTION_CATEGORY.MEDICATIONS
       ? spendingTracker.medications
       : spendingTracker.bills;
-  const remaining = budget - currentSpending;
+  const remaining = roundBudget(budget - currentSpending);
   const totalMonthlySpending =
     spendingTracker.medications +
     spendingTracker.bills +
     spendingTracker.serviceFees;
-  const globalRemaining = policy.monthlyLimit - totalMonthlySpending;
+  const globalRemaining = roundBudget(policy.monthlyLimit - totalMonthlySpending);
 
-  if (amount > globalRemaining) {
-    return {
-      allowed: false,
-      reason: `Payment of $${amount.toFixed(2)} would exceed overall monthly limit. Monthly limit: $${policy.monthlyLimit}, spent: $${totalMonthlySpending.toFixed(2)}, remaining: $${globalRemaining.toFixed(2)}`,
-      requiresApproval: false,
-      currentSpending,
-      budgetRemaining: remaining,
-      globalBudgetRemaining: globalRemaining,
-    };
-  }
-
-  if (amount > remaining) {
-    return {
-      allowed: false,
-      reason: `Payment of $${amount.toFixed(2)} exceeds ${category} monthly budget. Budget: $${budget}, spent: $${currentSpending.toFixed(2)}, remaining: $${remaining.toFixed(2)}`,
-      requiresApproval: false,
-      currentSpending,
-      budgetRemaining: remaining,
-    };
-  }
-
-  // Use the policy's per-recipient timezone if set; fall back to the global
+  // Compute today's spend in this category up-front so every return path can
+  // report the remaining daily budget to the caller (Issue #160). Use the
+  // policy's per-recipient timezone if set; fall back to the global
   // SPENDING_TIMEZONE env var so caregivers in non-UTC locales see the correct
   // "today" boundary for their wall clock (Issue #207).
   const effectiveTz = policy.timezone ?? SPENDING_TIMEZONE;
@@ -1354,6 +1436,34 @@ export function checkSpendingPolicy(
       },
     )
     .reduce((sum, t) => sum + t.amount, 0);
+  const dailyRemaining = roundBudget(policy.dailyLimit - totalToday);
+  // monthlyRemaining is the budget still available for this category this month.
+  const monthlyRemaining = remaining;
+
+  if (amount > globalRemaining) {
+    return {
+      allowed: false,
+      reason: `Payment of $${amount.toFixed(2)} would exceed overall monthly limit. Monthly limit: $${policy.monthlyLimit}, spent: $${totalMonthlySpending.toFixed(2)}, remaining: $${globalRemaining.toFixed(2)}`,
+      requiresApproval: false,
+      currentSpending,
+      budgetRemaining: remaining,
+      globalBudgetRemaining: globalRemaining,
+      dailyRemaining,
+      monthlyRemaining,
+    };
+  }
+
+  if (amount > remaining) {
+    return {
+      allowed: false,
+      reason: `Payment of $${amount.toFixed(2)} exceeds ${category} monthly budget. Budget: $${budget}, spent: $${currentSpending.toFixed(2)}, remaining: $${remaining.toFixed(2)}`,
+      requiresApproval: false,
+      currentSpending,
+      budgetRemaining: remaining,
+      dailyRemaining,
+      monthlyRemaining,
+    };
+  }
 
   if (totalToday + amount > policy.dailyLimit) {
     return {
@@ -1362,6 +1472,8 @@ export function checkSpendingPolicy(
       requiresApproval: false,
       currentSpending,
       budgetRemaining: remaining,
+      dailyRemaining,
+      monthlyRemaining,
     };
   }
 
@@ -1369,7 +1481,9 @@ export function checkSpendingPolicy(
     allowed: true,
     requiresApproval: amount >= policy.approvalThreshold,
     currentSpending,
-    budgetRemaining: remaining - amount,
+    budgetRemaining: roundBudget(remaining - amount),
+    dailyRemaining,
+    monthlyRemaining,
   };
 }
 
@@ -1583,6 +1697,7 @@ export async function approvePendingTransaction(txId: string): Promise<any> {
   tx.stellarTxHash = result.stellarTxHash;
   if (result.mppOrderId) tx.mppOrderId = result.mppOrderId;
 
+  rotateMonthIfNeeded(spendingTracker);
   if (tx.category === TRANSACTION_CATEGORY.MEDICATIONS) {
     spendingTracker.medications += tx.amount;
     agentSpendingUsd.set(
@@ -1650,11 +1765,18 @@ export async function payForMedication(
       error: `Invalid payment amount: $${amount}. Amount must be a positive finite number <= $${MAX_PAYMENT}.`,
     };
   }
+  if (amount > getPlatformTxCap()) {
+    return {
+      success: false,
+      error: `BLOCKED BY PLATFORM CAP: $${amount.toFixed(2)} exceeds MAX_SINGLE_TX_USDC ($${getPlatformTxCap().toFixed(2)})`,
+    };
+  }
   // Atomically check policy and reserve the budget before the async payment
   // check when only one slot remains in the budget.
   const release = await getBudgetMutex(currentRecipientId).acquire();
   let policyCheck: ReturnType<typeof checkSpendingPolicy>;
   try {
+    rotateMonthIfNeeded(spendingTracker);
     policyCheck = checkSpendingPolicy(
       amount,
       TRANSACTION_CATEGORY.MEDICATIONS,
@@ -1662,9 +1784,12 @@ export async function payForMedication(
     if (!policyCheck.allowed) {
       const reason = policyCheck.reason!.includes('daily')
         ? 'daily_limit'
-        : 'budget';
+        : policyCheck.reason!.includes('overall monthly limit')
+          ? 'monthly_limit'
+          : 'budget';
       policyBlocksTotal.inc({ reason });
-      
+      paymentRejectedTotal.inc({ reason });
+
       const tx = {
         id: `tx-${Date.now()}`,
         timestamp: new Date().toISOString(),
@@ -1678,10 +1803,26 @@ export async function payForMedication(
       spendingTracker.transactions.push(tx);
       appendTransaction(tx as any);
 
+      // Surface the full budget context so the LLM can decide whether to ask
+      // the caregiver for an override or pick a cheaper option (Issue #160).
+      const dailyRemaining = policyCheck.dailyRemaining ?? 0;
+      const monthlyRemaining = policyCheck.monthlyRemaining ?? 0;
+      const budgetContext = {
+        reason,
+        attempted: amount,
+        dailyRemaining,
+        monthlyRemaining,
+        suggestion:
+          `Relay this to the caregiver: the $${amount.toFixed(2)} payment was blocked by the spending policy. ` +
+          `Remaining budget is $${dailyRemaining.toFixed(2)} today and $${monthlyRemaining.toFixed(2)} this month for ${TRANSACTION_CATEGORY.MEDICATIONS}. ` +
+          `Ask them to approve a one-time override, or choose a cheaper option that fits the remaining budget.`,
+      };
+
       return {
         success: false,
         error: `BLOCKED BY SPENDING POLICY: ${policyCheck.reason}`,
         transaction: tx,
+        budgetContext,
       };
     }
     if (policyCheck.requiresApproval && !skipApproval) {
@@ -1793,11 +1934,18 @@ export async function payBill(
       error: `Invalid payment amount: $${amount}. Amount must be a positive finite number <= $${MAX_PAYMENT}.`,
     };
   }
+  if (amount > getPlatformTxCap()) {
+    return {
+      success: false,
+      error: `BLOCKED BY PLATFORM CAP: $${amount.toFixed(2)} exceeds MAX_SINGLE_TX_USDC ($${getPlatformTxCap().toFixed(2)})`,
+    };
+  }
   // Atomically check policy and reserve the budget before the async payment
   // (Issue #209).
   const releaseBill = await getBudgetMutex(currentRecipientId).acquire();
   let billPolicyCheck: ReturnType<typeof checkSpendingPolicy>;
   try {
+    rotateMonthIfNeeded(spendingTracker);
     billPolicyCheck = checkSpendingPolicy(amount, TRANSACTION_CATEGORY.BILLS);
     if (!billPolicyCheck.allowed) {
       const reason = billPolicyCheck.reason!.includes('daily')
@@ -2311,7 +2459,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'pay_for_medication',
     description:
-      'Pay a pharmacy for a medication order via MPP Charge on Stellar (real USDC payment). Subject to spending policy limits. Amount must be between $0.01 and $10,000.',
+      'Pay a pharmacy for a medication order via MPP Charge on Stellar (real USDC payment). Subject to spending policy limits. Amount must be between $0.01 and $10,000. If the payment is blocked by spending policy, the result includes a budgetContext object { reason, attempted, dailyRemaining, monthlyRemaining, suggestion }: relay it to the caregiver so they can either approve a one-time override or pick a cheaper option within the remaining budget.',
     input_schema: strictInputSchema({
       type: 'object' as const,
       properties: {
