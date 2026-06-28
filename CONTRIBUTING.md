@@ -12,6 +12,21 @@ npm run setup   # generates testnet wallets
 
 See [QUICKSTART.md](QUICKSTART.md) for full environment setup.
 
+## Node.js Version Policy
+
+This project requires **Node.js 22** and will refuse to install on earlier versions.
+
+| Artifact | Pin |
+|----------|-----|
+| `.nvmrc` | `22` |
+| `package.json` `engines` | `>=22.0.0` |
+| CI matrix (`ci.yml`) | `[22]` (single version, no drift) |
+| `render.yaml` `NODE_VERSION` | `22` |
+
+If you use [nvm](https://github.com/nvm-sh/nvm), running `nvm use` in the project root will activate the correct version automatically.
+
+**Why Node 22?** The server and agent entry-points use `--experimental-strip-types` and `--experimental-transform-types`, which reached stable shape in Node 22. Running on Node 20 will fail silently in some code paths and loudly in others.
+
 ## Development Workflow
 
 1. Fork the repo and create a branch from `main`
