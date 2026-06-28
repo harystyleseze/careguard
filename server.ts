@@ -8,7 +8,20 @@
  * For production: use `npm start` (this file)
  */
 
-import "dotenv/config";
+// Load .env with a clear error on parse failures (#235)
+try {
+  const { config } = await import("dotenv");
+  const result = config();
+  if (result.error) {
+    process.stderr.write(`Failed to parse .env: ${result.error.message}\n`);
+    process.exit(1);
+  }
+} catch (err: unknown) {
+  process.stderr.write(
+    `Failed to parse .env: ${err instanceof Error ? err.message : String(err)}\n`,
+  );
+  process.exit(1);
+}
 import { createHash } from "crypto";
 import express, { type Express } from "express";
 import { Keypair, Horizon } from "@stellar/stellar-sdk";
@@ -104,7 +117,7 @@ import {
 
 // --- Environment ---
 const envSchema = z.object({
-  PORT: z.coerce.number().int().positive().default(3004),
+  PORT: z.coerce.number().int().min(1, "PORT must be >= 1").max(65535, "PORT must be <= 65535").default(3004),
   STELLAR_NETWORK: z.enum(["testnet", "public"]).default("testnet"),
   LLM_API_KEY: z.string().min(1, "LLM_API_KEY required"),
   AGENT_SECRET_KEY: z.string().min(1, "AGENT_SECRET_KEY required"),
