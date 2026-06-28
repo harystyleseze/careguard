@@ -9,7 +9,6 @@
  */
 
 import "dotenv/config";
-import { createHash } from "crypto";
 import { existsSync, mkdirSync } from "fs";
 import express, { type Express } from "express";
 import OpenAI from "openai";
@@ -21,27 +20,13 @@ import { validateTask, getSuspiciousTaskCount } from "../shared/task-validation.
 import { appendAuditEntry, auditRouter } from "../shared/audit-log.ts";
 import { rateLimiters } from "../shared/rate-limit.ts";
 import { agentQueue } from "../shared/agent-queue.ts";
-import { buildScrubSession, scrubText } from "../shared/prompt-scrub.ts";
-import { requestContextMiddleware, setAgentRunId, getRequestId } from "../shared/request-context.ts";
+import { requestContextMiddleware } from "../shared/request-context.ts";
 import { requestLoggerMiddleware } from "../shared/request-logger.ts";
 import {
   metricsHandler,
   agentRunsTotal,
-  agentToolCallsTotal,
-  agentLlmTokensTotal,
-  agentLlmIterationTokens,
-  agentLlmContextUsageRatio, agentLlmErrorTotal,
-  agentIterationLimitTotal,
 } from "../shared/metrics.ts";
 import {
-  comparePharmacyPrices,
-  auditBill,
-  fetchRosaBill,
-  fetchAndAuditBill,
-  checkDrugInteractions,
-  payForMedication,
-  payBill,
-  checkSpendingPolicy,
   getSpendingSummary,
   getWalletBalance,
   setSpendingPolicy,
@@ -52,18 +37,15 @@ import {
   getAdherenceStatus,
   confirmAdherenceReminder,
   setCurrentRecipient,
-  TOOL_DEFINITIONS,
-  validateToolInput,
   SpendingPolicySchema,
+  payForMedication,
+  payBill,
 } from "./tools.ts";
-import {
-  fetchToolResult,
-  serializeToolResultForPrompt,
-} from "./tool-result.ts";
 import { getPendingAdherences } from "../shared/adherence.ts";
 import { notify } from "../shared/notifications.ts";
 import { resolveStellarNetwork, validateSignerKeyForNetwork } from "../shared/stellar-network.ts";
 import { verifyWebhook } from "../shared/verify-webhook.ts";
+import { executeTool, runAgent, buildSystemPrompt } from "./runner.ts";
 
 const PORT = parseInt(process.env.AGENT_PORT || "3004");
 
@@ -117,383 +99,7 @@ const agentKeypair = Keypair.fromSecret(process.env.AGENT_SECRET_KEY);
 validateSignerKeyForNetwork(process.env.AGENT_SECRET_KEY, STELLAR_CONFIG);
 const horizonServer = new Horizon.Server(STELLAR_CONFIG.horizonUrl);
 
-function buildSystemPrompt(recipientProfile: RecipientProfile, caregiverName: string): string {
-  const meds = (recipientProfile.medications ?? []).join(', ');
-  return `You are CareGuard, an AI agent that manages healthcare spending for elderly care recipients on the Stellar blockchain. You work on behalf of a family caregiver to ensure their loved ones get the best prices on medications and catches errors in medical bills.
-
-Your responsibilities:
-1. MEDICATION MANAGEMENT: Compare prices across pharmacies and order from the cheapest. Always check drug interactions before ordering.
-2. BILL AUDITING: Scan medical bills for errors (80% of bills have them). Identify duplicates, upcoding, and overcharges.
-3. PAYMENT EXECUTION: Pay for medications and bills within the spending policy set by the caregiver. Never exceed policy limits.
-4. ADHERENCE TRACKING: After ordering medications, track whether doses are taken. Prompt the caregiver to confirm adherence.
-5. DISPUTE RESOLUTION: When audit finds overcharges, generate a dispute letter so the caregiver can act in one click.
-6. TRANSPARENCY: Report all savings, errors found, and payments made. Every payment creates a real Stellar transaction.
-
-IMPORTANT RULES:
-- Always check spending policy BEFORE attempting any payment
-- If a payment requires caregiver approval, flag it and wait — do not proceed
-- If a payment is blocked by policy, explain why clearly
-- When comparing medication prices, compare ALL medications at once, then check interactions, then order from cheapest
-- Drug interaction checks require at least 2 medications; if the tool returns NEED_AT_LEAST_TWO_MEDS, ask for more meds instead of concluding "no interactions"
-- When auditing a bill, use fetch_and_audit_bill which fetches the care recipient's bill and audits it in one step. Never invent bill data.
-  ALLOWED:   Use the line items exactly as returned by the tool. Report the exact amounts, descriptions, and CPT codes.
-  DISALLOWED: Do not add, extrapolate, or fabricate any line item, amount, or CPT code that was not in the tool output.
-  Example: If the tool returns "Chest X-ray: $180", do not change it to "Chest X-ray: $200" or add "MRI: $1000".
-- Report the total savings found and the cost of the agent's API queries
-- After paying for medication, schedule an adherence reminder
-- When audit errors are found, offer to generate a dispute letter via generate_dispute_letter
-- If a tool result is truncated and includes resultId or a summary, call fetch_tool_result to page through the remaining data before making conclusions
-
-PAYMENT PROTOCOLS:
-- API queries (pharmacy prices, bill audits, drug interactions) are paid via x402 on Stellar ($0.001-$0.01 per query)
-- Medication orders are paid via MPP Charge on Stellar (USDC)
-- Bill payments are direct Stellar USDC transfers
-- All transactions settle on Stellar testnet with real USDC
-
-Current care recipient: ${recipientProfile.name} (age ${recipientProfile.age ?? 'unknown'})
-Medications: ${meds || 'none listed'}
-Caregiver: ${caregiverName}
-Use recipient_id parameter when making tool calls that support it.`;
-}
-
-// PHI scrubbing — active unless LLM_PII_SCRUB=false (e.g. provider has a BAA)
 const _piiScrub = process.env.LLM_PII_SCRUB !== "false";
-
-// Convert tool definitions to OpenAI-compatible function format
-const LLM_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = TOOL_DEFINITIONS.map((t) => ({
-  type: "function" as const,
-  function: {
-    name: t.name,
-    description: t.description,
-    parameters: {
-      ...t.input_schema,
-      // Strict mode: required by Groq and other providers
-      additionalProperties: false,
-    },
-  },
-}));
-
-type ToolResult = Record<string, unknown>;
-
-async function executeTool(name: string, input: Record<string, unknown>): Promise<ToolResult> {
-  try {
-    input = validateToolInput(name, input);
-    let result: any;
-    const rid = (input.recipient_id as string) || "rosa";
-    setCurrentRecipient(rid);
-    const dName = input.drug_name as string | undefined;
-    const dosage = input.dosage as string | undefined;
-    const zip = input.zip_code as string | undefined;
-    const pharmId = input.pharmacy_id as string | undefined;
-    const pharmName = input.pharmacy_name as string | undefined;
-    const drugN = input.drug_name as string | undefined;
-    const amt = parseFloat(input.amount as string);
-    const provId = input.provider_id as string | undefined;
-    const provName = input.provider_name as string | undefined;
-    const desc = input.description as string | undefined;
-    const cat = input.category as string | undefined;
-
-    switch (name) {
-      case "compare_pharmacy_prices": result = await comparePharmacyPrices(dName || "", zip, dosage); break;
-      case "audit_medical_bill": {
-        let items;
-        if (typeof input.line_items_json === "string") {
-          try {
-            items = JSON.parse(input.line_items_json);
-          } catch (e: any) {
-            const sample = input.line_items_json.slice(0, 200);
-            agentToolCallsTotal.inc({ tool: name, status: "error" });
-            return {
-              ok: false,
-              reason: "INVALID_LINE_ITEMS_JSON",
-              message: "line_items_json must be valid JSON",
-              sample,
-              error: e.message,
-            };
-          }
-        } else {
-          items = input.line_items || input.line_items_json;
-        }
-        result = await auditBill(items);
-        break;
-      }
-      case "fetch_rosa_bill": result = await fetchRosaBill(); break;
-      case "fetch_and_audit_bill": result = await fetchAndAuditBill(); break;
-      case "check_drug_interactions": result = await checkDrugInteractions(input.medications as string[]); break;
-      case "fetch_tool_result": result = fetchToolResult(input.result_id as string, Number(input.offset ?? 0), Number(input.limit ?? 10)); break;
-      case "pay_for_medication": result = await payForMedication(pharmId || "", pharmName || "", drugN || "", amt); break;
-      case "pay_bill": result = await payBill(provId || "", provName || "", desc || "", amt); break;
-      case "check_spending_policy": result = checkSpendingPolicy(amt, cat as "medications" | "bills"); break;
-      case "get_spending_summary": result = getSpendingSummary(); break;
-      case "get_wallet_balance": result = await getWalletBalance(); break;
-      case "generate_dispute_letter": {
-        let auditResult: any;
-        if (typeof input.audit_result_json === "string") {
-          try {
-            auditResult = JSON.parse(input.audit_result_json);
-          } catch (e: any) {
-            return { ok: false, reason: "INVALID_AUDIT_RESULT_JSON", error: e.message };
-          }
-        } else {
-          auditResult = input.audit_result_json;
-        }
-        result = generateDisputeLetter(
-          input.bill_id as string,
-          (input.error_descriptions as string[]) || [],
-          auditResult,
-          {
-            name: input.recipient_name as string,
-            facility: input.facility as string,
-            caregiverName: input.caregiver_name as string,
-            caregiverEmail: input.caregiver_email as string,
-          }
-        );
-        break;
-      }
-      case "get_adherence_status": result = getAdherenceStatus(rid); break;
-      case "confirm_adherence": result = confirmAdherenceReminder(input.record_id as string); break;
-      default: result = { error: `Unknown tool: ${name}` };
-    }
-    agentToolCallsTotal.inc({ tool: name, status: "success" });
-    return result;
-  } catch (err: any) {
-    agentToolCallsTotal.inc({ tool: name, status: "error" });
-    throw err;
-  }
-}
-
-
-// Calculate max_tokens based on iteration context and prior complexity
-// Heuristic: 512 for processing tool results, 1024 for simple queries, 4096 for summaries
-function calculateMaxTokens(iteration: number, toolCallCount: number, previousToolResultCount: number): number {
-  // First iteration with no priors: likely a simple query
-  if (iteration === 0) {
-    return LLM_MAX_TOKENS_SIMPLE; // 1024
-  }
-
-  // Just processed multiple tool results: need to synthesize them (still modest)
-  if (previousToolResultCount > 0 && previousToolResultCount <= 3) {
-    return LLM_MAX_TOKENS_TOOL_RESULT; // 512
-  }
-
-  // Multiple tool results or complex scenario: save budget but allow more
-  if (previousToolResultCount > 3) {
-    return LLM_MAX_TOKENS_SIMPLE; // 1024
-  }
-
-  // Late iterations: likely final summary, give full budget
-  if (iteration > 8) {
-    return LLM_MAX_TOKENS_SUMMARY; // 4096
-  }
-
-  // Default: conservative middle ground
-  return LLM_MAX_TOKENS_SIMPLE; // 1024
-}
-
-// Run the agent with a task — full agentic loop
-async function runAgent(task: string) {
-  const activeRecipient = recipientProfiles.rosa ?? Object.values(recipientProfiles)[0];
-  const systemPrompt = buildSystemPrompt(activeRecipient, caregiverProfile.name);
-  const scrubSession = _piiScrub
-    ? buildScrubSession([activeRecipient.name], [caregiverProfile.name])
-    : null;
-  const userTask = scrubSession ? scrubText(task, scrubSession) : task;
-  const scrubbedSystemPrompt = scrubSession ? scrubText(systemPrompt, scrubSession) : systemPrompt;
-  const runId = `run-${getRequestId() ?? Date.now()}`;
-  setAgentRunId(runId);
-
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: scrubbedSystemPrompt },
-    { role: "user", content: userTask },
-  ];
-  const toolCalls: Array<{ tool: string; input: Record<string, unknown>; result: ToolResult }> = [];
-  let finalResponse = "";
-  let llmUsage: { promptTokens: number; completionTokens: number } = { promptTokens: 0, completionTokens: 0 };
-  let runToolCalls = 0;
-  let truncated = false;
-  const events: Array<{ kind: string }> = [];
-
-  let iteration = 0;
-  for (; iteration < MAX_ITERATIONS; iteration++) {
-    let response;
-    try {
-      // Determine temperature based on whether this is a tool-call round or final summary
-      // Tool-call rounds use temperature=0 for deterministic tool selection
-      // Final summary (when no tools will be called) uses temperature=0.3 for natural phrasing
-      const isToolCallRound = toolCalls.length > 0 || iteration < MAX_ITERATIONS - 1; // Assume tool calls unless it's the last iteration
-      const temperature = isToolCallRound ? LLM_TOOL_TEMPERATURE : LLM_SUMMARY_TEMPERATURE;
-      
-      // Calculate max_tokens based on iteration context to optimize budget
-      const maxTokens = calculateMaxTokens(iteration, runToolCalls, toolCalls.length);
-      
-      response = await llm.chat.completions.create({
-        model: LLM_MODEL,
-        temperature,
-        max_tokens: maxTokens,
-        tools: LLM_TOOLS,
-        messages,
-      });
-    } catch (llmErr: any) {
-      logger.error({ err: llmErr.message, iteration }, "LLM API error");
-      agentLlmErrorTotal.inc();
-      finalResponse = JSON.stringify({
-        status: "llm_error",
-        toolCallsCompleted: toolCalls.length,
-        message: `LLM API error: ${llmErr.message}. Agent run was interrupted — not all tool calls may have completed.`,
-        toolCalls: toolCalls.map(tc => ({
-          tool: tc.tool,
-          input: tc.input,
-          result: tc.result,
-        })),
-      });
-      if (toolCalls.length > 0 && !finalResponse) {
-        finalResponse = toolCalls.map(tc => {
-          if (tc.result?.error) return `${tc.tool}: ${tc.result.error}`;
-          if (tc.result?.ok === false && tc.result?.reason) return `${tc.tool}: ${tc.result.reason}`;
-          if (tc.tool === "compare_pharmacy_prices" && (tc.result as any)?.cheapest) return `${(tc.result as any).drug}: cheapest at $${(tc.result as any).cheapest.price} (${(tc.result as any).cheapest.pharmacyName}), save $${(tc.result as any).potentialSavings}/mo`;
-          if (tc.tool === "audit_medical_bill" && (tc.result as any)?.totalOvercharge) return `Bill audit: $${(tc.result as any).totalOvercharge} in overcharges found (${(tc.result as any).errorCount} errors)`;
-          if (tc.tool === "check_drug_interactions" && (tc.result as any)?.summary) return (tc.result as any).summary;
-          if (tc.tool === "pay_for_medication" && (tc.result as any)?.success) return `Paid $${(tc.result as any).transaction.amount} for ${(tc.result as any).transaction.description}`;
-          if (tc.tool === "pay_bill" && (tc.result as any)?.success) return `Paid bill: $${(tc.result as any).transaction.amount}`;
-          return `${tc.tool}: completed`;
-        }).join("\n");
-      } else if (!finalResponse) {
-        finalResponse = `LLM error: ${llmErr.message}`;
-      }
-      break;
-    }
-
-    // Capture token usage
-    if (response.usage) {
-      const promptTokens = response.usage.prompt_tokens || 0;
-      const completionTokens = response.usage.completion_tokens || 0;
-      llmUsage.promptTokens += promptTokens;
-      llmUsage.completionTokens += completionTokens;
-      agentLlmTokensTotal.inc({ kind: "prompt" }, promptTokens);
-      agentLlmTokensTotal.inc({ kind: "completion" }, completionTokens);
-      agentLlmIterationTokens.set({ kind: "prompt" }, promptTokens);
-      agentLlmIterationTokens.set({ kind: "completion" }, completionTokens);
-      agentLlmIterationTokens.set({ kind: "total" }, promptTokens + completionTokens);
-      const contextWindow = parseInt(process.env.LLM_CONTEXT_WINDOW || "32768", 10);
-      const usageRatio = contextWindow > 0 ? (promptTokens + completionTokens) / contextWindow : 0;
-      agentLlmContextUsageRatio.set(usageRatio);
-      if (usageRatio >= 0.8) {
-        logger.warn(
-          {
-            iteration,
-            promptTokens,
-            completionTokens,
-            usageRatio,
-            contextWindow,
-          },
-          "LLM context usage reached 80% of the configured window",
-        );
-      }
-    }
-
-    const choice = response.choices[0];
-    if (!choice) break;
-
-    const message = choice.message;
-    messages.push(message);
-
-    if (typeof message.content === 'string') {
-      // Accept empty-string content as an explicit empty response from the LLM
-      // to avoid leaking previous-iteration text as a stale final response.
-      finalResponse = message.content;
-    }
-
-    if (!message.tool_calls || message.tool_calls.length === 0) break;
-
-    // Cap at iteration boundary — breaking mid-batch would orphan tool_call_ids
-    if (runToolCalls + message.tool_calls.length > MAX_TOOL_CALLS_PER_RUN) {
-      toolCallCapHitsTotal++;
-      truncated = true;
-      appendAuditEntry({ event: "agent.tool_cap_exceeded", actor: "agent", details: { max: MAX_TOOL_CALLS_PER_RUN, ran: runToolCalls } });
-      finalResponse = finalResponse || "Tool call limit reached; partial results returned.";
-      break;
-    }
-    runToolCalls += message.tool_calls.length;
-
-    for (const toolCall of message.tool_calls) {
-      if (toolCall.type !== "function") continue;
-      const fnName = toolCall.function.name;
-      let fnArgs: any;
-      try {
-        fnArgs = JSON.parse(toolCall.function.arguments);
-      } catch {
-        fnArgs = {};
-      }
-
-      logger.info({ tool: fnName, args: JSON.stringify(fnArgs).slice(0, 100) }, "tool call");
-
-      let result: ToolResult;
-      try {
-        result = await executeTool(fnName, fnArgs);
-        toolCalls.push({ tool: fnName, input: fnArgs, result });
-      } catch (err: any) {
-        logger.error({ tool: fnName, err: err.message }, "tool error");
-        result = { error: err.message };
-        toolCalls.push({ tool: fnName, input: fnArgs, result });
-      }
-
-      appendAuditEntry({
-        event: "tool_call",
-        actor: "agent",
-        details: {
-          tool: fnName,
-          inputs: fnArgs,
-          resultHash: createHash("sha256").update(JSON.stringify(result || {})).digest("hex")
-        }
-      });
-
-      const toolContent = serializeToolResultForPrompt(fnName, result);
-      messages.push({
-        role: "tool",
-        tool_call_id: toolCall.id,
-        content: toolContent,
-      });
-    }
-
-    if (choice.finish_reason === "stop") break;
-  }
-
-  // The loop only reaches MAX_ITERATIONS when it never broke out early (no
-  // natural completion, no tool-call cap, no LLM error). Signal that the task
-  // may have been truncated so the caller can warn the user (Issue #165).
-  if (iteration >= MAX_ITERATIONS) {
-    events.push({ kind: "iteration_limit_reached" });
-    agentIterationLimitTotal.inc();
-    appendAuditEntry({
-      event: "agent.iteration_limit_reached",
-      actor: "agent",
-      details: { maxIterations: MAX_ITERATIONS },
-    });
-    logger.warn({ maxIterations: MAX_ITERATIONS }, "agent run hit iteration limit");
-  }
-
-  // Track token usage for alerting on sustained high consumption
-  const totalRunTokens = llmUsage.promptTokens + llmUsage.completionTokens;
-  tokenStats.totalTokens += totalRunTokens;
-  tokenStats.runCount += 1;
-  tokenStats.averagePerRun = tokenStats.totalTokens / tokenStats.runCount;
-  
-  const averageUsageRatio = tokenStats.averagePerRun / LLM_MAX_TOKENS_SUMMARY;
-  if (averageUsageRatio > TOKEN_USAGE_THRESHOLD_RATIO) {
-    logger.warn(
-      {
-        currentRunTokens: totalRunTokens,
-        averageTokensPerRun: Math.round(tokenStats.averagePerRun),
-        averageUsageRatio: (averageUsageRatio * 100).toFixed(1) + "%",
-        runCount: tokenStats.runCount,
-        maxTokensPerRun: LLM_MAX_TOKENS_SUMMARY,
-      },
-      "LLM token usage exceeds 50% of budget threshold — consider optimizing prompts or increasing max_tokens"
-    );
-  }
-
-  return { response: finalResponse, toolCalls, spending: getSpendingSummary(), llmUsage, truncated, events };
-}
 
 function parseCookies(cookieHeader: string | undefined): Record<string, string> {
   const list: Record<string, string> = {};
@@ -734,8 +340,26 @@ app.post("/agent/run", async (req, res) => {
   const task = validation.task!;
   logger.info({ task, suspicious: validation.suspicious }, "agent task received");
 
+  const activeRecipient = recipientProfiles.rosa ?? Object.values(recipientProfiles)[0];
   try {
-    const result = await agentQueue.enqueue(() => runAgent(task));
+    const result = await agentQueue.enqueue(() => runAgent({
+      task,
+      profile: {
+        recipient: activeRecipient,
+        caregiver: caregiverProfile,
+      },
+      llm,
+      model: LLM_MODEL,
+      maxIterations: MAX_ITERATIONS,
+      maxToolCallsPerRun: MAX_TOOL_CALLS_PER_RUN,
+      llmToolTemperature: LLM_TOOL_TEMPERATURE,
+      llmSummaryTemperature: LLM_SUMMARY_TEMPERATURE,
+      llmMaxTokensToolResult: LLM_MAX_TOKENS_TOOL_RESULT,
+      llmMaxTokensSimple: LLM_MAX_TOKENS_SIMPLE,
+      llmMaxTokensSummary: LLM_MAX_TOKENS_SUMMARY,
+      llmContextWindow: parseInt(process.env.LLM_CONTEXT_WINDOW || "32768", 10),
+      piiScrub: _piiScrub,
+    }));
     agentRunsTotal.inc({ status: "success" });
     logger.info({ toolCalls: result.toolCalls.length, truncated: result.truncated, promptTokens: result.llmUsage.promptTokens, completionTokens: result.llmUsage.completionTokens }, "agent task complete");
     broadcastSSE("spending", getSpendingSummary());
