@@ -3,11 +3,24 @@ import type { CaregiverProfile, RecipientProfile } from "./types";
 import { AGENT_URL } from "./agent-url";
 import { fetchProfile, DEFAULT_RECIPIENT, DEFAULT_CAREGIVER } from "./fetchProfile";
 
-export function useProfile() {
+type ProfilePatch = {
+  recipient?: Partial<RecipientProfile>;
+  caregiver?: Partial<CaregiverProfile>;
+};
+
+type ProfileState = {
+  recipient: RecipientProfile;
+  caregiver: CaregiverProfile;
+  updateProfile: (patch: ProfilePatch) => Promise<void>;
+};
+
+export function useProfile(): ProfileState {
   // If running on the server (e.g. Next.js Server Components or test environments where window is undefined),
   // return the cached server profile if available, otherwise return defaults.
   if (typeof window === "undefined") {
-    const cached = typeof globalThis !== "undefined" ? (globalThis as any).__SERVER_PROFILE__ : null;
+    const cached = typeof globalThis !== "undefined"
+      ? (globalThis as typeof globalThis & { __SERVER_PROFILE__?: Partial<ProfileState> }).__SERVER_PROFILE__
+      : null;
     return {
       recipient: cached?.recipient || DEFAULT_RECIPIENT,
       caregiver: cached?.caregiver || DEFAULT_CAREGIVER,
@@ -33,10 +46,7 @@ export function useProfile() {
   }, []);
 
   const updateProfile = useCallback(
-    async (patch: {
-      recipient?: Partial<RecipientProfile>;
-      caregiver?: Partial<CaregiverProfile>;
-    }) => {
+    async (patch: ProfilePatch) => {
       const prevRecipient = recipient;
       const prevCaregiver = caregiver;
       // Optimistic update

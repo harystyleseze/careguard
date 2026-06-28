@@ -23,6 +23,7 @@
     "gen-openapi": "node --import tsx scripts/gen-openapi.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "e2e": "cd dashboard && npx playwright test --config ../e2e/playwright.config.ts",
     "load": "k6 run load/agent-run.js",
     "check:env-vars": "tsx scripts/check-env-vars.ts"
   },
@@ -82,6 +83,9 @@
     "react-dom": "^19.2.5",
     "supertest": "^7.2.2",
     "typescript": "5.8.3",
-    "vitest": "^2.1.8"
+    "vitest": "^3.2.6"
+  },
+  "overrides": {
+    "ws": "8.21.0"
   }
 }

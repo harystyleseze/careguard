@@ -100,23 +100,18 @@ export default function Dashboard() {
             onRunTask={state.runAgentTask}
             onCancelTask={state.cancelAgentTask}
             recipient={recipient}
-            loadingSpending={state.loadingSpending}
-            loadingAgentInfo={state.loadingAgentInfo}
           />
         )}
         {activeTab === "medications" && (
           <MedicationsTab
             agentResult={state.agentResult}
             recipient={recipient}
-            loadingTransactions={state.loadingTransactions}
           />
         )}
         {activeTab === "bills" && (
           <BillsTab
             agentResult={state.agentResult}
             recipient={recipient}
-            caregiverName={caregiver.name}
-            loadingTransactions={state.loadingTransactions}
           />
         )}
         {activeTab === "approvals" && (
@@ -132,7 +127,6 @@ export default function Dashboard() {
             policySaved={state.policySaved}
             onUpdatePolicy={state.updatePolicy}
             onForceSync={() => state.fetchSpending({ forcePolicySync: true })}
-            loadingSpending={state.loadingSpending}
           />
         )}
         {activeTab === "wallet" && (
@@ -140,7 +134,6 @@ export default function Dashboard() {
             agentInfo={state.agentInfo}
             walletBalance={state.walletBalance}
             walletXlm={state.walletXlm}
-            loadingAgentInfo={state.loadingAgentInfo}
           />
         )}
         {activeTab === "activity" && (
@@ -169,7 +162,6 @@ export default function Dashboard() {
             agentPaused={state.agentPaused}
             onTogglePause={state.togglePause}
             onUpdateProfile={updateProfile}
-            loadingAgentInfo={state.loadingAgentInfo}
             recipients={recipients}
             selectedRecipientId={selectedId}
             onSelectRecipient={selectRecipient}

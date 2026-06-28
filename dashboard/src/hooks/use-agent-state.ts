@@ -26,8 +26,8 @@ const DEFAULT_POLICY = {
   monthlyLimit: 800,
   medicationMonthlyBudget: 300,
   billMonthlyBudget: 500,
-  approvalThreshold: 75, holdTimeSeconds: 86400,
-  holdTimeSeconds: 0,
+  approvalThreshold: 75,
+  holdTimeSeconds: 86400,
 };
 
 export type PolicyForm = typeof DEFAULT_POLICY;

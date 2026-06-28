@@ -46,6 +46,13 @@ const MPP_STORE_FILE = `${DATA_DIR}/mpp-store.json`;
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
+function createMppStore(filePath: string) {
+  const storeFactory = Store as typeof Store & {
+    fileSystem?: (path: string) => ReturnType<typeof Store.memory>;
+  };
+  return storeFactory.fileSystem?.(filePath) ?? Store.memory();
+}
+
 function loadOrders(): any[] {
   if (!existsSync(ORDERS_FILE)) return [];
   try {
@@ -128,7 +135,7 @@ const mppx = Mppx.create({
       recipient: RECIPIENT,
       currency: USDC_SAC_TESTNET,
       network: NETWORK,
-      store: Store.fileSystem(MPP_STORE_FILE),
+      store: createMppStore(MPP_STORE_FILE),
     }),
   ],
 });

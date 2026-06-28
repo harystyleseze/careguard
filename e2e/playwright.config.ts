@@ -20,9 +20,9 @@ export default defineConfig({
     : "list",
   use: {
     baseURL: DASHBOARD_URL,
-    trace: "on-first-retry",
+    trace: "retain-on-failure",
     screenshot: "only-on-failure",
-    video: "off",
+    video: "retain-on-failure",
   },
   projects: [
     {

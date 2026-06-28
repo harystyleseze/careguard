@@ -64,7 +64,9 @@ export const TransactionSchema = z.object({
   recipient: z.string(),
   // Always a real 64-char hex Stellar tx hash, or undefined (#14).
   stellarTxHash: z.string().optional(),
+  txHashStatus: z.enum(["extracted", "extraction_failed"]).optional(),
   mppOrderId: z.string().optional(),
+  pendingUntil: z.string().optional(),
   status: z.string(),
   category: z.string(),
 });
@@ -131,4 +133,3 @@ export type DisputeLetter = {
   emailHtml: string;
   generatedAt: string;
 };
-

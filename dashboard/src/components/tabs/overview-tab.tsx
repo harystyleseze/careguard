@@ -32,6 +32,7 @@ export function OverviewTab({
   activeTask,
   onRunTask,
   onCancelTask,
+  recipient,
 }: OverviewTabProps) {
   const savings = agentResult
     ? agentResult.toolCalls
@@ -188,7 +189,7 @@ export function OverviewTab({
             Medication Adherence Check
           </h2>
           <p className="text-sm text-amber-700">
-            Did {profile.recipient?.name || "the care recipient"} take their medication today?
+            Did {recipient?.name || "the care recipient"} take their medication today?
           </p>
           <div className="mt-3 flex gap-2">
             <button className="px-4 py-2 bg-green-50 text-green-700 rounded-lg text-xs font-medium hover:bg-green-100 cursor-pointer transition-all">
