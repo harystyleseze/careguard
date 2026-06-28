@@ -55,6 +55,13 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   );
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletXlm, setWalletXlm] = useState<string | null>(null);
+  const [walletBalanceState, setWalletBalanceState] = useState<'loading' | 'ok' | 'error'>('loading');
+  const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
+  const walletRetryRef = useRef<{ attempt: number; timer: ReturnType<typeof setTimeout> | null }>({
+    attempt: 0,
+    timer: null,
+  });
+  const [loadingWalletBalance, setLoadingWalletBalance] = useState(false);
   const [liveMessage, setLiveMessage] = useState('');
   const [policyForm, setPolicyForm] = useState<PolicyForm>(DEFAULT_POLICY);
   const [policyDirty, setPolicyDirty] = useState(false);
@@ -104,6 +111,35 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     });
   }, []);
 
+  const fetchWalletBalance = useCallback(async () => {
+    setLoadingWalletBalance(true);
+    try {
+      const wres = await fetch(`${AGENT_URL}/agent/wallet`);
+      if (wres.ok) {
+        const wdata = await wres.json();
+        setWalletBalance(wdata.usdc || '0.00');
+        setWalletXlm(wdata.xlm || '0.00');
+        setWalletBalanceState('ok');
+        setWalletBalanceError(null);
+        walletRetryRef.current.attempt = 0;
+      } else {
+        throw new Error(`HTTP ${wres.status}`);
+      }
+    } catch (err: any) {
+      setWalletBalanceState('error');
+      setWalletBalanceError(err.message || 'Failed to fetch wallet balance');
+      // Exponential backoff: 2^attempt * 1000ms, max 30s
+      const delay = Math.min(1000 * Math.pow(2, walletRetryRef.current.attempt), 30000);
+      walletRetryRef.current.attempt++;
+      if (walletRetryRef.current.timer) clearTimeout(walletRetryRef.current.timer);
+      walletRetryRef.current.timer = setTimeout(() => {
+        fetchWalletBalance();
+      }, delay);
+    } finally {
+      setLoadingWalletBalance(false);
+    }
+  }, []);
+
   const fetchAgentInfo = useCallback(async () => {
     setLoadingAgentInfo(true);
     try {
@@ -122,21 +158,14 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       );
       // Fetch wallet balance from server (Issue #134 - server-side cache)
       if (data.agentWallet) {
-        try {
-          const wres = await fetch(`${AGENT_URL}/agent/wallet`);
-          if (wres.ok) {
-            const wdata = await wres.json();
-            setWalletBalance(wdata.usdc || '0.00');
-            setWalletXlm(wdata.xlm || '0.00');
-          }
-        } catch {}
+        fetchWalletBalance();
       }
     } catch {
       setAgentConnected(false);
     } finally {
       setLoadingAgentInfo(false);
     }
-  }, []);
+  }, [fetchWalletBalance]);
 
   const fetchSpending = useCallback(
     async (opts?: { forcePolicySync?: boolean }) => {
@@ -285,6 +314,20 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       console.error('[Poll] Agent info poll error:', error.message);
     },
   });
+
+  const retryWalletBalance = useCallback(() => {
+    walletRetryRef.current.attempt = 0;
+    if (walletRetryRef.current.timer) clearTimeout(walletRetryRef.current.timer);
+    setWalletBalanceState('loading');
+    fetchWalletBalance();
+  }, [fetchWalletBalance]);
+
+  // Cleanup wallet retry timer on unmount
+  useEffect(() => {
+    return () => {
+      if (walletRetryRef.current.timer) clearTimeout(walletRetryRef.current.timer);
+    };
+  }, []);
 
   // Initial fetch on mount
   useEffect(() => {
@@ -468,6 +511,10 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     agentPausedReason,
     walletBalance,
     walletXlm,
+    walletBalanceState,
+    walletBalanceError,
+    loadingWalletBalance,
+    retryWalletBalance,
     liveMessage,
     setLiveMessage,
     policyForm,

@@ -10,9 +10,21 @@ export interface WalletTabProps {
   agentInfo: AgentInfo | null;
   walletBalance: string | null;
   walletXlm: string | null;
+  walletBalanceState?: 'loading' | 'ok' | 'error';
+  walletBalanceError?: string | null;
+  loadingWalletBalance?: boolean;
+  onRetryWalletBalance?: () => void;
 }
 
-export function WalletTab({ agentInfo, walletBalance, walletXlm }: WalletTabProps) {
+export function WalletTab({
+  agentInfo,
+  walletBalance,
+  walletXlm,
+  walletBalanceState = 'loading',
+  walletBalanceError,
+  loadingWalletBalance = false,
+  onRetryWalletBalance,
+}: WalletTabProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [toastFallback, setToastFallback] = useState<string | undefined>(undefined);
@@ -52,18 +64,46 @@ export function WalletTab({ agentInfo, walletBalance, walletXlm }: WalletTabProp
           {NETWORK_LABEL.replace('Stellar ', '').toLowerCase()}.
         </p>
         <div className="grid grid-cols-2 gap-4 mb-6">
-          <div className="bg-sky-50 rounded-lg p-4 text-center border border-sky-200">
-            <div className="text-2xl font-bold text-sky-700">
-              ${walletBalance ?? "0.00"}
+          {walletBalanceState === 'loading' && (
+            <div className="bg-sky-50 rounded-lg p-4 text-center border border-sky-200 col-span-2">
+              <div className="text-sm font-medium text-sky-600">
+                <span className="inline-block w-4 h-4 border-2 border-sky-600 border-t-transparent rounded-full animate-spin mr-2 align-middle" />
+                Loading wallet balance...
+              </div>
             </div>
-            <div className="text-xs text-slate-500 mt-1">USDC Balance</div>
-          </div>
-          <div className="bg-slate-50 rounded-lg p-4 text-center border border-slate-200">
-            <div className="text-2xl font-bold text-slate-700">
-              {walletXlm ?? "0.00"}
+          )}
+          {walletBalanceState === 'error' && (
+            <div className="bg-red-50 rounded-lg p-4 text-center border border-red-200 col-span-2">
+              <div className="text-sm font-medium text-red-700 mb-2">
+                {walletBalanceError || 'Balance unavailable'}
+              </div>
+              {onRetryWalletBalance && (
+                <button
+                  onClick={onRetryWalletBalance}
+                  disabled={loadingWalletBalance}
+                  className="px-4 py-1.5 bg-red-100 text-red-700 rounded-lg text-xs font-medium hover:bg-red-200 disabled:opacity-50 cursor-pointer transition-all"
+                >
+                  {loadingWalletBalance ? 'Retrying...' : 'Try again'}
+                </button>
+              )}
             </div>
-            <div className="text-xs text-slate-500 mt-1">XLM Balance</div>
-          </div>
+          )}
+          {walletBalanceState === 'ok' && (
+            <>
+              <div className="bg-sky-50 rounded-lg p-4 text-center border border-sky-200">
+                <div className="text-2xl font-bold text-sky-700">
+                  ${walletBalance ?? "0.00"}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">USDC Balance</div>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center border border-slate-200">
+                <div className="text-2xl font-bold text-slate-700">
+                  {walletXlm ?? "0.00"}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">XLM Balance</div>
+              </div>
+            </>
+          )}
         </div>
         <div className="space-y-3">
           <div>

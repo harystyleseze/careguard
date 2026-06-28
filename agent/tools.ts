@@ -489,6 +489,15 @@ interface SpendingTracker {
   bills: number;
   serviceFees: number;
   transactions: Transaction[];
+  /** Persisted month-to-date totals keyed by yearMonth (e.g. "2026-04").
+   *  On month boundary crossing, running totals are rotated so budget
+   *  enforcement always sees the current month's spend (Issue #208). */
+  monthTotals?: {
+    yearMonth: string;
+    medications: number;
+    bills: number;
+    serviceFees: number;
+  };
 }
 
 const SpendingTrackerSchema = z.object({
@@ -499,6 +508,12 @@ const SpendingTrackerSchema = z.object({
   // and the upstream shape (createdAt/metadata). normalizeTransactionCategories
   // casts entries to Transaction after loading, so loose validation is intentional.
   transactions: z.array(z.record(z.unknown())),
+  monthTotals: z.object({
+    yearMonth: z.string(),
+    medications: z.number(),
+    bills: z.number(),
+    serviceFees: z.number(),
+  }).optional(),
 });
 
 type PaymentCategory =
@@ -547,7 +562,41 @@ type SpendingCacheEntry = {
 const spendingCache = new Map<string, SpendingCacheEntry>();
 
 function createEmptySpendingTracker(): SpendingTracker {
-  return { medications: 0, bills: 0, serviceFees: 0, transactions: [] };
+  return {
+    medications: 0,
+    bills: 0,
+    serviceFees: 0,
+    transactions: [],
+    monthTotals: {
+      yearMonth: getCurrentYearMonth(),
+      medications: 0,
+      bills: 0,
+      serviceFees: 0,
+    },
+  };
+}
+
+function getCurrentYearMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function rotateMonthIfNeeded(tracker: SpendingTracker): boolean {
+  const current = getCurrentYearMonth();
+  const stored = tracker.monthTotals?.yearMonth;
+  if (stored === current) return false;
+  // Month boundary crossed — rotate running totals
+  tracker.monthTotals = {
+    yearMonth: current,
+    medications: 0,
+    bills: 0,
+    serviceFees: 0,
+  };
+  tracker.medications = 0;
+  tracker.bills = 0;
+  tracker.serviceFees = 0;
+  logger.info({ from: stored, to: current }, '[Budget] Month boundary rotated spending totals');
+  return true;
 }
 
 function normalizeTransactionCategories(
@@ -829,6 +878,7 @@ function recordServiceFee(
   stellarTxHash?: string,
   txHashStatus?: 'extracted' | 'extraction_failed',
 ) {
+  rotateMonthIfNeeded(spendingTracker);
   x402SettlementsTotal.inc();
   spendingTracker.serviceFees += amount;
   const tx: Transaction = {
@@ -1647,6 +1697,7 @@ export async function approvePendingTransaction(txId: string): Promise<any> {
   tx.stellarTxHash = result.stellarTxHash;
   if (result.mppOrderId) tx.mppOrderId = result.mppOrderId;
 
+  rotateMonthIfNeeded(spendingTracker);
   if (tx.category === TRANSACTION_CATEGORY.MEDICATIONS) {
     spendingTracker.medications += tx.amount;
     agentSpendingUsd.set(
@@ -1725,6 +1776,7 @@ export async function payForMedication(
   const release = await getBudgetMutex(currentRecipientId).acquire();
   let policyCheck: ReturnType<typeof checkSpendingPolicy>;
   try {
+    rotateMonthIfNeeded(spendingTracker);
     policyCheck = checkSpendingPolicy(
       amount,
       TRANSACTION_CATEGORY.MEDICATIONS,
@@ -1893,6 +1945,7 @@ export async function payBill(
   const releaseBill = await getBudgetMutex(currentRecipientId).acquire();
   let billPolicyCheck: ReturnType<typeof checkSpendingPolicy>;
   try {
+    rotateMonthIfNeeded(spendingTracker);
     billPolicyCheck = checkSpendingPolicy(amount, TRANSACTION_CATEGORY.BILLS);
     if (!billPolicyCheck.allowed) {
       const reason = billPolicyCheck.reason!.includes('daily')
