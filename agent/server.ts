@@ -67,10 +67,10 @@ const LLM_TOOL_TEMPERATURE = parseFloat(process.env.LLM_TOOL_TEMPERATURE || "0")
 const LLM_SUMMARY_TEMPERATURE = parseFloat(process.env.LLM_SUMMARY_TEMPERATURE || "0.3");
 
 // Maximum agentic loop iterations before the run is capped. Configurable via
-// AGENT_MAX_ITERATIONS (default 15). When the cap is hit, the run appends an
-// iteration_limit_reached event so the caller knows the task may be incomplete
-// (Issue #165).
-const MAX_ITERATIONS = Math.max(1, parseInt(process.env.AGENT_MAX_ITERATIONS || "15", 10) || 15);
+// MAX_AGENT_ITERATIONS (default 15). When the cap is hit, the run appends an
+// iteration_limit_reached event so the caller knows the task may be incomplete.
+// Supports both MAX_AGENT_ITERATIONS and legacy AGENT_MAX_ITERATIONS for backwards compat.
+const MAX_ITERATIONS = Math.max(1, parseInt(process.env.MAX_AGENT_ITERATIONS || process.env.AGENT_MAX_ITERATIONS || "15", 10) || 15);
 
 // LLM max_tokens heuristic (Issue #280)
 // Context-aware token budgeting to reduce wasted budget on simple queries:
