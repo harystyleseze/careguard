@@ -1,24 +1,18 @@
 import { defineConfig } from "vitest/config";
-import react from "@vitejs/plugin-react";
-import path from "path";
 
 export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./dashboard/src"),
-      "next/font/google": path.resolve(__dirname, "./dashboard/src/__tests__/__mocks__/next-font-google.ts"),
-    },
-  },
   test: {
     globals: true,
     environment: "node",
-    // Dashboard component tests need jsdom (DOM APIs + React)
-    environmentMatchGlobs: [
-      ["dashboard/src/**/*.test.tsx", "jsdom"],
+    include: [
+      "agent/**/__tests__/**/*.test.{ts,tsx}",
+      "agent/**/evals/**/*.spec.{ts,tsx}",
+      "services/**/__tests__/**/*.test.{ts,tsx}",
+      "shared/**/__tests__/**/*.test.{ts,tsx}",
+      "scripts/**/__tests__/**/*.test.{ts,tsx}",
+      "tests/**/*.test.{ts,tsx}",
     ],
-    include: ["**/__tests__/**/*.test.{ts,tsx}", "**/test/**/*.test.{ts,tsx}", "**/tests/**/*.test.{ts,tsx}", "dashboard/src/**/*.test.{ts,tsx}", "**/evals/**/*.spec.{ts,tsx}"],
-    setupFiles: ["./vitest.setup.ts"],
+    setupFiles: ["./tests/setup.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov", "html"],
@@ -27,8 +21,7 @@ export default defineConfig({
         "services/**/*.ts",
         "shared/**/*.ts",
         "scripts/**/*.ts",
-        "dashboard/src/**/*.ts",
-        "dashboard/src/**/*.tsx",
+        "server.ts",
       ],
       exclude: ["**/*.d.ts", "**/node_modules/**", "**/__tests__/**", "**/test/**"],
     },

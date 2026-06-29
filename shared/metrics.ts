@@ -129,6 +129,12 @@ export const stellarFeeBumpsTotal = new Counter({
   registers: [registry],
 });
 
+export const stellarTxBadSeqRetriesTotal = new Counter({
+  name: "stellar_tx_bad_seq_retries_total",
+  help: "Total Stellar tx_bad_seq retry attempts",
+  registers: [registry],
+});
+
 export function metricsHandler(): RequestHandler {
   return async (req, res) => {
     const token = process.env.METRICS_TOKEN;
