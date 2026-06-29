@@ -19,6 +19,7 @@ import type {
 } from '../components/types';
 import { usePoll } from './use-poll';
 import { AGENT_URL } from '../lib/agent-url';
+import { agentFetch } from '../lib/agent-fetch';
 
 
 const DEFAULT_POLICY = {
@@ -114,7 +115,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const fetchWalletBalance = useCallback(async () => {
     setLoadingWalletBalance(true);
     try {
-      const wres = await fetch(`${AGENT_URL}/agent/wallet`);
+      const wres = await agentFetch(`${AGENT_URL}/agent/wallet`);
       if (wres.ok) {
         const wdata = await wres.json();
         setWalletBalance(wdata.usdc || '0.00');
@@ -171,7 +172,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     async (opts?: { forcePolicySync?: boolean }) => {
       setLoadingSpending(true);
       try {
-        const res = await fetch(`${AGENT_URL}/agent/spending`);
+        const res = await agentFetch(`${AGENT_URL}/agent/spending`);
         if (!res.ok) {
           setLoadingSpending(false);
           return;
@@ -200,7 +201,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         const params = new URLSearchParams();
         if (limit) params.append('limit', limit.toString());
         if (offset) params.append('offset', offset.toString());
-        const res = await fetch(`${AGENT_URL}/agent/transactions?${params}`);
+        const res = await agentFetch(`${AGENT_URL}/agent/transactions?${params}`);
         if (!res.ok) {
           setLoadingTransactions(false);
           return;
@@ -217,7 +218,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         if (data.pagination) setPagination(data.pagination);
 
         // Fetch audit events independently (don't block on this)
-        const auditRes = await fetch(`${AGENT_URL}/agent/audit?limit=100`);
+        const auditRes = await agentFetch(`${AGENT_URL}/agent/audit?limit=100`);
         if (auditRes.ok) {
           const auditData = await auditRes.json();
           const logs = Array.isArray(auditData.data)
@@ -244,7 +245,11 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
 
     function connect() {
       if (!active) return;
-      es = new EventSource(`${AGENT_URL}/agent/stream`);
+      const apiKey = process.env.NEXT_PUBLIC_AGENT_API_KEY;
+      const sseUrl = apiKey
+        ? `${AGENT_URL}/agent/stream?apiKey=${encodeURIComponent(apiKey)}`
+        : `${AGENT_URL}/agent/stream`;
+      es = new EventSource(sseUrl);
 
       es.onopen = () => { if (active) setSseConnected(true); };
       es.onerror = () => {
@@ -357,7 +362,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       }, 60000);
       
       try {
-        const res = await fetch(`${AGENT_URL}/agent/run`, {
+        const res = await agentFetch(`${AGENT_URL}/agent/run`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ task }),
@@ -427,7 +432,8 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     error?: string;
   }> => {
     try {
-      const res = await fetch(`${AGENT_URL}/agent/policy`, {
+      setPolicySaved(false);
+      const res = await agentFetch(`${AGENT_URL}/agent/policy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(policyForm),
@@ -439,20 +445,23 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         );
         return { ok: false, error: errText || 'Failed to update policy' };
       }
-      const spendingRes = await fetch(`${AGENT_URL}/agent/spending`);
-      if (spendingRes.ok) {
-        const data = SpendingDataSchema.parse(await spendingRes.json());
-        setSpending(data);
-        setPolicyForm(data.policy);
-        setPolicyDirty(false);
+      if (res.ok) {
+        setPolicySaved(true);
+        const spendingRes = await agentFetch(`${AGENT_URL}/agent/spending`);
+        if (spendingRes.ok) {
+          const data = SpendingDataSchema.parse(await spendingRes.json());
+          setSpending(data);
+          setPolicyForm(data.policy);
+          setPolicyDirty(false);
+        }
+        addLogEntry(
+          `[${new Date().toLocaleTimeString()}] Policy updated: daily=$${policyForm.dailyLimit}, monthly=$${policyForm.monthlyLimit}, meds=$${policyForm.medicationMonthlyBudget}, bills=$${policyForm.billMonthlyBudget}, approval=$${policyForm.approvalThreshold}`,
+        );
+        setLiveMessage('Policy updated');
+        setTimeout(() => setPolicySaved(false), 3000);
+        return { ok: true };
       }
-      addLogEntry(
-        `[${new Date().toLocaleTimeString()}] Policy updated: daily=$${policyForm.dailyLimit}, monthly=$${policyForm.monthlyLimit}, meds=$${policyForm.medicationMonthlyBudget}, bills=$${policyForm.billMonthlyBudget}, approval=$${policyForm.approvalThreshold}`,
-      );
-      setLiveMessage('Policy updated');
-      setPolicySaved(true);
-      setTimeout(() => setPolicySaved(false), 3000);
-      return { ok: true };
+      return { ok: false, error: 'Unknown error' };
     } catch (err: any) {
       addLogEntry(
         `[${new Date().toLocaleTimeString()}] Failed to update policy: ${err.message}`,
@@ -462,12 +471,13 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   }, [addLogEntry, policyForm]);
 
   const resetAgent = useCallback(async () => {
-    await fetch(`${AGENT_URL}/agent/reset`, { method: 'POST' });
-    setAllTransactions([]);
+    addLogEntry('Resetting agent state...', 'system');
+    await agentFetch(`${AGENT_URL}/agent/reset`, { method: 'POST' });
+    setAgentLog([]);
     setPagination(null);
     setCurrentPage(0);
     setAgentResult(null);
-    setAgentLog([]);
+    setAllTransactions([]);
     fetchSpending();
     addLogEntry(`[${new Date().toLocaleTimeString()}] Reset by caregiver`);
     setLiveMessage('All transactions and logs cleared');
@@ -476,7 +486,8 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const togglePause = useCallback(async () => {
     const endpoint = agentPaused ? '/agent/resume' : '/agent/pause';
     try {
-      const res = await fetch(`${AGENT_URL}${endpoint}`, { method: 'POST' });
+      addLogEntry(`${agentPaused ? 'Resuming' : 'Pausing'} agent...`, 'system');
+      const res = await agentFetch(`${AGENT_URL}${endpoint}`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         setAgentPaused(data.paused);

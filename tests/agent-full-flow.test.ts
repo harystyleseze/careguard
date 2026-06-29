@@ -1,3 +1,5 @@
+process.env.MOCK_NETWORK = "0";
+
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import fs from 'fs';
@@ -97,7 +99,7 @@ vi.mock('@stellar/mpp/charge/server', () => ({
   }
 }));
 
-import { app } from '../server.ts';
+const { app } = await import('../server.ts');
 
 vi.mock('openai', () => {
   return {
@@ -110,10 +112,10 @@ vi.mock('openai', () => {
               message: {
                 content: "I have compared the prices and ordered medications. The total savings are $5.50.",
                 tool_calls: [
-                  { id: 'call_1', type: 'function', function: { name: 'compare_pharmacy_prices', arguments: '{"drug_name":"lisinopril"}' } },
-                  { id: 'call_2', type: 'function', function: { name: 'compare_pharmacy_prices', arguments: '{"drug_name":"metformin"}' } },
-                  { id: 'call_3', type: 'function', function: { name: 'compare_pharmacy_prices', arguments: '{"drug_name":"atorvastatin"}' } },
-                  { id: 'call_4', type: 'function', function: { name: 'compare_pharmacy_prices', arguments: '{"drug_name":"amlodipine"}' } },
+                  { id: 'call_1', type: 'function', function: { name: 'compare_pharmacy_prices', arguments: '{"drug_name":"lisinopril","dosage":"10mg"}' } },
+                  { id: 'call_2', type: 'function', function: { name: 'compare_pharmacy_prices', arguments: '{"drug_name":"metformin","dosage":"500mg"}' } },
+                  { id: 'call_3', type: 'function', function: { name: 'compare_pharmacy_prices', arguments: '{"drug_name":"atorvastatin","dosage":"20mg"}' } },
+                  { id: 'call_4', type: 'function', function: { name: 'compare_pharmacy_prices', arguments: '{"drug_name":"amlodipine","dosage":"5mg"}' } },
                   { id: 'call_5', type: 'function', function: { name: 'check_drug_interactions', arguments: '{"medications":["lisinopril","metformin","atorvastatin","amlodipine"]}' } },
                   { id: 'call_6', type: 'function', function: { name: 'pay_for_medication', arguments: '{"pharmacy_id":"mock-pharmacy-1","pharmacy_name":"MockCare Pharmacy","drug_name":"lisinopril","amount":4.25}' } },
                   { id: 'call_7', type: 'function', function: { name: 'pay_for_medication', arguments: '{"pharmacy_id":"mock-pharmacy-2","pharmacy_name":"HealthPlus","drug_name":"metformin","amount":2.50}' } },
@@ -146,6 +148,7 @@ describe('Agent Full Flow', () => {
 
   afterEach(() => {
     server.close();
+    process.env.MOCK_NETWORK = "1";
     if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -167,7 +170,7 @@ describe('Agent Full Flow', () => {
 
     const res = await request(app)
       .post('/agent/run')
-      .set('Authorization', `Bearer ${process.env.CAREGIVER_TOKEN}`)
+      .set('Authorization', `Bearer ${process.env.AGENT_API_KEY}`)
       .send({ task: "Compare all of Rosa's medications, check interactions, order cheapest" });
       
     expect(res.status).toBe(200);
@@ -179,10 +182,6 @@ describe('Agent Full Flow', () => {
     // The agent calls pay_for_medication 4 times
     expect(orders.length).toBe(4);
 
-    // Check spending state (service fees = 4 * 0.002 + 1 * 0.001 = 0.009)
-    const snapshotFile = path.join(tempDir, 'recipients', 'rosa', 'spending.snapshot.json');
-    const spending = fs.existsSync(snapshotFile) ? JSON.parse(fs.readFileSync(snapshotFile, 'utf8')) : { serviceFees: 0 };
-    // Wait, the snapshot might not be written if there are < 100 transactions, so we read transactions.jsonl
     const jsonlFile = path.join(tempDir, 'recipients', 'rosa', 'transactions.jsonl');
     const jsonl = fs.existsSync(jsonlFile) ? fs.readFileSync(jsonlFile, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
     
@@ -194,6 +193,6 @@ describe('Agent Full Flow', () => {
     }
     const execSync = require('child_process').execSync;
     expect(totalServiceFees).toBeCloseTo(0.009); // 4 * 0.002 + 0.001
-    expect(totalMedications).toBe(4 * 4.25); // 4 * 4.25
+    expect(totalMedications).toBe(13.65); // 4.25 + 2.50 + 5.75 + 1.15
   });
 });

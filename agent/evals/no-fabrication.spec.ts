@@ -24,6 +24,7 @@ describe.runIf(hasLlmKey)("#290 No-fabrication eval", () => {
 
     const res = await supertest(app)
       .post("/agent/run")
+      .set("Authorization", `Bearer ${process.env.AGENT_API_KEY}`)
       .send({
         task: `Audit this bill for errors. Line items: ${JSON.stringify(fixtureLineItems)}`,
       });

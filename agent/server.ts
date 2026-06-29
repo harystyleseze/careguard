@@ -47,12 +47,17 @@ import { notify } from "../shared/notifications.ts";
 import { resolveStellarNetwork, validateSignerKeyForNetwork } from "../shared/stellar-network.ts";
 import { verifyWebhook } from "../shared/verify-webhook.ts";
 import { executeTool, runAgent, buildSystemPrompt } from "./runner.ts";
+import { requireApiKey } from "../shared/auth.ts";
 
 const PORT = parseInt(process.env.AGENT_PORT || "3004");
 
 if (!process.env.LLM_API_KEY) throw new Error("LLM_API_KEY required in .env");
 if (!process.env.AGENT_SECRET_KEY) throw new Error("AGENT_SECRET_KEY required in .env");
 if (!process.env.CAREGIVER_TOKEN) throw new Error("CAREGIVER_TOKEN required in .env");
+
+if (process.env.NODE_ENV === "production" && !process.env.AGENT_API_KEY) {
+  throw new Error("AGENT_API_KEY required in production");
+}
 
 const CAREGIVER_TOKEN = process.env.CAREGIVER_TOKEN;
 
@@ -160,7 +165,7 @@ function broadcastSSE(event: string, data: unknown): void {
 // Express API
 const app: Express = express();
 
-app.use("/agent", requireCaregiverToken);
+app.use("/agent", requireApiKey);
 app.use("/agent/audit", auditRouter);
 app.use("/agent", rateLimiters.agent);
 app.use("/health", rateLimiters.health);
@@ -396,6 +401,16 @@ app.post("/agent/policy", (req, res) => {
   const recipientId = (req.query.recipient_id as string) || "rosa";
   setCurrentRecipient(recipientId);
   setSpendingPolicy(result.data);
+  appendAuditEntry({
+    event: "agent.policy_updated",
+    actor: "api",
+    details: {
+      ip: req.ip,
+      userAgent: req.headers["user-agent"],
+      policy: result.data,
+      recipientId,
+    },
+  });
   broadcastSSE("spending", getSpendingSummary());
   res.json({ success: true, policy: result.data, recipientId });
 });
@@ -403,6 +418,15 @@ app.post("/agent/reset", (req, res) => {
   const recipientId = (req.query.recipient_id as string) || "rosa";
   setCurrentRecipient(recipientId);
   resetSpendingTracker();
+  appendAuditEntry({
+    event: "agent.reset",
+    actor: "api",
+    details: {
+      ip: req.ip,
+      userAgent: req.headers["user-agent"],
+      recipientId,
+    },
+  });
   broadcastSSE("spending", getSpendingSummary());
   broadcastSSE("transactions", getSpendingTracker());
   res.json({ success: true, recipientId });

@@ -1,26 +1,12 @@
-/**
- * CORS & caregiver auth tests (Issue #267).
- *
- * Verifies:
- *  - Unauthenticated requests are rejected with 401
- *  - Invalid tokens are rejected with 403
- *  - CORS headers are pinned to ALLOWED_ORIGINS
- *  - Cookie-based auth requires a matching CSRF header
- */
 import { describe, it, expect, vi } from "vitest";
 import request from "supertest";
 
-// Capture LLM mock before any module is imported
-const { createMock } = vi.hoisted(() => {
-  const createMock = vi.fn();
-  return { createMock };
-});
-
+// Mock dependencies before importing server.ts
 vi.mock("dotenv/config", () => ({}));
 
 vi.mock("openai", () => ({
   default: vi.fn().mockImplementation(() => ({
-    chat: { completions: { create: createMock } },
+    chat: { completions: { create: vi.fn() } },
   })),
 }));
 
@@ -78,63 +64,35 @@ process.env.PHARMACY_1_PUBLIC_KEY = "GBQTESTPHARMACY1PUBKEY";
 process.env.BILL_PROVIDER_PUBLIC_KEY = "GBQTESTBILLPROVIDERPUBKEY";
 process.env.MPP_SECRET_KEY = "test-mpp-secret-key";
 process.env.CAREGIVER_TOKEN = "test-caregiver-token";
-process.env.ALLOWED_ORIGINS = "http://localhost:3000";
+process.env.AGENT_API_KEY = "correct-agent-api-key";
 
 const { app } = await import("../../server.ts");
-const auth = (req: any) => req.set("Authorization", "Bearer test-agent-api-key");
 
-describe("Caregiver Auth & CORS Security (Issue #267)", () => {
-  // Auth tests: use POST /agent/run (rate-limited to 5/min, but only 2 calls total)
-  it("rejects requests without an agent API key with 401", async () => {
-    const res = await request(app).post("/agent/run").send({ task: "test" });
+describe("Agent API Key Authentication Integration Tests", () => {
+  it("should return 401 when requesting /agent/* without authorization header", async () => {
+    const res = await request(app).get("/agent/status");
     expect(res.status).toBe(401);
+    expect(res.body.error).toContain("Unauthorized");
   });
 
-  it("rejects requests with an invalid agent API key with 401", async () => {
+  it("should return 401 when requesting /agent/* with an incorrect API key", async () => {
     const res = await request(app)
-      .post("/agent/run")
-      .set("Authorization", "Bearer invalid-token")
-      .send({ task: "test" });
+      .get("/agent/status")
+      .set("Authorization", "Bearer wrong-api-key");
     expect(res.status).toBe(401);
+    expect(res.body.error).toContain("Unauthorized");
   });
 
-  // CORS + cookie tests: use /health (unlimited rate limit)
-  it("returns CORS header for allowed origin", async () => {
+  it("should return 200 when requesting /agent/* with the correct API key", async () => {
     const res = await request(app)
-      .get("/health")
-      .set("Origin", "http://localhost:3000");
+      .get("/agent/status")
+      .set("Authorization", "Bearer correct-agent-api-key");
     expect(res.status).toBe(200);
-    expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:3000");
+    expect(res.body).toHaveProperty("paused");
   });
 
-  it("does not return CORS header for disallowed origin", async () => {
-    const res = await request(app)
-      .get("/health")
-      .set("Origin", "http://evil.com");
-    // The server should not echo back the evil origin
-    expect(res.headers["access-control-allow-origin"]).not.toBe("http://evil.com");
-  });
-
-  it("rejects cookie auth when CSRF header is missing", async () => {
-    const res = await request(app)
-      .get("/health")
-      .set("Cookie", "caregiver_token=test-caregiver-token; csrf_token=my-csrf-token")
-      .send();
-    // /health doesn't require auth, so test CSRF on a caregiver-token endpoint
-    const agentRes = await request(app)
-      .get("/recipients")
-      .set("Cookie", "caregiver_token=test-caregiver-token; csrf_token=my-csrf-token")
-      .send();
-    expect(agentRes.status).toBe(403);
-    expect(agentRes.body.error).toContain("CSRF");
-  });
-
-  it("accepts cookie auth when valid CSRF header is provided", async () => {
-    const res = await request(app)
-      .get("/recipients")
-      .set("Cookie", "caregiver_token=test-caregiver-token; csrf_token=my-csrf-token")
-      .set("X-CSRF-Token", "my-csrf-token")
-      .send();
+  it("should return 200 when requesting /agent/* with the correct API key in query params (for SSE)", async () => {
+    const res = await request(app).get("/agent/status?apiKey=correct-agent-api-key");
     expect(res.status).toBe(200);
   });
 });

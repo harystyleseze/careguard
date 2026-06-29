@@ -40,7 +40,7 @@ if (!MPP_SECRET_KEY) throw new Error("MPP_SECRET_KEY required in .env");
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import lock from "proper-lockfile";
 
-const DATA_DIR = new URL("../../data", import.meta.url).pathname;
+const DATA_DIR = process.env.DATA_DIR || new URL("../../data", import.meta.url).pathname;
 const ORDERS_FILE = `${DATA_DIR}/orders.json`;
 const MPP_STORE_FILE = `${DATA_DIR}/mpp-store.json`;
 

@@ -16,6 +16,7 @@ import { Mppx, Store } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { fileURLToPath } from "url";
 import { z } from "zod";
 
 // x402 middleware
@@ -23,6 +24,7 @@ import { applyX402Middleware } from "./shared/x402-middleware.ts";
 import { createCorsMiddleware } from "./shared/cors.ts";
 import { applySecurityMiddleware } from "./shared/security-middleware.ts";
 import { logger } from "./shared/logger.ts";
+import { requireApiKey } from "./shared/auth.ts";
 import { validateTask, getSuspiciousTaskCount } from "./shared/task-validation.ts";
 import {
   BillAuditValidationError,
@@ -110,6 +112,7 @@ const envSchema = z.object({
   LLM_BASE_URL: z.string().min(1).optional(),
   LLM_MODEL: z.string().min(1).optional(),
   CAREGIVER_TOKEN: z.string().min(1, "CAREGIVER_TOKEN required"),
+  AGENT_API_KEY: z.string().min(1).optional(),
   OZ_FACILITATOR_API_KEY: z.string().min(1).optional(),
   X402_FACILITATOR_URL: z.string().min(1).optional(),
   BILL_AUDIT_OVERCHARGE_MULTIPLIER: z.coerce.number().positive().default(1.5),
@@ -136,6 +139,11 @@ if (!env.success) {
       .map((i) => `Missing/invalid env: ${i.path.join(".")} — ${i.message}`)
       .join("\n") + "\n",
   );
+  process.exit(1);
+}
+ 
+if (process.env.NODE_ENV === "production" && !process.env.AGENT_API_KEY) {
+  process.stderr.write("Missing/invalid env: AGENT_API_KEY — required in production\n");
   process.exit(1);
 }
 
@@ -248,7 +256,7 @@ app.use((req, res, next) =>
 );
 app.use(requestContextMiddleware());
 app.use(requestLoggerMiddleware());
-app.use("/agent", requireCaregiverToken);
+app.use("/agent", requireApiKey);
 app.use("/agent/audit", auditRouter);
 
 // --- Prometheus metrics ---
@@ -998,10 +1006,27 @@ app.post("/agent/policy", (req, res) => {
     return res.status(400).json({ error: "Invalid policy", issues: result.error.issues });
   }
   setSpendingPolicy(result.data);
+  appendAuditEntry({
+    event: "agent.policy_updated",
+    actor: "api",
+    details: {
+      ip: req.ip,
+      userAgent: req.headers["user-agent"],
+      policy: result.data,
+    },
+  });
   res.json({ success: true, policy: result.data });
 });
-app.post("/agent/reset", (_req, res) => {
+app.post("/agent/reset", (req, res) => {
   resetSpendingTracker();
+  appendAuditEntry({
+    event: "agent.reset",
+    actor: "api",
+    details: {
+      ip: req.ip,
+      userAgent: req.headers["user-agent"],
+    },
+  });
   res.json({ success: true });
 });
 
