@@ -18,7 +18,7 @@
     "start": "node --import tsx server.ts",
     "dev": "node --import tsx server.ts",
     "typecheck": "tsc -b",
-    "build": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
     "lint": "tsc --noEmit",
     "gen-openapi": "node --import tsx scripts/gen-openapi.ts",
     "test": "vitest run",
