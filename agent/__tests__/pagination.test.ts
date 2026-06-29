@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
 import { app } from '../../server.ts';
 
-const auth = (req: any) => req.set('Authorization', 'Bearer test-caregiver-token');
+const auth = (req: any) => req.set('Authorization', 'Bearer test-agent-api-key');
 
 describe('Transaction Pagination', () => {
   beforeEach(async () => {

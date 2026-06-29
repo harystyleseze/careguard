@@ -8,7 +8,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import OpenAI from "openai";
 
 vi.mock("dotenv/config", () => ({}));
-vi.mock("../../shared/audit-log.ts", () => ({ appendAuditEntry: vi.fn() }));
+vi.mock("../../shared/audit-log.ts", () => ({
+  appendAuditEntry: vi.fn(),
+  auditRouter: () => (req: any, res: any, next: any) => next(),
+}));
 vi.mock("../../shared/cors.ts", () => ({
   createCorsMiddleware: () => (_req: any, _res: any, next: any) => next(),
 }));

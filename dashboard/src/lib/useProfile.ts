@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { CaregiverProfile, RecipientProfile } from "./types";
 import { AGENT_URL } from "./agent-url";
 import { fetchProfile, DEFAULT_RECIPIENT, DEFAULT_CAREGIVER } from "./fetchProfile";
+import { agentFetch } from "./agent-fetch";
 
 type ProfilePatch = {
   recipient?: Partial<RecipientProfile>;
@@ -53,7 +54,7 @@ export function useProfile(): ProfileState {
       if (patch.recipient) setRecipient((p) => ({ ...p, ...patch.recipient }));
       if (patch.caregiver) setCaregiver((p) => ({ ...p, ...patch.caregiver }));
       try {
-        const res = await fetch(`${AGENT_URL}/agent/profile`, {
+        const res = await agentFetch(`${AGENT_URL}/agent/profile`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(patch),

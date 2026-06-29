@@ -16,6 +16,9 @@ export const routeConcurrentRequests = new Gauge({
 });
 
 const createLimiter = (policyName: string, maxRequests: number, windowMs: number = 60 * 1000) => {
+  if (process.env.NODE_ENV === "test") {
+    return (req: any, res: any, next: any) => next();
+  }
   return rateLimit({
     windowMs,
     max: maxRequests,

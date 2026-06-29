@@ -106,7 +106,10 @@ vi.mock("mppx/client", () => ({
 }));
 // Persistence behavior is the thing under test — audit logging and
 // notifications are unrelated collaborators, so they're stubbed out.
-vi.mock("../../shared/audit-log.ts", () => ({ appendAuditEntry: vi.fn() }));
+vi.mock("../../shared/audit-log.ts", () => ({
+  appendAuditEntry: vi.fn(),
+  auditRouter: () => (req: any, res: any, next: any) => next(),
+}));
 vi.mock("../../shared/notifications.ts", () => ({ notify: vi.fn().mockResolvedValue(undefined) }));
 // Spying directly on the real pino instance is unreliable, so mock the
 // logger module the same way shared/__tests__/request-logger.test.ts does.

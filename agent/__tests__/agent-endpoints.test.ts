@@ -22,39 +22,57 @@ vi.mock("openai", () => ({
   })),
 }));
 
-vi.mock("../tools.ts", () => ({
-  comparePharmacyPrices: vi.fn(),
-  auditBill: vi.fn(),
-  fetchRosaBill: vi.fn(),
-  fetchAndAuditBill: vi.fn(),
-  checkDrugInteractions: vi.fn(),
-  payForMedication: vi.fn(),
-  payBill: vi.fn(),
-  checkSpendingPolicy: vi.fn(),
-  getSpendingSummary: vi.fn(() => ({
-    policy: {
-      dailyLimit: 100,
-      monthlyLimit: 800,
-      medicationMonthlyBudget: 300,
-      billMonthlyBudget: 500,
-      approvalThreshold: 75,
-    },
-    spending: { medications: 0, bills: 0, serviceFees: 0, total: 0 },
-    budgetRemaining: { medications: 300, bills: 500 },
-    transactionCount: 0,
-    recentTransactions: [],
-  })),
-  setSpendingPolicy: vi.fn(),
-  getSpendingTracker: vi.fn(() => ({ transactions: [], policy: {}, spending: {} })),
-  resetSpendingTracker: vi.fn(),
-  TOOL_DEFINITIONS: [],
-  validateToolInput: vi.fn((_name: string, input: Record<string, unknown>) => input),
-}));
+vi.mock("../tools.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../tools.ts")>();
+  return {
+    ...actual,
+    comparePharmacyPrices: vi.fn(),
+    auditBill: vi.fn(),
+    fetchRosaBill: vi.fn(),
+    fetchAndAuditBill: vi.fn(),
+    checkDrugInteractions: vi.fn(),
+    payForMedication: vi.fn(),
+    payBill: vi.fn(),
+    checkSpendingPolicy: vi.fn(),
+    getSpendingSummary: vi.fn(() => ({
+      policy: {
+        dailyLimit: 100,
+        monthlyLimit: 800,
+        medicationMonthlyBudget: 300,
+        billMonthlyBudget: 500,
+        approvalThreshold: 75,
+      },
+      spending: { medications: 0, bills: 0, serviceFees: 0, total: 0 },
+      budgetRemaining: { medications: 300, bills: 500 },
+      transactionCount: 0,
+      recentTransactions: [],
+    })),
+    setSpendingPolicy: vi.fn(),
+    getSpendingTracker: vi.fn(() => ({ transactions: [], policy: {}, spending: {} })),
+    resetSpendingTracker: vi.fn(),
+  };
+});
 
 vi.mock("../../shared/x402-middleware.ts", () => ({
   applyX402Middleware: vi.fn(),
   OZ_FACILITATOR_URL: "https://channels.openzeppelin.com/x402/testnet",
   DEFAULT_FACILITATOR_URL: "https://channels.openzeppelin.com/x402/testnet",
+}));
+
+vi.mock("../../shared/rate-limit.ts", () => ({
+  rateLimiters: {
+    agent: (req: any, res: any, next: any) => next(),
+    health: (req: any, res: any, next: any) => next(),
+    default: (req: any, res: any, next: any) => next(),
+  },
+  perRouteLimiters: {
+    agentRun: (req: any, res: any, next: any) => next(),
+    billAudit: (req: any, res: any, next: any) => next(),
+    pharmacyCompare: (req: any, res: any, next: any) => next(),
+    drugInteractions: (req: any, res: any, next: any) => next(),
+    pharmacyOrder: (req: any, res: any, next: any) => next(),
+  },
+  concurrentRequestsMiddleware: () => (req: any, res: any, next: any) => next(),
 }));
 
 vi.mock("@stellar/stellar-sdk", () => ({
@@ -78,7 +96,7 @@ process.env.MPP_SECRET_KEY = "test-mpp-secret-key";
 process.env.CAREGIVER_TOKEN = "test-caregiver-token";
 
 const { app } = await import("../../server.ts");
-const auth = (req: any) => req.set("Authorization", "Bearer test-caregiver-token");
+const auth = (req: any) => req.set("Authorization", "Bearer test-agent-api-key");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // pause / status / run-while-paused
@@ -232,7 +250,7 @@ describe("POST /agent/policy (Issue #42)", () => {
     const res = await auth(request(app).post("/agent/policy"))
       .send({ ...VALID_POLICY, monthlyLimit: 600 });
     expect(res.status).toBe(400);
-    expect(res.body.details.join(" ")).toContain("monthlyLimit");
+    expect(res.body.issues.map((i: any) => i.message).join(" ")).toContain("monthlyLimit");
   });
 
   it("non-object body → 400", async () => {
@@ -273,11 +291,11 @@ describe("Agent endpoints — with and without X-API-Key header (Issue #42, #10)
     expect(res.headers["www-authenticate"]).toBe("Bearer");
   });
 
-  it("wrong token returns 403", async () => {
+  it("wrong token returns 401", async () => {
     const res = await request(app)
       .get("/agent/status")
       .set("Authorization", "Bearer wrong-token");
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
   });
 
   it("correct token returns 200", async () => {

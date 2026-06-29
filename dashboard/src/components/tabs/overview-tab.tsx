@@ -6,6 +6,7 @@ import { Btn } from "../primitives/btn";
 import { Card } from "../primitives/card";
 import type { AgentResult, AgentLlmError, SpendingData } from "../types";
 import type { RecipientProfile } from "../../lib/types";
+import { agentFetch } from "../../lib/agent-fetch";
 
 export interface OverviewTabProps {
   spending: SpendingData | null;
@@ -235,7 +236,7 @@ function AdherencePrompt() {
   const [adherence, setAdherence] = useState<{ pending: Array<{ id: string; drug: string; dueDate: string }>; flagged: Array<{ id: string; drug: string }> } | null>(null);
 
   useEffect(() => {
-    fetch("/agent/adherence/pending?recipient_id=rosa")
+    agentFetch("/agent/adherence/pending?recipient_id=rosa")
       .then((r) => r.json())
       .then((data) => setAdherence(data))
       .catch(() => {});
@@ -243,7 +244,7 @@ function AdherencePrompt() {
 
   const handleConfirm = async (recordId: string) => {
     try {
-      await fetch("/agent/adherence/confirm", {
+      await agentFetch("/agent/adherence/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ record_id: recordId }),

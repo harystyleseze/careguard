@@ -71,7 +71,10 @@ vi.mock("@x402/fetch", () => ({
 }));
 vi.mock("@stellar/mpp/charge/client", () => ({ stellar: vi.fn().mockReturnValue({}) }));
 vi.mock("mppx/client", () => ({ Mppx: { create: vi.fn().mockReturnValue({ fetch: vi.fn() }) } }));
-vi.mock("../../shared/audit-log.ts", () => ({ appendAuditEntry: vi.fn() }));
+vi.mock("../../shared/audit-log.ts", () => ({
+  appendAuditEntry: vi.fn(),
+  auditRouter: () => (req: any, res: any, next: any) => next(),
+}));
 vi.mock("../../shared/notifications.ts", () => ({ notify: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("../../shared/logger.ts", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },

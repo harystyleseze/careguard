@@ -1,5 +1,6 @@
 import { AGENT_URL } from "./agent-url";
 import type { RecipientProfile, CaregiverProfile } from "./types";
+import { agentFetch } from "./agent-fetch";
 
 export const DEFAULT_RECIPIENT: RecipientProfile = {
   name: "Rosa Garcia",
@@ -27,7 +28,7 @@ export async function fetchProfile(): Promise<ProfileData> {
     return { recipient: DEFAULT_RECIPIENT, caregiver: DEFAULT_CAREGIVER };
   }
   try {
-    const res = await fetch(`${AGENT_URL}/agent/profile`, {
+    const res = await agentFetch(`${AGENT_URL}/agent/profile`, {
       cache: "no-store",
     });
     if (!res.ok) {
