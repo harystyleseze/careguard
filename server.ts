@@ -164,6 +164,9 @@ const agentKeypair = Keypair.fromSecret(env.data.AGENT_SECRET_KEY);
 const MAX_TOOL_CALLS_PER_RUN = parseInt(process.env.MAX_TOOL_CALLS_PER_RUN || "30", 10);
 let toolCallCapHitsTotal = 0;
 
+// --- Per-run iteration cap (default 15) ---
+const MAX_AGENT_ITERATIONS = Math.max(1, parseInt(process.env.MAX_AGENT_ITERATIONS || process.env.AGENT_MAX_ITERATIONS || "15", 10) || 15);
+
 // --- Mutable profile (issue #79) ---
 const _DEFAULT_PROFILE = {
   recipient: {
@@ -1020,6 +1023,8 @@ app.post("/agent/run", perRouteLimiters.agentRun, concurrentRequestsMiddleware("
       profile: _profileData,
       llm,
       model: LLM_MODEL,
+      maxIterations: MAX_AGENT_ITERATIONS,
+      maxToolCallsPerRun: MAX_TOOL_CALLS_PER_RUN,
       piiScrub: _piiScrub,
     }));
     agentRunsTotal.inc({ status: "success" });

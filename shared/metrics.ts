@@ -123,6 +123,12 @@ export const agentLlmErrorTotal = new Counter({
   registers: [registry],
 });
 
+export const stellarFeeBumpsTotal = new Counter({
+  name: "stellar_fee_bumps_total",
+  help: "Total Stellar fee-bump transactions submitted",
+  registers: [registry],
+});
+
 export function metricsHandler(): RequestHandler {
   return async (req, res) => {
     const token = process.env.METRICS_TOKEN;

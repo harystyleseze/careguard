@@ -11,6 +11,7 @@ import { logger } from "../shared/logger.ts";
 import { appendAuditEntry } from "../shared/audit-log.ts";
 import { buildScrubSession, scrubText } from "../shared/prompt-scrub.ts";
 import { setAgentRunId, getRequestId } from "../shared/request-context.ts";
+import { redactPII } from "../shared/redact.ts";
 import {
   agentToolCallsTotal,
   agentLlmTokensTotal,
@@ -452,14 +453,18 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
   }
 
   if (iteration >= maxIterations) {
+    truncated = true;
     events.push({ kind: "iteration_limit_reached" });
     agentIterationLimitTotal.inc();
     appendAuditEntry({
       event: "agent.iteration_limit_reached",
       actor: "agent",
-      details: { maxIterations },
+      details: { maxIterations, toolCallCount: toolCalls.length },
     });
-    logger.warn({ maxIterations }, "agent run hit iteration limit");
+    logger.warn(
+      { task: redactPII(task), maxIterations, toolCallCount: toolCalls.length },
+      "agent run hit iteration limit — task truncated",
+    );
   }
 
   const result: RunAgentResult = {

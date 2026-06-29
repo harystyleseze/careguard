@@ -80,7 +80,9 @@ import {
   agentSpendingUsd,
   agentTransactionsTotal,
   x402TxExtractionFailedTotal,
+  stellarFeeBumpsTotal,
 } from '../shared/metrics.ts';
+import { getTargetFee } from '../shared/stellar-fee.ts';
 import {
   assertMockNetworkAllowed,
   createMockReceipt,
@@ -154,19 +156,9 @@ validateSignerKeyForNetwork(AGENT_SECRET_KEY, STELLAR_CONFIG);
 
 const horizonServer = new Horizon.Server(HORIZON_URL);
 
-// Helper: calculate recommended fee based on network conditions
+// Helper: calculate recommended fee based on network conditions (p90 from Horizon fee_stats)
 async function getRecommendedFee(): Promise<string> {
-  try {
-    const feeStats = await horizonServer.feeStats();
-    const recommendedFee = parseInt(feeStats.fee_charged.mode, 10);
-    // Use 1.5x the recommended fee to ensure acceptance during congestion
-    const adjustedFee = Math.max(MIN_FEE_STROOPS, Math.ceil(recommendedFee * 1.5));
-    const cappedFee = Math.min(adjustedFee, MAX_FEE_STROOPS);
-    return cappedFee.toString();
-  } catch (err) {
-    logger.warn({ err: (err as Error).message }, '[Stellar] Failed to fetch fee stats, using minimum fee');
-    return MIN_FEE_STROOPS.toString();
-  }
+  return getTargetFee(horizonServer);
 }
 
 export const TX_HASH_EXTRACTION_FAILED = 'extraction_failed' as const;
@@ -242,7 +234,8 @@ async function submitTransactionWithRetry(
   throw lastError;
 }
 
-// Helper: submit transaction with automatic fee bump on insufficient_fee error
+// Helper: submit transaction with automatic fee bump on insufficient_fee error.
+// Wraps retries in fee-bump envelopes, doubling the fee each time (up to 3x max).
 async function submitTransactionWithFeeBump(
   server: Horizon.Server,
   account: any,
@@ -252,7 +245,7 @@ async function submitTransactionWithFeeBump(
 ): Promise<{ hash: string; fee: string }> {
   let currentFee = initialFee || await getRecommendedFee();
   let attempt = 0;
-  const maxAttempts = 2;
+  const maxAttempts = 3; // up to 3 fee bumps
 
   while (attempt < maxAttempts) {
     try {
@@ -275,15 +268,38 @@ async function submitTransactionWithFeeBump(
       const isFeeError = resultCodes?.transaction === 'tx_insufficient_fee';
 
       if (isFeeError && attempt < maxAttempts - 1) {
-        // Double the fee and retry
+        // Double the fee and wrap in a fee-bump envelope
         const newFee = Math.min(parseInt(currentFee) * 2, MAX_FEE_STROOPS);
         logger.warn(
           { oldFee: currentFee, newFee, attempt: attempt + 1 },
-          '[Stellar] Insufficient fee, retrying with higher fee',
+          '[Stellar] Insufficient fee, wrapping in fee-bump envelope',
         );
         currentFee = newFee.toString();
+        stellarFeeBumpsTotal.inc();
         attempt++;
-        continue;
+
+        // Build the inner transaction with the new fee
+        const innerTx = new TransactionBuilder(account, {
+          fee: currentFee,
+          networkPassphrase: STELLAR_NETWORK_PASSPHRASE,
+        });
+        for (const op of operations) {
+          innerTx.addOperation(op);
+        }
+        const builtInner = innerTx.setTimeout(30).build();
+        builtInner.sign(signer);
+
+        // Wrap in fee-bump envelope: feeSource is the agent wallet itself
+        const feeBumpTx = TransactionBuilder.buildFeeBumpTransaction(
+          signer,
+          currentFee,
+          builtInner,
+          STELLAR_NETWORK_PASSPHRASE,
+        );
+        feeBumpTx.sign(signer);
+
+        const result = await submitTransactionWithRetry(server, feeBumpTx as any);
+        return { hash: result.hash, fee: currentFee };
       }
 
       throw err;
@@ -2022,39 +2038,21 @@ export async function payBill(
   let stellarTxHash: string | undefined;
 
   try {
-    const buildStellarTx = async () => {
-      const account = await horizonServer.loadAccount(agentKeypair.publicKey());
-      const usdcAsset = new Asset("USDC", USDC_ISSUER);
+    const account = await horizonServer.loadAccount(agentKeypair.publicKey());
+    const usdcAsset = new Asset("USDC", USDC_ISSUER);
 
-      const stellarTx = new TransactionBuilder(account, {
-        fee: "100",
-        networkPassphrase: Networks.TESTNET,
-      })
-        .addOperation(
-          Operation.payment({
-            destination: recipientKey,
-            asset: usdcAsset,
-            amount: amount.toFixed(7),
-          })
-        )
-        .setTimeout(STELLAR_TIMEBOUNDS_SECONDS)
-        .build();
+    const paymentOp = Operation.payment({
+      destination: recipientKey,
+      asset: usdcAsset,
+      amount: amount.toFixed(7),
+    });
 
-      stellarTx.sign(agentKeypair);
-
-      const sigHint = stellarTx.signatures[0]?.hint();
-      if (!sigHint || !sigHint.equals(agentKeypair.signatureHint())) {
-        throw new Error(
-          `Signer mismatch: expected ${agentKeypair.publicKey()} — refusing to submit`
-        );
-      }
-      return stellarTx;
-    };
-
-    let stellarTx = await buildStellarTx();
-    console.log(`  [Stellar] Signer verified: ${agentKeypair.publicKey().slice(0, 8)}...`);
-
-    const result = await submitTransactionWithRetry(horizonServer, stellarTx, 2, 35000, buildStellarTx);
+    const result = await submitTransactionWithFeeBump(
+      horizonServer,
+      account,
+      [paymentOp],
+      agentKeypair,
+    );
 
     stellarTxHash = result.hash;
     logger.info({ txHash: stellarTxHash, fee: result.fee }, '[Stellar] TX confirmed');
