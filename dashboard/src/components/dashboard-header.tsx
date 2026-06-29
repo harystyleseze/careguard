@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { RecipientProfile } from "../lib/types";
 import type { AgentInfo } from "./types";
 import { EXPLORER_ACCOUNT_URL } from "../lib/stellar-network";
@@ -20,6 +21,10 @@ export interface DashboardHeaderProps {
   recipients?: RecipientOption[];
   selectedRecipientId?: string;
   onSelectRecipient?: (id: string) => void;
+  // per-source health (Issue #213)
+  agentInfoError?: string | null;
+  spendingError?: string | null;
+  transactionsError?: string | null;
 }
 
 export function DashboardHeader({
@@ -33,7 +38,18 @@ export function DashboardHeader({
   recipients,
   selectedRecipientId,
   onSelectRecipient,
+  agentInfoError,
+  spendingError,
+  transactionsError,
 }: DashboardHeaderProps) {
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+
+  const sourceErrors: { source: string; error: string }[] = [
+    ...(agentInfoError ? [{ source: 'Agent', error: agentInfoError }] : []),
+    ...(spendingError ? [{ source: 'Spending', error: spendingError }] : []),
+    ...(transactionsError ? [{ source: 'Transactions', error: transactionsError }] : []),
+  ];
+  const anySourceDown = sourceErrors.length > 0;
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
       <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -66,6 +82,37 @@ export function DashboardHeader({
             >
               {agentPaused ? "Resume" : "Pause"}
             </button>
+          )}
+          {anySourceDown && (
+            <div className="relative">
+              <button
+                data-testid="source-health-chip"
+                onMouseEnter={() => setTooltipVisible(true)}
+                onMouseLeave={() => setTooltipVisible(false)}
+                onFocus={() => setTooltipVisible(true)}
+                onBlur={() => setTooltipVisible(false)}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-red-50 text-red-600 cursor-default"
+                aria-label={`Data source issues: ${sourceErrors.map((e) => e.source).join(', ')}`}
+              >
+                <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                Data issue
+              </button>
+              {tooltipVisible && (
+                <div
+                  role="tooltip"
+                  className="absolute left-0 top-full mt-1 z-50 w-64 rounded-lg bg-slate-900 text-white text-xs p-3 shadow-lg"
+                >
+                  <p className="font-semibold mb-1">Sources failing:</p>
+                  <ul className="space-y-1">
+                    {sourceErrors.map(({ source, error }) => (
+                      <li key={source}>
+                        <span className="font-medium">{source}:</span> {error}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
           )}
         </div>
         <div className="flex items-center gap-4">

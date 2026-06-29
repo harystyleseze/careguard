@@ -97,6 +97,9 @@ export default function Dashboard() {
         recipients={recipients}
         selectedRecipientId={selectedId}
         onSelectRecipient={selectRecipient}
+        agentInfoError={state.agentInfoError}
+        spendingError={state.spendingError}
+        transactionsError={state.transactionsError}
       />
       <div className="max-w-7xl mx-auto px-4 py-6">
         <DashboardTabsNav activeTab={activeTab} pathname={pathname} />

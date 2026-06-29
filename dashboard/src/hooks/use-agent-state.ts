@@ -74,6 +74,11 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const [loadingSpending, setLoadingSpending] = useState(false);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
 
+  // Per-source health tracking (Issue #213): error = null means healthy
+  const [agentInfoError, setAgentInfoError] = useState<string | null>(null);
+  const [spendingError, setSpendingError] = useState<string | null>(null);
+  const [transactionsError, setTransactionsError] = useState<string | null>(null);
+
   const activeTabRef = useRef(activeTab);
   const policyDirtyRef = useRef(policyDirty);
   const lastConnectionStateRef = useRef<string | null>(null);
@@ -147,12 +152,14 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       const res = await fetch(`${AGENT_URL}/`);
       if (!res.ok) {
         setAgentConnected(false);
+        setAgentInfoError(`Agent info returned ${res.status}`);
         setLoadingAgentInfo(false);
         return;
       }
       const data = await res.json();
       setAgentInfo(data);
       setAgentConnected(true);
+      setAgentInfoError(null);
       setAgentPaused(Boolean(data.paused));
       setAgentPausedReason(
         typeof data.pausedReason === 'string' ? data.pausedReason : null,
@@ -161,8 +168,9 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       if (data.agentWallet) {
         fetchWalletBalance();
       }
-    } catch {
+    } catch (err: unknown) {
       setAgentConnected(false);
+      setAgentInfoError(err instanceof Error ? err.message : 'Agent info unavailable');
     } finally {
       setLoadingAgentInfo(false);
     }
@@ -174,11 +182,13 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       try {
         const res = await agentFetch(`${AGENT_URL}/agent/spending`);
         if (!res.ok) {
+          setSpendingError(`Spending returned ${res.status}`);
           setLoadingSpending(false);
           return;
         }
         const data = SpendingDataSchema.parse(await res.json());
         setSpending(data);
+        setSpendingError(null);
         const forcePolicySync = Boolean(opts?.forcePolicySync);
         const shouldSyncPolicy =
           forcePolicySync ||
@@ -187,7 +197,9 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
           setPolicyForm(data.policy);
           setPolicyDirty(false);
         }
-      } catch {} finally {
+      } catch (err: unknown) {
+        setSpendingError(err instanceof Error ? err.message : 'Spending unavailable');
+      } finally {
         setLoadingSpending(false);
       }
     },
@@ -203,6 +215,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         if (offset) params.append('offset', offset.toString());
         const res = await agentFetch(`${AGENT_URL}/agent/transactions?${params}`);
         if (!res.ok) {
+          setTransactionsError(`Transactions returned ${res.status}`);
           setLoadingTransactions(false);
           return;
         }
@@ -215,6 +228,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
               .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
           : [];
         setAllTransactions(txs);
+        setTransactionsError(null);
         if (data.pagination) setPagination(data.pagination);
 
         // Fetch audit events independently (don't block on this)
@@ -226,7 +240,9 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
             : [];
           setAuditEvents(logs);
         }
-      } catch {} finally {
+      } catch (err: unknown) {
+        setTransactionsError(err instanceof Error ? err.message : 'Transactions unavailable');
+      } finally {
         setLoadingTransactions(false);
       }
     },
@@ -355,12 +371,13 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       
       const controller = new AbortController();
       setAbortController(controller);
-      
+      let timedOut = false;
+
       const timeoutId = setTimeout(() => {
+        timedOut = true;
         controller.abort();
-        addLogEntry(`[${new Date().toLocaleTimeString()}] Agent task timed out`);
-      }, 60000);
-      
+      }, 90000);
+
       try {
         const res = await agentFetch(`${AGENT_URL}/agent/run`, {
           method: 'POST',
@@ -400,10 +417,17 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         fetchAgentInfo();
       } catch (err: any) {
         if (err.name === 'AbortError') {
-          addLogEntry(
-            `[${new Date().toLocaleTimeString()}] Cancelled`,
-          );
-          toast.error('Agent task cancelled');
+          if (timedOut) {
+            addLogEntry(
+              `[${new Date().toLocaleTimeString()}] Agent didn't respond — try again or check status`,
+            );
+            toast.error("Agent didn't respond — try again or check status");
+          } else {
+            addLogEntry(
+              `[${new Date().toLocaleTimeString()}] Cancelled`,
+            );
+            toast.error('Agent task cancelled');
+          }
         } else {
           addLogEntry(
             `[${new Date().toLocaleTimeString()}] Connection error: ${err.message}`,
@@ -537,6 +561,10 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     loadingAgentInfo,
     loadingSpending,
     loadingTransactions,
+    // per-source health (Issue #213): null = healthy, string = error message
+    agentInfoError,
+    spendingError,
+    transactionsError,
     // actions
     fetchSpending,
     runAgentTask,
