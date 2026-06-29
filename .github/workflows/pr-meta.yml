@@ -1,0 +1,44 @@
+name: PR Meta Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  block-pii-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for blocked PII files under data/
+        run: |
+          BLOCKED=false
+          # Check if any .json or .jsonl files under data/ were added or modified in this PR
+          FILES=$(git diff --name-only --diff-filter=AM origin/${{ github.base_ref }}...HEAD -- 'data/**/*.json' 'data/**/*.jsonl' 2>/dev/null || true)
+          if [ -n "$FILES" ]; then
+            echo "❌ BLOCKED: The following PII-sensitive files were added or modified in this PR:"
+            echo "$FILES"
+            echo ""
+            echo "data/ is a local working directory. These files contain medication lists,"
+            echo "spending patterns, and wallet activity that must never be committed."
+            echo ""
+            echo "If you need to persist test data, use data/seed.json.example as a template"
+            echo "and keep real patient data out of version control."
+            echo ""
+            echo "See docs/adr/002-pii-in-persistence.md for details."
+            BLOCKED=true
+          fi
+
+          # Also check for data/orders.json and data/spending.json at the root
+          ROOT_FILES=$(git diff --name-only --diff-filter=AM origin/${{ github.base_ref }}...HEAD -- data/orders.json data/spending.json 2>/dev/null || true)
+          if [ -n "$ROOT_FILES" ]; then
+            echo "❌ BLOCKED: $ROOT_FILES was added — these files must never be committed."
+            BLOCKED=true
+          fi
+
+          if [ "$BLOCKED" = true ]; then
+            exit 1
+          fi
+          echo "✅ No blocked PII files detected."

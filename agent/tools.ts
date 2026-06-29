@@ -81,6 +81,7 @@ import {
   agentTransactionsTotal,
   x402TxExtractionFailedTotal,
   stellarFeeBumpsTotal,
+  stellarTxBadSeqRetriesTotal,
 } from '../shared/metrics.ts';
 import { getTargetFee } from '../shared/stellar-fee.ts';
 import {
@@ -214,6 +215,32 @@ async function submitTransactionWithRetry(
       lastError = err;
       if (err?.response?.status) throw err;
       const msg = err?.message ?? "";
+
+      // tx_bad_seq: sequence number mismatch — reload account and rebuild with 1 s backoff
+      if (msg.includes("tx_bad_seq") && rebuildTx) {
+        for (let seqRetry = 0; seqRetry < 3; seqRetry++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          try {
+            tx = await rebuildTx();
+          } catch {
+            break;
+          }
+          stellarTxBadSeqRetriesTotal.inc();
+          logger.warn(
+            { seq: tx?.sequence, attempt: seqRetry + 1, reason: "tx_bad_seq" },
+            "[Stellar] tx_bad_seq — reloaded account, retrying",
+          );
+          try {
+            const result = await server.submitTransaction(tx, { timeout: timeoutMs } as any);
+            return result;
+          } catch (retryErr: any) {
+            lastError = retryErr;
+            if (!retryErr?.message?.includes("tx_bad_seq")) throw retryErr;
+          }
+        }
+        throw lastError;
+      }
+
       // tx_too_late: timebounds expired — retry once with fresh timebounds if rebuild fn provided
       if (msg.includes("tx_too_late") && rebuildTx && attempt < maxRetries) {
         logger.warn({ attempt: attempt + 1 }, "[Stellar] tx_too_late, rebuilding with fresh timebounds");
@@ -261,7 +288,19 @@ async function submitTransactionWithFeeBump(
       const builtTx = tx.setTimeout(30).build();
       builtTx.sign(signer);
 
-      const result = await submitTransactionWithRetry(server, builtTx);
+      const result = await submitTransactionWithRetry(server, builtTx, 2, 35000, async () => {
+        const freshAccount = await server.loadAccount(signer.publicKey());
+        const newTx = new TransactionBuilder(freshAccount, {
+          fee: currentFee,
+          networkPassphrase: STELLAR_NETWORK_PASSPHRASE,
+        });
+        for (const op of operations) {
+          newTx.addOperation(op);
+        }
+        const rebuilt = newTx.setTimeout(30).build();
+        rebuilt.sign(signer);
+        return rebuilt;
+      });
       return { hash: result.hash, fee: currentFee };
     } catch (err: any) {
       const resultCodes = err?.response?.data?.extras?.result_codes;
@@ -863,6 +902,15 @@ const _budgetMutexes = new Map<string, AsyncMutex>();
 function getBudgetMutex(recipientId: string): AsyncMutex {
   let m = _budgetMutexes.get(recipientId);
   if (!m) { m = new AsyncMutex(); _budgetMutexes.set(recipientId, m); }
+  return m;
+}
+
+// Per-keypair mutex to serialize Stellar submissions (Issue #XXX).
+// Prevents concurrent payBill calls from loading the same sequence number.
+const _submissionMutexes = new Map<string, AsyncMutex>();
+function getSubmissionMutex(keypairId: string): AsyncMutex {
+  let m = _submissionMutexes.get(keypairId);
+  if (!m) { m = new AsyncMutex(); _submissionMutexes.set(keypairId, m); }
   return m;
 }
 
@@ -2105,7 +2153,7 @@ export async function payBill(
     releaseBill();
   }
 
-  // Execute real Stellar USDC transfer (outside the mutex — can be slow)
+  // Execute real Stellar USDC transfer (serialised per-keypair to avoid sequence races — Issue #XXX)
   const recipientKey = process.env.BILL_PROVIDER_PUBLIC_KEY;
   if (!recipientKey) {
     spendingTracker.bills -= amount; // roll back reservation
@@ -2119,6 +2167,7 @@ export async function payBill(
 
   let stellarTxHash: string | undefined;
 
+  const releaseSubmission = await getSubmissionMutex(agentKeypair.publicKey()).acquire();
   try {
     const account = await horizonServer.loadAccount(agentKeypair.publicKey());
     const usdcAsset = new Asset("USDC", USDC_ISSUER);
@@ -2147,6 +2196,8 @@ export async function payBill(
       success: false,
       error: `Stellar USDC transfer failed: ${JSON.stringify(errorDetail)}`,
     };
+  } finally {
+    releaseSubmission();
   }
 
   stellarTxSubmittedTotal.inc({ result: 'success' });
