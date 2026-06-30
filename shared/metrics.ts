@@ -91,6 +91,12 @@ export const agentTransactionsTotal = new Counter({
   registers: [registry],
 });
 
+export const agentSseClients = new Gauge({
+  name: "agent_sse_clients",
+  help: "Currently connected /agent/stream SSE clients",
+  registers: [registry],
+});
+
 export const agentLlmErrorTotal = new Counter({
   name: "agent_llm_error_total",
   help: "Total LLM API errors during agent runs",

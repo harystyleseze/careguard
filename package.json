@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "load": "k6 run load/agent-run.js",
+    "load:stream": "k6 run load/agent-stream.js",
     "check:env-vars": "tsx scripts/check-env-vars.ts"
   },
   "keywords": [],

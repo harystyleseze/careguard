@@ -28,9 +28,11 @@ import {
   metricsHandler,
   agentRunsTotal,
   agentToolCallsTotal,
+  agentLlmErrorTotal,
   agentLlmTokensTotal,
   agentLlmIterationTokens,
   agentLlmContextUsageRatio,
+  agentSseClients,
 } from "../shared/metrics.ts";
 import {
   comparePharmacyPrices,
@@ -395,6 +397,41 @@ let toolCallCapHitsTotal = 0;
 
 let agentPaused = false;
 
+// SSE client registry — one entry per open /agent/stream connection
+const sseClients = new Set<express.Response>();
+
+function serializeSSEData(event: string, data: unknown): string {
+  try {
+    return JSON.stringify(data) ?? "null";
+  } catch (err) {
+    logger.warn({ err, event }, "[sse] Failed to serialize payload");
+    return JSON.stringify({
+      error: "sse_payload_not_serializable",
+      event,
+    });
+  }
+}
+
+function writeSSEEvent(client: express.Response, event: string, data: unknown): void {
+  client.write(`event: ${event}\ndata: ${serializeSSEData(event, data)}\n\n`);
+}
+
+function refreshSSEClientGauge(): void {
+  agentSseClients.set(sseClients.size);
+}
+
+function broadcastSSE(event: string, data: unknown): void {
+  const payload = `event: ${event}\ndata: ${serializeSSEData(event, data)}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.write(payload);
+    } catch {
+      sseClients.delete(client);
+      refreshSSEClientGauge();
+    }
+  }
+}
+
 // In-memory cache for wallet balances (5s TTL)
 interface WalletCacheEntry {
   data: { usdc: string; xlm: string; address: string };
@@ -505,13 +542,51 @@ app.post("/agent/pause", (_req, res) => {
   agentPaused = true;
   logger.info("agent paused by caregiver");
   notify({ level: "warning", title: "Agent Paused", description: "CareGuard agent has been paused by the caregiver. No payments or actions will be processed until resumed." });
+  broadcastSSE("status", { paused: true });
   res.json({ paused: true });
 });
 app.post("/agent/resume", (_req, res) => {
   agentPaused = false;
   logger.info("agent resumed by caregiver");
   notify({ level: "info", title: "Agent Resumed", description: "CareGuard agent has been resumed and is now processing actions." });
+  broadcastSSE("status", { paused: false });
   res.json({ paused: false });
+});
+
+// SSE stream: pushes spending, transactions, and agent status on state changes.
+// Clients reconnect automatically via the EventSource API; heartbeats keep the
+// connection alive through proxies that close idle connections.
+app.get("/agent/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const recipientId = (req.query.recipient_id as string) || "rosa";
+  setCurrentRecipient(recipientId);
+
+  writeSSEEvent(res, "spending", getSpendingSummary());
+  writeSSEEvent(res, "status", { paused: agentPaused });
+  writeSSEEvent(res, "transactions", getSpendingTracker());
+
+  sseClients.add(res);
+  refreshSSEClientGauge();
+
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(": heartbeat\n\n");
+    } catch {
+      sseClients.delete(res);
+      refreshSSEClientGauge();
+      clearInterval(heartbeat);
+    }
+  }, 30_000);
+
+  req.on("close", () => {
+    sseClients.delete(res);
+    refreshSSEClientGauge();
+    clearInterval(heartbeat);
+  });
 });
 
 app.post("/agent/run", async (req, res) => {
@@ -570,7 +645,7 @@ function validatePolicyPayload(body: any): { ok: true; policy: any } | { ok: fal
 
 app.post("/agent/policy", (req, res) => {
   const result = validatePolicyPayload(req.body);
-  if (!result.ok) return res.status(400).json({ error: "Invalid policy", details: result.errors });
+  if (result.ok === false) return res.status(400).json({ error: "Invalid policy", details: result.errors });
   const recipientId = (req.query.recipient_id as string) || "rosa";
   setCurrentRecipient(recipientId);
   setSpendingPolicy(result.policy);
