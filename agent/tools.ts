@@ -51,24 +51,42 @@ const signer = createEd25519Signer(AGENT_SECRET_KEY, "stellar:testnet");
 const x402ClientInstance = new x402Client().register("stellar:testnet", new ExactStellarScheme(signer));
 const x402Fetch = wrapFetchWithPayment(fetch, x402ClientInstance);
 
-// --- MPP Client: Auto-handles 402 for medication order payments ---
+// --- MPP Client: Lazy constructor with 60s cache for runtime network switch (#196) ---
 // Track the latest MPP tx hash from progress events
 let lastMppTxHash: string | undefined;
+let _mppClient: ReturnType<typeof Mppx.create> | undefined;
+let _mppClientExpiresAt = 0;
 
-const mppClient = Mppx.create({
-  methods: [
-    stellarCharge({
-      keypair: agentKeypair,
-      mode: "pull",
-      onProgress: (event) => {
-        logger.info({ type: event.type, hash: "hash" in event ? (event as any).hash : undefined }, "[MPP] progress");
-        if (event.type === "paid" && "hash" in event) {
-          lastMppTxHash = (event as any).hash;
-        }
-      },
-    }),
-  ],
-  polyfill: false,
+export function getMppClient(): ReturnType<typeof Mppx.create> {
+  const now = Date.now();
+  if (_mppClient && now < _mppClientExpiresAt) return _mppClient;
+  _mppClient = Mppx.create({
+    methods: [
+      stellarCharge({
+        keypair: agentKeypair,
+        mode: "pull",
+        onProgress: (event) => {
+          logger.info({ type: event.type, hash: "hash" in event ? (event as any).hash : undefined }, "[MPP] progress");
+          if (event.type === "paid" && "hash" in event) {
+            lastMppTxHash = (event as any).hash;
+          }
+        },
+      }),
+    ],
+    polyfill: false,
+  });
+  _mppClientExpiresAt = now + 60_000;
+  return _mppClient;
+}
+
+export function invalidateMppClientCache(): void {
+  _mppClient = undefined;
+  _mppClientExpiresAt = 0;
+}
+
+process.on("SIGHUP", () => {
+  invalidateMppClientCache();
+  logger.info("[MPP] client cache invalidated via SIGHUP");
 });
 
 // --- Persistent spending tracker ---
@@ -99,6 +117,11 @@ const POLICY_FILE = `${DATA_DIR}/policy.json`;
 
 const MAX_PAYMENT = 1000;
 const MAX_ERROR_LENGTH = 500;
+
+// --- Metric: count sequence-number retries in payBill (#197 / #282) ---
+let paybillSeqRetryTotal = 0;
+export function getPaybillSeqRetryTotal(): number { return paybillSeqRetryTotal; }
+export function resetPaybillSeqRetryTotal(): void { paybillSeqRetryTotal = 0; }
 
 function truncateError(message: string): string {
   return message.replace(/<[^>]*>/g, "").slice(0, MAX_ERROR_LENGTH);
@@ -369,7 +392,7 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
   lastMppTxHash = undefined; // reset before this payment
 
   try {
-    const response = await mppClient.fetch(`${PHARMACY_PAYMENT_API}/pharmacy/order`, {
+    const response = await getMppClient().fetch(`${PHARMACY_PAYMENT_API}/pharmacy/order`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ drug: drugName, pharmacy: pharmacyName, amount }),
@@ -412,6 +435,26 @@ export async function payForMedication(pharmacyId: string, pharmacyName: string,
   return { success: true, transaction: tx };
 }
 
+// Helper: build, sign, and submit a single USDC payment so payBill can retry on tx_bad_seq
+async function buildAndSubmitUsdcPayment(account: any, recipientKey: string, amount: number): Promise<string> {
+  const usdcAsset = new Asset("USDC", USDC_ISSUER);
+  const stellarTx = new TransactionBuilder(account, {
+    fee: "100",
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(Operation.payment({ destination: recipientKey, asset: usdcAsset, amount: amount.toFixed(7) }))
+    .setTimeout(30)
+    .build();
+  stellarTx.sign(agentKeypair);
+  const sigHint = stellarTx.signatures[0]?.hint();
+  if (!sigHint || !sigHint.equals(agentKeypair.signatureHint())) {
+    throw new Error(`Signer mismatch: expected ${agentKeypair.publicKey()} — refusing to submit`);
+  }
+  console.log(`  [Stellar] Signer verified: ${agentKeypair.publicKey().slice(0, 8)}...`);
+  const result = await horizonServer.submitTransaction(stellarTx);
+  return (result as any).hash;
+}
+
 // --- Tool: Pay a medical bill via real Stellar USDC transfer ---
 export async function payBill(providerId: string, providerName: string, description: string, amount: number, skipApproval: boolean = false) {
   if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_PAYMENT) {
@@ -439,37 +482,20 @@ export async function payBill(providerId: string, providerName: string, descript
   let stellarTxHash: string | undefined;
 
   try {
-    const account = await horizonServer.loadAccount(agentKeypair.publicKey());
-    const usdcAsset = new Asset("USDC", USDC_ISSUER);
-
-    const stellarTx = new TransactionBuilder(account, {
-      fee: "100",
-      networkPassphrase: Networks.TESTNET,
-    })
-      .addOperation(
-        Operation.payment({
-          destination: recipientKey,
-          asset: usdcAsset,
-          amount: amount.toFixed(7),
-        })
-      )
-      .setTimeout(30)
-      .build();
-
-    stellarTx.sign(agentKeypair);
-
-    // Belt-and-braces: verify the signed envelope's signer hint matches the agent keypair
-    // before broadcast — cheap guard against future wallet mix-ups.
-    const sigHint = stellarTx.signatures[0]?.hint();
-    if (!sigHint || !sigHint.equals(agentKeypair.signatureHint())) {
-      throw new Error(
-        `Signer mismatch: expected ${agentKeypair.publicKey()} — refusing to submit`
-      );
+    let account = await horizonServer.loadAccount(agentKeypair.publicKey());
+    try {
+      stellarTxHash = await buildAndSubmitUsdcPayment(account, recipientKey, amount);
+    } catch (submitErr: any) {
+      const codes = submitErr?.response?.data?.extras?.result_codes;
+      if (codes?.transaction === "tx_bad_seq") {
+        paybillSeqRetryTotal++;
+        logger.warn({ paybill_seq_retry_total: paybillSeqRetryTotal }, "[Stellar] tx_bad_seq — reloading account and retrying");
+        account = await horizonServer.loadAccount(agentKeypair.publicKey());
+        stellarTxHash = await buildAndSubmitUsdcPayment(account, recipientKey, amount);
+      } else {
+        throw submitErr;
+      }
     }
-    console.log(`  [Stellar] Signer verified: ${agentKeypair.publicKey().slice(0, 8)}...`);
-
-    const result = await horizonServer.submitTransaction(stellarTx);
-    stellarTxHash = (result as any).hash;
     logger.info({ txHash: stellarTxHash }, "[Stellar] TX confirmed");
   } catch (err: any) {
     const errorDetail = err?.response?.data?.extras?.result_codes || err.message;
