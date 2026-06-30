@@ -931,6 +931,11 @@ function roundBudget(v: number): number {
 
 const MAX_ERROR_LENGTH = 500;
 
+// --- Metric: count sequence-number retries in payBill (#197 / #282) ---
+let paybillSeqRetryTotal = 0;
+export function getPaybillSeqRetryTotal(): number { return paybillSeqRetryTotal; }
+export function resetPaybillSeqRetryTotal(): void { paybillSeqRetryTotal = 0; }
+
 function truncateError(message: string): string {
   return message.replace(/<[^>]*>/g, '').slice(0, MAX_ERROR_LENGTH);
 }
@@ -2063,6 +2068,26 @@ export async function payForMedication(
   }
 
   return { success: true, transaction: tx };
+}
+
+// Helper: build, sign, and submit a single USDC payment so payBill can retry on tx_bad_seq
+async function buildAndSubmitUsdcPayment(account: any, recipientKey: string, amount: number): Promise<string> {
+  const usdcAsset = new Asset("USDC", USDC_ISSUER);
+  const stellarTx = new TransactionBuilder(account, {
+    fee: "100",
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(Operation.payment({ destination: recipientKey, asset: usdcAsset, amount: amount.toFixed(7) }))
+    .setTimeout(30)
+    .build();
+  stellarTx.sign(agentKeypair);
+  const sigHint = stellarTx.signatures[0]?.hint();
+  if (!sigHint || !sigHint.equals(agentKeypair.signatureHint())) {
+    throw new Error(`Signer mismatch: expected ${agentKeypair.publicKey()} — refusing to submit`);
+  }
+  console.log(`  [Stellar] Signer verified: ${agentKeypair.publicKey().slice(0, 8)}...`);
+  const result = await horizonServer.submitTransaction(stellarTx);
+  return (result as any).hash;
 }
 
 // --- Tool: Pay a medical bill via real Stellar USDC transfer ---

@@ -158,6 +158,15 @@ if (env.data.STELLAR_NETWORK !== "public" && !env.data.OZ_FACILITATOR_API_KEY) {
   logger.warn("OZ_FACILITATOR_API_KEY not set — x402 routes will fail until configured");
 }
 
+// Multi-pharmacy mode requires PHARMACY_2_PUBLIC_KEY (#195)
+const MULTI_PHARMACY_MODE = process.env.MULTI_PHARMACY_MODE === "true";
+if (MULTI_PHARMACY_MODE && !process.env.PHARMACY_2_PUBLIC_KEY) {
+  process.stderr.write(
+    "Missing/invalid env: PHARMACY_2_PUBLIC_KEY — required when MULTI_PHARMACY_MODE=true\n",
+  );
+  process.exit(1);
+}
+
 const PORT = env.data.PORT;
 const LLM_BASE_URL = env.data.LLM_BASE_URL || "https://api.groq.com/openai/v1";
 const LLM_MODEL = env.data.LLM_MODEL || "llama-3.3-70b-versatile";
@@ -787,8 +796,9 @@ applyX402Middleware(app, {
     accepts: {
       scheme: "exact",
       network: NETWORK,
-      payTo:
-        process.env.PHARMACY_2_PUBLIC_KEY || process.env.PHARMACY_1_PUBLIC_KEY!,
+      payTo: MULTI_PHARMACY_MODE
+        ? process.env.PHARMACY_2_PUBLIC_KEY!
+        : env.data.PHARMACY_1_PUBLIC_KEY,
       price: "$0.001",
     },
     description: "Drug interaction check — $0.001 USDC",
