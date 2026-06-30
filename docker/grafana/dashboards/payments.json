@@ -1,0 +1,119 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "USDC Payments Total",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "payments_usdc_total", "legendFormat": "{{type}}" }
+      ],
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 }
+    },
+    {
+      "title": "Payment Rejections by Reason",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "payment_rejected_total", "legendFormat": "{{reason}}" }
+      ],
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 }
+    },
+    {
+      "title": "Spending by Category",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "agent_spending_usd{category=\"medications\"}", "legendFormat": "Medications" },
+        { "expr": "agent_spending_usd{category=\"bills\"}", "legendFormat": "Bills" },
+        { "expr": "agent_spending_usd{category=\"service_fees\"}", "legendFormat": "Service Fees" }
+      ],
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 }
+    },
+    {
+      "title": "Transaction Status Breakdown",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(agent_transactions_total{status=\"completed\"}[5m])", "legendFormat": "Completed/sec" },
+        { "expr": "rate(agent_transactions_total{status=\"pending\"}[5m])", "legendFormat": "Pending/sec" },
+        { "expr": "rate(agent_transactions_total{status=\"rejected\"}[5m])", "legendFormat": "Rejected/sec" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 }
+    },
+    {
+      "title": "Transaction Volume by Status",
+      "type": "piechart",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "agent_transactions_total", "legendFormat": "{{status}}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 }
+    },
+    {
+      "title": "Stellar Transactions Submitted",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "stellar_tx_submitted_total", "legendFormat": "{{result}}" }
+      ],
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 12 }
+    },
+    {
+      "title": "Stellar Transaction Rate",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(stellar_tx_submitted_total[5m])", "legendFormat": "{{result}}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
+    },
+    {
+      "title": "Stellar Bad-Sequence Retries",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "stellar_tx_bad_seq_retries_total", "legendFormat": "Retries" }
+      ],
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 12 }
+    },
+    {
+      "title": "Fee-Bump Transactions",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "stellar_fee_bumps_total", "legendFormat": "Fee bumps" }
+      ],
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 12 }
+    },
+    {
+      "title": "x402 Settlements",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "x402_settlements_total", "legendFormat": "Settlements" }
+      ],
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 16 }
+    },
+    {
+      "title": "x402 Extraction Failures",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "x402_tx_extraction_failed_total", "legendFormat": "Failures" }
+      ],
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 16 }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["careguard", "payments"],
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "CareGuard - Payments",
+  "uid": "careguard-payments",
+  "version": 1
+}

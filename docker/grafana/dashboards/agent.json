@@ -1,0 +1,109 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Agent Runs",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "agent_runs_total", "legendFormat": "Total Runs" }],
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 }
+    },
+    {
+      "title": "Agent Runs Rate",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(agent_runs_total[5m])", "legendFormat": "Runs/sec" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 }
+    },
+    {
+      "title": "Agent Runs by Status",
+      "type": "piechart",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "agent_runs_total", "legendFormat": "{{status}}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 }
+    },
+    {
+      "title": "Agent Iteration Limit Hits",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "agent_iteration_limit_total", "legendFormat": "Iteration limit" }],
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 }
+    },
+    {
+      "title": "LLM Tokens (24h)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "agent_llm_tokens_total{kind=\"prompt\"}", "legendFormat": "Prompt" },
+        { "expr": "agent_llm_tokens_total{kind=\"completion\"}", "legendFormat": "Completion" }
+      ],
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 }
+    },
+    {
+      "title": "LLM Tokens per Day",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(agent_llm_tokens_total{kind=\"prompt\"}[5m])", "legendFormat": "Prompt tokens/sec" },
+        { "expr": "rate(agent_llm_tokens_total{kind=\"completion\"}[5m])", "legendFormat": "Completion tokens/sec" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 }
+    },
+    {
+      "title": "LLM Context Usage Ratio",
+      "type": "gauge",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "agent_llm_context_usage_ratio", "legendFormat": "Context usage" }],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 }
+    },
+    {
+      "title": "LLM Latency",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "agent_llm_latency_ms", "legendFormat": "{{model}}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 }
+    },
+    {
+      "title": "LLM Errors",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "agent_llm_error_total", "legendFormat": "Errors" }],
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 28 }
+    },
+    {
+      "title": "Tool Calls by Tool",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(agent_tool_calls_total[5m])", "legendFormat": "{{tool}}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 }
+    },
+    {
+      "title": "Policy Blocks",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "increase(policy_blocks_total[1h])", "legendFormat": "{{reason}}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["careguard", "agent"],
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "CareGuard - Agent",
+  "uid": "careguard-agent",
+  "version": 1
+}
