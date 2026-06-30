@@ -142,6 +142,12 @@ export const stellarTxBadSeqRetriesTotal = new Counter({
   registers: [registry],
 });
 
+export const billAuditOversizedRejectionsTotal = new Counter({
+  name: "bill_audit_oversized_rejections_total",
+  help: "Total bill audit requests rejected for exceeding BILL_AUDIT_MAX_ITEMS",
+  registers: [registry],
+});
+
 export function metricsHandler(): RequestHandler {
   return async (req, res) => {
     const token = process.env.METRICS_TOKEN;

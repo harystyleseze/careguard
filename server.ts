@@ -15,8 +15,9 @@ import OpenAI from "openai";
 import { Mppx, Store } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { fileURLToPath } from "url";
+import lock from "proper-lockfile";
 import { z } from "zod";
 
 // x402 middleware
@@ -43,6 +44,7 @@ import {
   agentRunsTotal,
   agentToolCallsTotal,
   pharmacyUnknownDrugTotal,
+  billAuditOversizedRejectionsTotal,
 } from "./shared/metrics.ts";
 
 // Shared agent pause state + wallet low-balance scheduler
@@ -749,6 +751,18 @@ app.get("/bill/sample", (req, res) => {
   });
 });
 
+// Reject oversized bill audit requests BEFORE x402 payment is charged (issue #13)
+const BILL_AUDIT_MAX_ITEMS = parseInt(process.env.BILL_AUDIT_MAX_ITEMS || "500", 10);
+app.post("/bill/audit", (req, res, next) => {
+  const items = req.body?.lineItems;
+  if (Array.isArray(items) && items.length > BILL_AUDIT_MAX_ITEMS) {
+    billAuditOversizedRejectionsTotal.inc();
+    res.status(400).json({ error: `lineItems exceeds max (${BILL_AUDIT_MAX_ITEMS})` });
+    return;
+  }
+  next();
+});
+
 // x402 for bill audit
 applyX402Middleware(app, {
   "POST /bill/audit": {
@@ -846,12 +860,38 @@ function createMppStore(filePath: string) {
 
 function loadOrders(): any[] {
   if (!existsSync(ORDERS_FILE)) return [];
-  return JSON.parse(readFileSync(ORDERS_FILE, "utf-8"));
+  try {
+    return JSON.parse(readFileSync(ORDERS_FILE, "utf-8"));
+  } catch {
+    return [];
+  }
 }
-function saveOrder(order: any) {
-  const orders = loadOrders();
-  orders.push(order);
-  writeFileSync(ORDERS_FILE, JSON.stringify(orders, null, 2));
+
+async function saveOrder(order: any): Promise<void> {
+  // Ensure the file exists before locking (proper-lockfile requires it)
+  if (!existsSync(ORDERS_FILE)) {
+    writeFileSync(ORDERS_FILE, "[]", "utf-8");
+  }
+  let release: (() => Promise<void>) | undefined;
+  try {
+    release = await lock.lock(ORDERS_FILE, { retries: 10, stale: 5000 });
+    const orders = loadOrders();
+    orders.push(order);
+    const tempFile = `${ORDERS_FILE}.tmp-${Date.now()}`;
+    writeFileSync(tempFile, JSON.stringify(orders, null, 2), "utf-8");
+    renameSync(tempFile, ORDERS_FILE);
+  } catch (err: any) {
+    if (err?.code === "ELOCKED") {
+      const e = new Error("Order storage temporarily unavailable — lock timeout. Please retry.");
+      (e as any).status = 503;
+      throw e;
+    }
+    throw err;
+  } finally {
+    if (release) {
+      try { await release(); } catch {}
+    }
+  }
 }
 
 const mppx = Mppx.create({
@@ -920,7 +960,15 @@ app.post("/pharmacy/order", perRouteLimiters.pharmacyOrder, concurrentRequestsMi
     network: NETWORK,
     protocol: "MPP Charge",
   };
-  saveOrder(order);
+  try {
+    await saveOrder(order);
+  } catch (err: any) {
+    if (err?.status === 503) {
+      res.status(503).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
   const response = result.withReceipt(
     Response.json({
       success: true,

@@ -27,6 +27,7 @@ import { logger } from "../../shared/logger.ts";
 import { requestContextMiddleware } from "../../shared/request-context.ts";
 import { requestLoggerMiddleware } from "../../shared/request-logger.ts";
 import { sanitizeUserString } from "../../shared/sanitize.ts";
+import { billAuditOversizedRejectionsTotal } from "../../shared/metrics.ts";
 
 const PORT = parseInt(process.env.BILL_AUDIT_API_PORT || "3002");
 const PAY_TO = process.env.BILL_PROVIDER_PUBLIC_KEY;
@@ -240,6 +241,18 @@ app.get("/bill/sample", (req, res) => {
       { description: "Injection, subcutaneous", cptCode: "96372", quantity: 2, chargedAmount: 50 },
     ],
   });
+});
+
+// Reject oversized bill audit requests BEFORE x402 payment is charged (issue #13)
+const BILL_AUDIT_MAX_ITEMS = parseInt(process.env.BILL_AUDIT_MAX_ITEMS || "500", 10);
+app.post("/bill/audit", (req, res, next) => {
+  const items = req.body?.lineItems;
+  if (Array.isArray(items) && items.length > BILL_AUDIT_MAX_ITEMS) {
+    billAuditOversizedRejectionsTotal.inc();
+    res.status(400).json({ error: `lineItems exceeds max (${BILL_AUDIT_MAX_ITEMS})` });
+    return;
+  }
+  next();
 });
 
 // x402 payment middleware

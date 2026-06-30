@@ -116,6 +116,10 @@ function sortPairsBySeverity(pairs: any[]) {
   });
 }
 
+function toTitleCase(s: string): string {
+  return s.trim().charAt(0).toUpperCase() + s.trim().slice(1).toLowerCase();
+}
+
 export function checkInteractions(medications: string[]) {
   const normalizedMedications = medications.map((medication) =>
     medication.toLowerCase().trim(),
@@ -139,8 +143,8 @@ export function checkInteractions(medications: string[]) {
             normalizedMedications[right] === first)
         ) {
           found.push({
-            drug1: medications[left],
-            drug2: medications[right],
+            drug1: toTitleCase(medications[left]),
+            drug2: toTitleCase(medications[right]),
             severity: interaction.severity,
             description: interaction.description,
             recommendation: interaction.recommendation,
@@ -158,7 +162,7 @@ export function checkInteractions(medications: string[]) {
   ).length;
 
   return {
-    medications,
+    medications: medications.map(toTitleCase),
     interactionCount: found.length,
     severeCount,
     moderateCount,
