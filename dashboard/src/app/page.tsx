@@ -18,11 +18,26 @@ import { WalletTab } from "../components/tabs/wallet-tab";
 import { DASHBOARD_TABS, type Tab } from "../components/types";
 import { useAgentState } from "../hooks/use-agent-state";
 import { useProfile } from "../lib/useProfile";
+import { useRecipients } from "../lib/useRecipients";
+import { ConfigErrorPage } from "../components/config-error-page";
+import { AGENT_URL } from "../lib/agent-url";
+
 
 export default function Dashboard() {
+  // In production, AGENT_URL is null when NEXT_PUBLIC_API_URL is unset.
+  // Show a configuration error page rather than a confusing connection failure
+  // to localhost (#222).
+  if (AGENT_URL === null) {
+    return <ConfigErrorPage />;
+  }
+
   const { recipient, caregiver, updateProfile } = useProfile();
+  const { recipients, selectedId, selectRecipient } = useRecipients((profile) => {
+    updateProfile({ recipient: profile });
+  });
   const pathname = usePathname();
   const searchParams = useSearchParams();
+
 
   const recipientInitials = recipient.name
     .split(" ")
@@ -61,6 +76,16 @@ export default function Dashboard() {
         walletXlm={state.walletXlm}
         onResume={state.togglePause}
       />
+      {state.agentResult?.truncated && (
+        <div
+          role="alert"
+          className="mx-auto max-w-7xl px-4 pt-4"
+        >
+          <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 text-sm text-yellow-800">
+            The last agent task was truncated — the result may be incomplete. Consider re-running with a more focused request.
+          </div>
+        </div>
+      )}
       <DashboardHeader
         recipient={recipient}
         recipientInitials={recipientInitials}
@@ -69,6 +94,12 @@ export default function Dashboard() {
         agentPaused={state.agentPaused}
         walletBalance={state.walletBalance}
         onTogglePause={state.togglePause}
+        recipients={recipients}
+        selectedRecipientId={selectedId}
+        onSelectRecipient={selectRecipient}
+        agentInfoError={state.agentInfoError}
+        spendingError={state.spendingError}
+        transactionsError={state.transactionsError}
       />
       <div className="max-w-7xl mx-auto px-4 py-6 overflow-x-hidden">
         <DashboardTabsNav activeTab={activeTab} pathname={pathname} />
@@ -80,14 +111,21 @@ export default function Dashboard() {
             loading={state.loading}
             activeTask={state.activeTask}
             onRunTask={state.runAgentTask}
+            onCancelTask={state.cancelAgentTask}
             recipient={recipient}
           />
         )}
         {activeTab === "medications" && (
-          <MedicationsTab agentResult={state.agentResult} recipient={recipient} />
+          <MedicationsTab
+            agentResult={state.agentResult}
+            recipient={recipient}
+          />
         )}
         {activeTab === "bills" && (
-          <BillsTab agentResult={state.agentResult} recipient={recipient} caregiverName={caregiver.name} />
+          <BillsTab
+            agentResult={state.agentResult}
+            recipient={recipient}
+          />
         )}
         {activeTab === "approvals" && (
           <ApprovalsTab agentConnected={state.agentConnected} />
@@ -109,6 +147,11 @@ export default function Dashboard() {
             agentInfo={state.agentInfo}
             walletBalance={state.walletBalance}
             walletXlm={state.walletXlm}
+            walletBalanceState={state.walletBalanceState}
+            walletBalanceError={state.walletBalanceError}
+            loadingWalletBalance={state.loadingWalletBalance}
+            onRetryWalletBalance={state.retryWalletBalance}
+            loadingAgentInfo={state.loadingAgentInfo}
           />
         )}
         {activeTab === "activity" && (
@@ -125,6 +168,8 @@ export default function Dashboard() {
             setPageSize={state.setPageSize}
             spending={state.spending}
             onResetAgent={state.resetAgent}
+            loadingTransactions={state.loadingTransactions}
+            loadingSpending={state.loadingSpending}
           />
         )}
         {activeTab === "settings" && (
@@ -135,6 +180,9 @@ export default function Dashboard() {
             agentPaused={state.agentPaused}
             onTogglePause={state.togglePause}
             onUpdateProfile={updateProfile}
+            recipients={recipients}
+            selectedRecipientId={selectedId}
+            onSelectRecipient={selectRecipient}
           />
         )}
       </div>

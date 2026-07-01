@@ -2,6 +2,7 @@
 const { mockMppFetch, onProgressHolder, MOCK_HINT } = vi.hoisted(() => {
   process.env.AGENT_SECRET_KEY = "SBWWZYCAFDDJXNRRMKSFNRB6OTVZHTCMPUCVZ4FBZLSPHFKHYLPRTJCD";
   process.env.MOCK_NETWORK = "1";
+  process.env.SPENDING_TIMEZONE = "UTC";
   const onProgressHolder: { fn?: (event: any) => void } = {};
   return {
     mockMppFetch: vi.fn(),
@@ -12,13 +13,25 @@ const { mockMppFetch, onProgressHolder, MOCK_HINT } = vi.hoisted(() => {
 
 vi.mock("dotenv/config", () => ({}));
 vi.mock("fs", () => ({
-  readFileSync: vi.fn((filePath: string) =>
-    String(filePath).includes("spending.json")
-      ? JSON.stringify({ medications: 0, bills: 0, serviceFees: 0, transactions: [] })
-      : "{}",
-  ),
+  readFileSync: vi.fn((filePath: string) => {
+    const key = String(filePath);
+    // Snapshot file: return a minimal snapshot so the new read path works
+    if (key.includes("spending.snapshot.json")) {
+      return JSON.stringify({ medications: 0, bills: 0, serviceFees: 0, transactions: [], _snapshotTxCount: 0 });
+    }
+    if (key.includes("spending.json")) {
+      return JSON.stringify({ medications: 0, bills: 0, serviceFees: 0, transactions: [] });
+    }
+    return "{}";
+  }),
   writeFileSync: vi.fn(),
-  existsSync: vi.fn((filePath: string) => String(filePath).includes("spending.json")),
+  appendFileSync: vi.fn(),
+  unlinkSync: vi.fn(),
+  existsSync: vi.fn((filePath: string) => {
+    const key = String(filePath);
+    // Expose snapshot files so the read path takes the new snapshot branch
+    return key.includes("spending.snapshot.json") || key.includes("spending.json");
+  }),
   mkdirSync: vi.fn(),
   renameSync: vi.fn(),
 }));
@@ -136,6 +149,51 @@ describe("Spending Policy", () => {
   it("should allow valid amounts within policy", () => {
     const policy = checkSpendingPolicy(50, "medications");
     expect(policy.allowed).toBe(true);
+  });
+
+  it("counts transactions at midnight and 1ms past midnight in the current day", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
+
+    const tracker = loadSpending("rosa");
+    tracker.transactions = [
+      {
+        id: "tx-midnight",
+        timestamp: "2026-04-10T00:00:00.000Z",
+        type: "payment",
+        description: "Midnight medication",
+        amount: 40,
+        recipient: "pharmacy-1",
+        status: "completed",
+        category: "medications",
+      },
+      {
+        id: "tx-midnight-plus-1ms",
+        timestamp: "2026-04-10T00:00:00.001Z",
+        type: "payment",
+        description: "Midnight medication +1ms",
+        amount: 40,
+        recipient: "pharmacy-1",
+        status: "completed",
+        category: "medications",
+      },
+      {
+        id: "tx-previous-day",
+        timestamp: "2026-04-09T23:59:59.999Z",
+        type: "payment",
+        description: "Previous day medication",
+        amount: 10,
+        recipient: "pharmacy-1",
+        status: "completed",
+        category: "medications",
+      },
+    ] as any;
+
+    const policy = checkSpendingPolicy(30, "medications");
+    expect(policy.allowed).toBe(false);
+    expect(policy.reason).toContain("Already spent today: $80.00");
+
+    vi.useRealTimers();
   });
 });
 

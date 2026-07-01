@@ -11,8 +11,8 @@
  *  5. Negative value rejected client-side (validatePolicy via form validation)
  */
 
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, act, waitFor, within } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
 import { PolicyTab } from "../components/tabs/policy-tab";
 import type { PolicyTabProps } from "../components/tabs/policy-tab";
 
@@ -20,10 +20,11 @@ const RECIPIENT = { name: "Rosa Garcia" };
 
 const BASE_POLICY = {
   dailyLimit: 100,
-  monthlyLimit: 500,
+  monthlyLimit: 800,
   medicationMonthlyBudget: 300,
   billMonthlyBudget: 500,
   approvalThreshold: 75,
+  holdTimeSeconds: 0,
 };
 
 function buildProps(overrides: Partial<PolicyTabProps> = {}): PolicyTabProps {
@@ -54,10 +55,11 @@ describe("PolicyTab — rendering (Issue #47)", () => {
     const props = buildProps({
       policyForm: {
         dailyLimit: 120,
-        monthlyLimit: 600,
+        monthlyLimit: 700,
         medicationMonthlyBudget: 250,
         billMonthlyBudget: 450,
         approvalThreshold: 80,
+        holdTimeSeconds: 0,
       },
     });
     render(<PolicyTab {...props} />);
@@ -66,7 +68,7 @@ describe("PolicyTab — rendering (Issue #47)", () => {
     const monthlyInput = screen.getByLabelText(/Monthly Spending Limit/i) as HTMLInputElement;
 
     expect(dailyInput.value).toBe("120");
-    expect(monthlyInput.value).toBe("600");
+    expect(monthlyInput.value).toBe("700");
   });
 
   it("renders the 'Update Policy' button when policySaved is false", () => {
@@ -82,6 +84,11 @@ describe("PolicyTab — rendering (Issue #47)", () => {
   it("renders recipient name in heading", () => {
     render(<PolicyTab {...buildProps()} />);
     expect(screen.getByText(/Rosa Garcia/)).toBeTruthy();
+  });
+
+  it("matches snapshot to ensure dashboard text remains accurate", () => {
+    const { container } = render(<PolicyTab {...buildProps()} />);
+    expect(container).toMatchSnapshot();
   });
 });
 
@@ -114,7 +121,7 @@ describe("PolicyTab — form interaction (Issue #47)", () => {
     render(
       <PolicyTab
         {...buildProps({
-          policyForm: { ...BASE_POLICY, dailyLimit: 600 }, // 600 > monthlyLimit 500
+          policyForm: { ...BASE_POLICY, dailyLimit: 900 }, // 900 > monthlyLimit 800
         })}
       />,
     );
@@ -230,6 +237,105 @@ describe("PolicyTab — policySaved prop drives button appearance (Issue #47)", 
     const btn = screen.getByRole("button", { name: /Update Policy/i });
     expect(btn).toBeTruthy();
     expect(btn.className).toContain("bg-sky-500");
+  });
+});
+
+// --- Confirmation for sensitive (limit-raising) policy changes (Issue #216) ---
+
+describe("PolicyTab — limit-increase confirmation (Issue #216)", () => {
+  function withBaseline(
+    formOverrides: Partial<typeof BASE_POLICY>,
+    onUpdatePolicy = vi.fn().mockResolvedValue({ ok: true }),
+  ): PolicyTabProps {
+    return buildProps({
+      policyForm: { ...BASE_POLICY, ...formOverrides },
+      spending: { policy: { ...BASE_POLICY } } as never,
+      onUpdatePolicy,
+    });
+  }
+
+  function submitForm() {
+    const form = screen
+      .getByRole("button", { name: /Update Policy/i })
+      .closest("form")!;
+    fireEvent.submit(form);
+  }
+
+  it("decreasing a limit saves without a confirmation dialog", async () => {
+    const onUpdatePolicy = vi.fn().mockResolvedValue({ ok: true });
+    render(<PolicyTab {...withBaseline({ medicationMonthlyBudget: 200 }, onUpdatePolicy)} />);
+
+    await act(async () => {
+      submitForm();
+    });
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onUpdatePolicy).toHaveBeenCalledTimes(1);
+  });
+
+  it("raising a limit opens a confirmation dialog with the diff and saves on confirm", async () => {
+    const onUpdatePolicy = vi.fn().mockResolvedValue({ ok: true });
+    render(<PolicyTab {...withBaseline({ dailyLimit: 150 }, onUpdatePolicy)} />);
+
+    await act(async () => {
+      submitForm();
+    });
+
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/Confirm policy change/i)).toBeTruthy();
+    expect(within(dialog).getByText(/increases your spending exposure/i)).toBeTruthy();
+    // Diff shows the before and after values.
+    expect(within(dialog).getAllByText(/\$150/).length).toBeGreaterThan(0);
+    expect(onUpdatePolicy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: /Confirm & Save/i }));
+    });
+
+    expect(onUpdatePolicy).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancelling the confirmation does not save", async () => {
+    const onUpdatePolicy = vi.fn().mockResolvedValue({ ok: true });
+    render(<PolicyTab {...withBaseline({ dailyLimit: 150 }, onUpdatePolicy)} />);
+
+    await act(async () => {
+      submitForm();
+    });
+
+    const dialog = screen.getByRole("dialog");
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: /^Cancel$/i }));
+    });
+
+    expect(onUpdatePolicy).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("requires typing CONFIRM when a limit more than doubles", async () => {
+    const onUpdatePolicy = vi.fn().mockResolvedValue({ ok: true });
+    render(<PolicyTab {...withBaseline({ dailyLimit: 300 }, onUpdatePolicy)} />);
+
+    await act(async () => {
+      submitForm();
+    });
+
+    const dialog = screen.getByRole("dialog");
+    const confirmBtn = within(dialog).getByRole("button", {
+      name: /Confirm & Save/i,
+    }) as HTMLButtonElement;
+    expect(confirmBtn.disabled).toBe(true);
+
+    const typedInput = within(dialog).getByLabelText(/Type CONFIRM/i);
+    await act(async () => {
+      fireEvent.change(typedInput, { target: { value: "CONFIRM" } });
+    });
+    expect(confirmBtn.disabled).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(confirmBtn);
+    });
+    expect(onUpdatePolicy).toHaveBeenCalledTimes(1);
   });
 
   it("policySaved timeout logic: flag goes true then false after 3 s", () => {

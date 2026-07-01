@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   deriveWalletsFromSeed,
   DEV_SEED_FILE,
+  isMnemonicSeed,
   resolveSetupSeed,
 } from "../setup-wallets.ts";
 
@@ -24,6 +25,17 @@ function tempDir() {
 }
 
 describe("setup-wallets seed handling", () => {
+  it("derives the same six wallets from the same BIP-39 mnemonic", () => {
+    const mnemonic =
+      "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    const first = deriveWalletsFromSeed(mnemonic);
+    const second = deriveWalletsFromSeed(mnemonic);
+
+    expect(first).toEqual(second);
+    expect(first).toHaveLength(6);
+    expect(new Set(first.map((wallet) => wallet.publicKey)).size).toBe(6);
+  });
+
   it("derives the same six wallets from the same seed", () => {
     const first = deriveWalletsFromSeed("repeatable-dev-seed");
     const second = deriveWalletsFromSeed("repeatable-dev-seed");
@@ -56,6 +68,7 @@ describe("setup-wallets seed handling", () => {
     expect(first.source).toBe("generated");
     expect(second.source).toBe("file");
     expect(second.seed).toBe(first.seed);
+    expect(isMnemonicSeed(first.seed)).toBe(true);
     expect(readFileSync(path.join(cwd, DEV_SEED_FILE), "utf-8").trim()).toBe(first.seed);
   });
 

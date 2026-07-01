@@ -1,9 +1,6 @@
-Fixes #
+Closes #
 
 ## What changed
--
-
-## Why
 -
 
 ## How to test

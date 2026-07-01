@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from "react";
 import type { Transaction } from "../types";
+import { AGENT_URL } from "../../lib/agent-url";
+import { agentFetch } from "../../lib/agent-fetch";
 
-const AGENT_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3004";
 
 export interface ApprovalsTabProps {
   agentConnected: boolean;
@@ -16,7 +17,7 @@ export function ApprovalsTab({ agentConnected }: ApprovalsTabProps) {
 
   const fetchApprovals = async () => {
     try {
-      const res = await fetch(`${AGENT_URL}/agent/pending-approvals`);
+      const res = await agentFetch(`${AGENT_URL}/agent/pending-approvals`);
       if (!res.ok) return;
       const data = await res.json();
       setApprovals(data.approvals || []);
@@ -37,7 +38,7 @@ export function ApprovalsTab({ agentConnected }: ApprovalsTabProps) {
   const handleApprove = async (txId: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`${AGENT_URL}/agent/approvals/${txId}`, {
+      const res = await agentFetch(`${AGENT_URL}/agent/approvals/${txId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ approve: true }),
@@ -51,7 +52,7 @@ export function ApprovalsTab({ agentConnected }: ApprovalsTabProps) {
   const handleCancel = async (txId: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`${AGENT_URL}/agent/approvals/${txId}`, {
+      const res = await agentFetch(`${AGENT_URL}/agent/approvals/${txId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ approve: false }),

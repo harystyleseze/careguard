@@ -22,6 +22,9 @@ vi.mock("dotenv/config", () => ({}));
 vi.mock("fs", () => ({
   readFileSync: vi.fn().mockReturnValue("{}"),
   writeFileSync: vi.fn(),
+  appendFileSync: vi.fn(),
+  renameSync: vi.fn(),
+  unlinkSync: vi.fn(),
   existsSync: vi.fn().mockReturnValue(false),
   mkdirSync: vi.fn(),
 }));

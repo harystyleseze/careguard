@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "description": "AI agent for elderly care financial coordination on Stellar",
   "main": "index.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
+    "preinstall": "node -e \"const v=parseInt(process.versions.node);if(v<22){process.stderr.write('Node.js 22 or later is required (found '+process.version+').\\n');process.exit(1);}\"",
     "setup": "node --import tsx scripts/setup-wallets.ts",
     "pharmacy-api": "node --import tsx services/pharmacy-api/server.ts",
     "bill-audit-api": "node --import tsx services/bill-audit-api/server.ts",
@@ -13,11 +17,13 @@
     "services": "concurrently --kill-others-on-fail \"npm run pharmacy-api\" \"npm run bill-audit-api\" \"npm run drug-api\" \"npm run pharmacy-payment\"",
     "start": "node --import tsx server.ts",
     "dev": "node --import tsx server.ts",
-    "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit",
+    "typecheck": "tsc -b",
+    "build": "tsc -p tsconfig.build.json",
     "lint": "tsc --noEmit",
+    "gen-openapi": "node --import tsx scripts/gen-openapi.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "e2e": "cd dashboard && npx playwright test --config ../e2e/playwright.config.ts",
     "load": "k6 run load/agent-run.js",
     "check:env-vars": "tsx scripts/check-env-vars.ts"
   },
@@ -29,6 +35,8 @@
     "@sentry/node": "^8.45.1",
     "@stellar/mpp": "^0.4.0",
     "@stellar/stellar-sdk": "^14.6.1",
+    "@tailwindcss/postcss": "^4.3.1",
+    "@tanstack/react-virtual": "^3.14.4",
     "@x402/core": "^2.11.0",
     "@x402/express": "^2.11.0",
     "@x402/fetch": "^2.11.0",
@@ -36,19 +44,25 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^7.5.0",
     "glob": "^11.0.0",
     "helmet": "^8.2.0",
     "ioredis": "^5.6.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "mppx": "^0.6.5",
+    "next": "^16.2.9",
     "node-cron": "^3.0.3",
     "openai": "^6.36.0",
+    "pdf-parse": "^2.4.5",
     "pino": "^10.3.1",
     "prom-client": "^15.1.3",
-    "tsx": "^4.21.0",
-    "zod": "^3.25.76",
-    "express-rate-limit": "^7.5.0",
+    "proper-lockfile": "^4.1.2",
     "rate-limit-redis": "^4.2.0",
-    "proper-lockfile": "^4.1.2"
+    "sonner": "^2.0.7",
+    "tailwindcss": "^4.3.1",
+    "tsx": "^4.21.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
@@ -61,6 +75,7 @@
     "@types/node-cron": "^3.0.11",
     "@types/supertest": "^7.2.0",
     "@vitejs/plugin-react": "^4.3.0",
+    "@vitest/coverage-v8": "^3.2.6",
     "concurrently": "^9.2.1",
     "ioredis-mock": "^8.9.0",
     "jsdom": "^25.0.0",
@@ -69,6 +84,9 @@
     "react-dom": "^19.2.5",
     "supertest": "^7.2.2",
     "typescript": "5.8.3",
-    "vitest": "^2.1.8"
+    "vitest": "^3.2.6"
+  },
+  "overrides": {
+    "ws": "8.21.0"
   }
 }

@@ -2,6 +2,9 @@
   "name": "dashboard",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -11,20 +14,22 @@
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
-    "@sentry/nextjs": "^8.45.1",
+    "@sentry/nextjs": "^10.62.0",
     "@tanstack/react-virtual": "^3.13.24",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
-    "next": "16.2.4",
+    "next": "^16.2.9",
     "react": "19.2.5",
-    "react-dom": "19.2.5"
+    "react-dom": "19.2.5",
+    "sonner": "^2.0.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.54.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "pdf-parse": "^1.1.1",

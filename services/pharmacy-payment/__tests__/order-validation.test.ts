@@ -1,25 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { z } from "zod";
-
-const OrderAmountSchema = z.union([
-  z.number().min(0.01, "amount must be at least $0.01").max(10000, "amount must not exceed $10,000"),
-  z.string().transform((val, ctx) => {
-    const parsed = parseFloat(val);
-    if (!Number.isFinite(parsed)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "amount must be a valid number" });
-      return z.NEVER;
-    }
-    if (parsed < 0.01) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "amount must be at least $0.01" });
-      return z.NEVER;
-    }
-    if (parsed > 10000) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "amount must not exceed $10,000" });
-      return z.NEVER;
-    }
-    return parsed;
-  }),
-]);
+import {
+  MedicationOrderSchema,
+  OrderAmountSchema,
+} from "../validation.ts";
 
 describe("OrderAmountSchema", () => {
   it("accepts valid number amounts", () => {
@@ -52,5 +35,15 @@ describe("OrderAmountSchema", () => {
 
   it("rejects Infinity", () => {
     expect(() => OrderAmountSchema.parse("Infinity")).toThrow();
+  });
+
+  it("rejects overlong drug names", () => {
+    expect(() =>
+      MedicationOrderSchema.parse({
+        drug: "x".repeat(81),
+        pharmacy: "Costco",
+        amount: 10,
+      }),
+    ).toThrow();
   });
 });

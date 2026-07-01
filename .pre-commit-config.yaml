@@ -1,0 +1,8 @@
+# Pre-commit configuration for CareGuard secret scanning
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.2
+    hooks:
+      - id: gitleaks
+        name: Detect secrets via gitleaks
+        entry: gitleaks protect --verbose --redact --staged

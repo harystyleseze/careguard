@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { freeTextSchema } from "./free-text.ts";
 
 export const LineItemSchema = z
   .object({
-    description: z.string().min(1, "description is required"),
+    description: freeTextSchema("description"),
     cptCode: z
       .string()
       .regex(/^(?:\d{5}|J\d{4})$/, "cptCode must match /^(?:\\d{5}|J\\d{4})$/"),

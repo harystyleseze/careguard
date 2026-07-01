@@ -4,30 +4,42 @@
  */
 
 // vi.hoisted runs before any vi.mock factory
-const { mockMppFetch, onProgressHolder } = vi.hoisted(() => {
+const { mockMppFetch, onProgressHolder, mockFiles, MOCK_HINT } = vi.hoisted(() => {
   process.env.AGENT_SECRET_KEY = "SBWWZYCAFDDJXNRRMKSFNRB6OTVZHTCMPUCVZ4FBZLSPHFKHYLPRTJCD";
+  process.env.BILL_PROVIDER_PUBLIC_KEY = "GBILLPROVIDER";
   const onProgressHolder: { fn?: (event: any) => void } = {};
-  return { mockMppFetch: vi.fn(), onProgressHolder };
+  return { mockMppFetch: vi.fn(), onProgressHolder, mockFiles: new Map<string, string>(), MOCK_HINT: Buffer.from([0xca, 0xfe, 0xba, 0xbe]) };
 });
 
 vi.mock("dotenv/config", () => ({}));
 vi.mock("fs", () => ({
-  readFileSync: vi.fn().mockReturnValue("{}"),
-  writeFileSync: vi.fn(),
-  existsSync: vi.fn().mockReturnValue(false),
+  readFileSync: vi.fn((filePath: string) => mockFiles.get(String(filePath)) ?? "{}"),
+  writeFileSync: vi.fn((filePath: string, data: string) => {
+    mockFiles.set(String(filePath), String(data));
+  }),
+  appendFileSync: vi.fn(),
+  unlinkSync: vi.fn(),
+  existsSync: vi.fn((filePath: string) => mockFiles.has(String(filePath))),
   mkdirSync: vi.fn(),
+  renameSync: vi.fn((from: string, to: string) => {
+    const data = mockFiles.get(String(from));
+    if (data !== undefined) {
+      mockFiles.set(String(to), data);
+      mockFiles.delete(String(from));
+    }
+  }),
 }));
 vi.mock("@stellar/stellar-sdk", () => ({
-  Keypair: { fromSecret: vi.fn().mockReturnValue({ publicKey: () => "GPUB123", sign: vi.fn() }) },
+  Keypair: { fromSecret: vi.fn().mockReturnValue({ publicKey: () => "GPUB123", sign: vi.fn(), signatureHint: () => MOCK_HINT }) },
   Networks: { TESTNET: "Test SDF Network ; September 2015" },
   TransactionBuilder: vi.fn().mockReturnValue({
     addOperation: vi.fn().mockReturnThis(),
     setTimeout: vi.fn().mockReturnThis(),
-    build: vi.fn().mockReturnValue({ sign: vi.fn() }),
+    build: vi.fn().mockReturnValue({ sign: vi.fn(), signatures: [{ hint: () => MOCK_HINT }] }),
   }),
   Operation: { payment: vi.fn() },
   Asset: vi.fn(),
-  Horizon: { Server: vi.fn().mockReturnValue({ loadAccount: vi.fn(), submitTransaction: vi.fn() }) },
+  Horizon: { Server: vi.fn().mockReturnValue({ loadAccount: vi.fn(), submitTransaction: vi.fn().mockResolvedValue({ hash: "b".repeat(64) }) }) },
 }));
 vi.mock("@x402/stellar", () => ({
   createEd25519Signer: vi.fn().mockReturnValue({}),
@@ -48,9 +60,10 @@ vi.mock("mppx/client", () => ({
   Mppx: { create: vi.fn().mockReturnValue({ fetch: mockMppFetch }) },
 }));
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   payForMedication,
+  payBill,
   checkSpendingPolicy,
   resetSpendingTracker,
   setSpendingPolicy,
@@ -58,13 +71,14 @@ import {
 
 const DEFAULT_POLICY = {
   dailyLimit: 100,
-  monthlyLimit: 500,
+  monthlyLimit: 800,
   medicationMonthlyBudget: 300,
   billMonthlyBudget: 500,
   approvalThreshold: 75,
 };
 
 beforeEach(() => {
+  mockFiles.clear();
   mockMppFetch.mockReset();
   resetSpendingTracker("rosa");
   setSpendingPolicy("rosa", { ...DEFAULT_POLICY });
@@ -124,6 +138,32 @@ describe("payForMedication — policy-blocked (Issue #35)", () => {
     expect(r.error).toContain("BLOCKED BY SPENDING POLICY");
     expect(mockMppFetch).not.toHaveBeenCalled();
   });
+
+  it("includes a budgetContext payload on a budget overrun (Issue #160)", async () => {
+    setSpendingPolicy("rosa", { ...DEFAULT_POLICY, medicationMonthlyBudget: 5 });
+    const r = await payForMedication("p1", "Pharma", "Drug", 50);
+    expect(r.success).toBe(false);
+    const ctx = (r as any).budgetContext;
+    expect(ctx).toBeDefined();
+    expect(ctx).toMatchObject({
+      reason: "budget",
+      attempted: 50,
+    });
+    expect(typeof ctx.dailyRemaining).toBe("number");
+    expect(typeof ctx.monthlyRemaining).toBe("number");
+    expect(ctx.monthlyRemaining).toBe(5);
+    expect(typeof ctx.suggestion).toBe("string");
+    expect(ctx.suggestion.toLowerCase()).toContain("caregiver");
+  });
+
+  it("labels the budgetContext reason as daily_limit when the daily cap is the binding constraint (Issue #160)", async () => {
+    setSpendingPolicy("rosa", { ...DEFAULT_POLICY, dailyLimit: 40, approvalThreshold: 40 });
+    const r = await payForMedication("p1", "Pharma", "Drug", 50);
+    expect(r.success).toBe(false);
+    const ctx = (r as any).budgetContext;
+    expect(ctx.reason).toBe("daily_limit");
+    expect(ctx.attempted).toBe(50);
+  });
 });
 
 // --- Approval-required path ---
@@ -165,7 +205,7 @@ describe("payForMedication — MPP failure (Issue #35)", () => {
 // --- Success path ---
 
 describe("payForMedication — success path (Issue #35)", () => {
-  it("returns success:true, creates a completed transaction, and sets stellarTxHash from MPP progress event", async () => {
+  it("returns success:true and creates a completed transaction without relying on progress-event hashes", async () => {
     mockMppFetch.mockImplementationOnce(async () => {
       // Simulate the MPP progress event firing before the response resolves
       onProgressHolder.fn?.({ type: "paid", hash: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890" });
@@ -180,7 +220,7 @@ describe("payForMedication — success path (Issue #35)", () => {
     const tx = (r as any).transaction;
     expect(tx.status).toBe("completed");
     expect(tx.amount).toBe(50);
-    expect(tx.stellarTxHash).toBe("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
+    expect(tx.stellarTxHash).toBeUndefined();
   });
 
   it("populates mppOrderId from data.order.id — never stored as stellarTxHash", async () => {
@@ -198,8 +238,9 @@ describe("payForMedication — success path (Issue #35)", () => {
   });
 
   it("sets stellarTxHash from Payment-Receipt header when no progress event fired", async () => {
+    const validHash = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
     const encodedReceipt = Buffer.from(
-      JSON.stringify({ reference: "receipt-ref-abc", hash: "hashfromheader" })
+      JSON.stringify({ reference: validHash, hash: "hashfromheader" })
     ).toString("base64");
 
     mockMppFetch.mockResolvedValueOnce({
@@ -210,8 +251,25 @@ describe("payForMedication — success path (Issue #35)", () => {
     const r = await payForMedication("p1", "Pharma", "Drug", 50);
     expect(r.success).toBe(true);
     const tx = (r as any).transaction;
-    expect(tx.stellarTxHash).toBe("receipt-ref-abc");
+    expect(tx.stellarTxHash).toBe(validHash);
     expect(tx.mppOrderId).toBe("order-222");
+  });
+
+  it("normalizes a non-hex receipt reference to undefined instead of storing a raw blob (#14)", async () => {
+    const encodedReceipt = Buffer.from(
+      JSON.stringify({ reference: "receipt-ref-abc" })
+    ).toString("base64");
+
+    mockMppFetch.mockResolvedValueOnce({
+      json: async () => ({ success: true, order: { id: "order-223" } }),
+      headers: { get: (h: string) => (h === "Payment-Receipt" ? encodedReceipt : null) },
+    });
+
+    const r = await payForMedication("p1", "Pharma", "Drug", 50);
+    expect(r.success).toBe(true);
+    const tx = (r as any).transaction;
+    expect(tx.stellarTxHash).toBeUndefined();
+    expect(tx.mppOrderId).toBe("order-223");
   });
 
   it("accumulates spending in the tracker after a successful payment", async () => {
@@ -252,5 +310,111 @@ describe("checkSpendingPolicy — basic rules (Issue #35)", () => {
     setSpendingPolicy("rosa", { ...DEFAULT_POLICY, medicationMonthlyBudget: 20 });
     const r = checkSpendingPolicy(50, "medications");
     expect(r.allowed).toBe(false);
+  });
+
+  it("blocks medication + bill spending at the global monthly cap", async () => {
+    setSpendingPolicy("rosa", {
+      ...DEFAULT_POLICY,
+      dailyLimit: 500,
+      monthlyLimit: 120,
+      medicationMonthlyBudget: 80,
+      billMonthlyBudget: 40,
+      approvalThreshold: 500,
+    });
+    mockMppFetch.mockResolvedValueOnce({
+      json: async () => ({ success: true, order: { id: "order-global-cap" } }),
+      headers: { get: () => null },
+    });
+
+    await payForMedication("p1", "Pharma", "Drug", 80);
+    await payBill("provider-1", "Hospital", "Visit", 35);
+
+    const r = checkSpendingPolicy(10, "bills");
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toContain("overall monthly limit");
+  });
+
+  it("rejects policy saves where category budgets exceed monthlyLimit", () => {
+    expect(() =>
+      setSpendingPolicy("rosa", {
+        ...DEFAULT_POLICY,
+        monthlyLimit: 100,
+        medicationMonthlyBudget: 80,
+        billMonthlyBudget: 40,
+      }),
+    ).toThrow(/monthlyLimit/);
+  });
+});
+
+// --- Concurrency / budget atomicity (Issue #209) ---
+
+describe("payForMedication — concurrent calls cannot exceed budget (Issue #209)", () => {
+  it("5 parallel calls totaling more than budget: only as many succeed as the budget allows", async () => {
+    // Budget: $150 medication, $500 daily, each call $50 → exactly 3 should succeed
+    setSpendingPolicy("rosa", {
+      ...DEFAULT_POLICY,
+      dailyLimit: 500,
+      medicationMonthlyBudget: 150,
+      billMonthlyBudget: 500,
+      approvalThreshold: 500, // no approval gate
+    });
+
+    // All MPP calls succeed instantly
+    mockMppFetch.mockResolvedValue({
+      json: async () => ({ success: true, order: { id: "order-concurrent" } }),
+      headers: { get: () => null },
+    });
+
+    const results = await Promise.all([
+      payForMedication("p1", "Pharma", "DrugA", 50),
+      payForMedication("p1", "Pharma", "DrugA", 50),
+      payForMedication("p1", "Pharma", "DrugA", 50),
+      payForMedication("p1", "Pharma", "DrugA", 50),
+      payForMedication("p1", "Pharma", "DrugA", 50),
+    ]);
+
+    const successes = results.filter((r) => r.success);
+    const blocked = results.filter(
+      (r) => !r.success && (r as any).error?.includes("BLOCKED BY SPENDING POLICY"),
+    );
+
+    expect(successes.length).toBe(3);
+    expect(blocked.length).toBe(2);
+  });
+});
+
+// --- Platform cap (issue #83) ---
+
+describe("payForMedication — platform cap (issue #83)", () => {
+  const origCap = process.env.MAX_SINGLE_TX_USDC;
+
+  beforeEach(() => {
+    process.env.MAX_SINGLE_TX_USDC = "50";
+    resetSpendingTracker("rosa");
+    setSpendingPolicy("rosa", { ...DEFAULT_POLICY, medicationMonthlyBudget: 500, monthlyLimit: 1000, billMonthlyBudget: 500 });
+  });
+
+  afterEach(() => {
+    if (origCap === undefined) delete process.env.MAX_SINGLE_TX_USDC;
+    else process.env.MAX_SINGLE_TX_USDC = origCap;
+  });
+
+  it("blocks payForMedication above the platform cap", async () => {
+    const r = await payForMedication("p1", "Pharma", "Drug", 51);
+    expect(r.success).toBe(false);
+    expect((r as any).error).toContain("BLOCKED BY PLATFORM CAP");
+  });
+
+  it("blocks payBill above the platform cap", async () => {
+    const r = await payBill("provider1", "Hospital", "Visit", 51);
+    expect(r.success).toBe(false);
+    expect((r as any).error).toContain("BLOCKED BY PLATFORM CAP");
+  });
+
+  it("allows payForMedication equal to the platform cap (goes to policy check)", async () => {
+    // Amount equals cap — not blocked by platform cap; reaches policy check
+    const r = await payForMedication("p1", "Pharma", "Drug", 50);
+    // Either succeeds or is blocked by policy/approval — but NOT by platform cap
+    expect((r as any).error ?? "").not.toContain("BLOCKED BY PLATFORM CAP");
   });
 });

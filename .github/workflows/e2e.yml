@@ -1,0 +1,140 @@
+name: E2E
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playwright:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            dashboard/package-lock.json
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install dashboard dependencies
+        run: npm ci
+        working-directory: dashboard
+
+      - name: Install Playwright chromium
+        run: pnpm --dir dashboard playwright install --with-deps chromium
+
+      - name: Build dashboard
+        run: npm run build
+        working-directory: dashboard
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:3004
+
+      - name: Start unified server
+        run: |
+          mkdir -p /tmp/careguard-e2e-data
+          npm start > /tmp/careguard-server.log 2>&1 &
+          echo $! > /tmp/careguard-server.pid
+        env:
+          NODE_ENV: test
+          PORT: 3004
+          MOCK_NETWORK: "1"
+          DATA_DIR: /tmp/careguard-e2e-data
+          LLM_API_KEY: test-llm-key
+          LLM_BASE_URL: http://127.0.0.1:9/v1
+          LLM_MODEL: mock-llm
+          AGENT_SECRET_KEY: SBX2LIVWZODYENA5Z65RDFBPGBOMVD66BVHX455OG5DYD5N6DYYBEADN
+          PHARMACY_1_PUBLIC_KEY: GDFKAUNR4ZOFK723HFCPBIJRCIH7A2I322O4DBQR6MX35ITY5AHYR4RF
+          BILL_PROVIDER_PUBLIC_KEY: GDFKAUNR4ZOFK723HFCPBIJRCIH7A2I322O4DBQR6MX35ITY5AHYR4RF
+          MPP_SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          CAREGIVER_TOKEN: test-caregiver-token
+          STELLAR_NETWORK: testnet
+          ALLOWED_ORIGINS: http://127.0.0.1:3000,http://localhost:3000
+          WALLET_BALANCE_CHECK_ENABLED: "0"
+
+      - name: Start dashboard
+        run: |
+          npm run start -- --hostname 127.0.0.1 --port 3000 > /tmp/careguard-dashboard.log 2>&1 &
+          echo $! > /tmp/careguard-dashboard.pid
+        working-directory: dashboard
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:3004
+
+      - name: Wait for services
+        run: |
+          for url in http://127.0.0.1:3004/health http://127.0.0.1:3000; do
+            for attempt in $(seq 1 60); do
+              if curl -fsS "$url" > /dev/null; then
+                echo "$url is ready."
+                break
+              fi
+
+              if [ "$attempt" -eq 60 ]; then
+                echo "::error::$url did not become ready."
+                echo "===== unified server log ====="
+                cat /tmp/careguard-server.log || true
+                echo "===== dashboard log ====="
+                cat /tmp/careguard-dashboard.log || true
+                exit 1
+              fi
+
+              sleep 2
+            done
+          done
+
+      - name: Run Playwright E2E
+        run: pnpm e2e
+        env:
+          CI: "true"
+          PLAYWRIGHT_SKIP_WEBSERVER: "true"
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:3004
+
+      - name: Upload Playwright traces and videos
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts-${{ github.run_id }}
+          path: |
+            dashboard/playwright-report
+            dashboard/test-results
+            e2e/playwright-report
+            e2e/test-results
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload service logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-service-logs-${{ github.run_id }}
+          path: |
+            /tmp/careguard-server.log
+            /tmp/careguard-dashboard.log
+          if-no-files-found: ignore
+          retention-days: 14

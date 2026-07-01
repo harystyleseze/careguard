@@ -1,16 +1,15 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { Toaster } from "@/components/ui/toaster";
+import { fetchProfile } from "../lib/fetchProfile";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
+export async function generateMetadata(): Promise<Metadata> {
+  const profile = await fetchProfile();
+  const { recipient } = profile;
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+  const title = `${recipient.name}'s CareGuard`;
+  const description = "AI agent that autonomously manages elderly healthcare spending on Stellar";
+  const ogImage = recipient.avatar || "/icon-512.png";
 
 export const metadata: Metadata = {
   title: "CareGuard - AI Healthcare Agent",
@@ -26,10 +25,11 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className="h-full antialiased"
     >
       <body className="min-h-full flex flex-col overflow-x-hidden bg-slate-50 text-slate-900">
         {children}
+        <Toaster />
       </body>
     </html>
   );

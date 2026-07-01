@@ -58,3 +58,98 @@ describe("tool schema strictness", () => {
     ).toThrow(/unknown field\(s\) not allowed: unexpected/);
   });
 });
+
+describe("per-tool input validation — missing fields (#277)", () => {
+  it("compare_pharmacy_prices: rejects missing drug_name", () => {
+    expect(() => validateToolInput("compare_pharmacy_prices", {}))
+      .toThrow(/drug_name/);
+  });
+
+  it("check_drug_interactions: rejects missing medications", () => {
+    expect(() => validateToolInput("check_drug_interactions", {}))
+      .toThrow(/medications/);
+  });
+
+  it("pay_for_medication: rejects missing required fields", () => {
+    expect(() => validateToolInput("pay_for_medication", { drug_name: "Lisinopril" }))
+      .toThrow(/pharmacy_id|pharmacy_name|amount/);
+  });
+
+  it("pay_bill: rejects missing required fields", () => {
+    expect(() => validateToolInput("pay_bill", { description: "ER visit" }))
+      .toThrow(/provider_id|provider_name|amount/);
+  });
+
+  it("check_spending_policy: rejects missing amount and category", () => {
+    expect(() => validateToolInput("check_spending_policy", {}))
+      .toThrow(/amount|category/);
+  });
+
+  it("audit_medical_bill: rejects missing line_items_json", () => {
+    expect(() => validateToolInput("audit_medical_bill", {}))
+      .toThrow(/line_items_json/);
+  });
+});
+
+describe("per-tool input validation — wrong types (#277)", () => {
+  it("compare_pharmacy_prices: rejects numeric drug_name", () => {
+    expect(() => validateToolInput("compare_pharmacy_prices", { drug_name: 123 }))
+      .toThrow();
+  });
+
+  it("check_drug_interactions: rejects string instead of array", () => {
+    expect(() => validateToolInput("check_drug_interactions", { medications: "Aspirin" }))
+      .toThrow();
+  });
+
+  it("pay_for_medication: rejects string amount", () => {
+    expect(() =>
+      validateToolInput("pay_for_medication", {
+        pharmacy_id: "p1",
+        pharmacy_name: "CVS",
+        drug_name: "Lisinopril",
+        amount: "fifty",
+      }),
+    ).toThrow();
+  });
+
+  it("pay_bill: rejects boolean amount", () => {
+    expect(() =>
+      validateToolInput("pay_bill", {
+        provider_id: "h1",
+        provider_name: "Hospital",
+        description: "ER visit",
+        amount: true,
+      }),
+    ).toThrow();
+  });
+
+  it("check_spending_policy: rejects invalid category enum", () => {
+    expect(() =>
+      validateToolInput("check_spending_policy", { amount: 50, category: "transport" }),
+    ).toThrow();
+  });
+});
+
+describe("per-tool input validation — extra fields rejected (#277)", () => {
+  it("compare_pharmacy_prices: rejects extra field", () => {
+    expect(() =>
+      validateToolInput("compare_pharmacy_prices", {
+        drug_name: "Lisinopril",
+        surprise: "extra",
+      }),
+    ).toThrow(/unknown field/);
+  });
+
+  it("get_spending_summary: rejects any extra field", () => {
+    expect(() =>
+      validateToolInput("get_spending_summary", { recipient_id: "rosa" }),
+    ).toThrow(/unknown field/);
+  });
+
+  it("fetch_rosa_bill: rejects any extra field", () => {
+    expect(() =>
+      validateToolInput("fetch_rosa_bill", { extra: "value" }),
+    ).toThrow(/unknown field/);
+  });
+});

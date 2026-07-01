@@ -9,6 +9,8 @@
  * Conservative by design — when in doubt, redact.
  */
 
+import { createHash } from "crypto";
+
 const REDACTED = "[REDACTED]";
 
 const SECRET_FIELD_NAMES = new Set([
@@ -44,9 +46,23 @@ const SECRET_FIELD_NAMES = new Set([
 const STELLAR_SECRET_RE = /\bS[A-Z2-7]{55}\b/g;
 // Bearer tokens / JWT-ish
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._\-+/=]{20,}\b/gi;
+// Patient name pattern: two consecutive capitalized words (e.g. "Rosa Garcia")
+const PATIENT_NAME_RE = /\b[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}\b/g;
+// Drug specifics: capitalized drug name followed by optional dosage (e.g. "Lisinopril 10mg", "Metformin 500mg")
+const DRUG_SPECIFIC_RE = /\b[A-Z][a-z]+ \d+\s*mg\b/gi;
 
 export function redactString(value: string): string {
   return value.replace(STELLAR_SECRET_RE, REDACTED).replace(BEARER_RE, `Bearer ${REDACTED}`);
+}
+
+export function redactPII(value: string): string {
+  return value
+    .replace(PATIENT_NAME_RE, "[PATIENT NAME]")
+    .replace(DRUG_SPECIFIC_RE, "[MEDICATION]");
+}
+
+export function hashTask(task: string): string {
+  return createHash("sha256").update(task, "utf-8").digest("hex");
 }
 
 export function redact<T>(value: T, depth = 0): T {

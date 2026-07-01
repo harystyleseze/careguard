@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./dist",
+    "rewriteRelativeImportExtensions": true,
+    "declaration": false,
+    "sourceMap": true,
+    "rootDir": "."
+  },
+  "include": [
+    "server.ts",
+    "agent/**/*.ts",
+    "shared/**/*.ts",
+    "services/**/*.ts",
+    "scripts/**/*.ts",
+    "types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/__tests__/**",
+    "**/tests/**",
+    "**/evals/**",
+    "dashboard",
+    "e2e"
+  ]
+}

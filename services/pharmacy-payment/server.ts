@@ -14,7 +14,6 @@ if (!process.stdout.isTTY) {
 
 import "dotenv/config";
 import express from "express";
-import { z } from "zod";
 import { Mppx, Store } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
@@ -24,6 +23,10 @@ import { logger } from "../../shared/logger.ts";
 import { requestContextMiddleware } from "../../shared/request-context.ts";
 import { requestLoggerMiddleware } from "../../shared/request-logger.ts";
 import { sanitizeUserString } from "../../shared/sanitize.ts";
+import {
+  MedicationOrderSchema,
+  type MedicationOrderInput,
+} from "./validation.ts";
 
 const PORT = parseInt(process.env.PHARMACY_PAYMENT_PORT || "3005");
 const RECIPIENT = process.env.PHARMACY_1_PUBLIC_KEY;
@@ -34,23 +37,37 @@ if (!RECIPIENT) throw new Error("PHARMACY_1_PUBLIC_KEY required in .env");
 if (!MPP_SECRET_KEY) throw new Error("MPP_SECRET_KEY required in .env");
 
 // Order storage (persisted to file)
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import lock from "proper-lockfile";
 
-const DATA_DIR = new URL("../../data", import.meta.url).pathname;
+const DATA_DIR = process.env.DATA_DIR || new URL("../../data", import.meta.url).pathname;
 const ORDERS_FILE = `${DATA_DIR}/orders.json`;
+const MPP_STORE_FILE = `${DATA_DIR}/mpp-store.json`;
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
+function createMppStore(filePath: string) {
+  const storeFactory = Store as typeof Store & {
+    fileSystem?: (path: string) => ReturnType<typeof Store.memory>;
+  };
+  return storeFactory.fileSystem?.(filePath) ?? Store.memory();
+}
+
 function loadOrders(): any[] {
   if (!existsSync(ORDERS_FILE)) return [];
-  return JSON.parse(readFileSync(ORDERS_FILE, "utf-8"));
+  try {
+    return JSON.parse(readFileSync(ORDERS_FILE, "utf-8"));
+  } catch (err: any) {
+    logger.warn({ err: err.message }, 'Failed to parse orders file, starting with empty array');
+    return [];
+  }
 }
 
 /**
  * Save a new order to the orders file with file-level locking to prevent race conditions.
+ * Uses atomic writes (temp file + rename) to ensure reads always see consistent state (Issue #203).
  * Ensures that concurrent calls don't lose data due to simultaneous read-modify-write operations.
- * 
+ *
  * Trade-off: File-based locking is slower than in-memory storage but is sufficient for the demo.
  * For production, consider switching to SQLite (#168) or a proper database.
  */
@@ -59,13 +76,20 @@ async function saveOrder(order: any) {
   try {
     // Acquire exclusive lock on the orders file
     release = await lock.lock(ORDERS_FILE, { retries: 10, stale: 5000 });
-    
-    // Safe read-modify-write within lock
+
+    // Safe read-modify-write within lock, using atomic writes
     const orders = loadOrders();
     orders.push(order);
-    writeFileSync(ORDERS_FILE, JSON.stringify(orders, null, 2));
-    
-    logger.info({ orderId: order.id || 'unknown' }, 'Order saved successfully with lock');
+    const tempFile = `${ORDERS_FILE}.tmp-${Date.now()}`;
+    try {
+      writeFileSync(tempFile, JSON.stringify(orders, null, 2), 'utf-8');
+      renameSync(tempFile, ORDERS_FILE);
+    } catch (err) {
+      try { writeFileSync(ORDERS_FILE, '', 'utf-8'); } catch {}
+      throw err;
+    }
+
+    logger.info({ orderId: order.id || 'unknown' }, 'Order saved successfully with atomic write and lock');
   } catch (err: any) {
     logger.error({ err: err.message, orderId: order.id || 'unknown' }, 'Failed to save order');
     throw err;
@@ -111,49 +135,25 @@ const mppx = Mppx.create({
       recipient: RECIPIENT,
       currency: USDC_SAC_TESTNET,
       network: NETWORK,
-      store: Store.memory(),
+      store: createMppStore(MPP_STORE_FILE),
     }),
   ],
 });
 
-// Zod schema for amount validation
-const OrderAmountSchema = z.union([
-  z.number().min(0.01, "amount must be at least $0.01").max(10000, "amount must not exceed $10,000"),
-  z.string().transform((val, ctx) => {
-    const parsed = parseFloat(val);
-    if (!Number.isFinite(parsed)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "amount must be a valid number" });
-      return z.NEVER;
-    }
-    if (parsed < 0.01) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "amount must be at least $0.01" });
-      return z.NEVER;
-    }
-    if (parsed > 10000) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "amount must not exceed $10,000" });
-      return z.NEVER;
-    }
-    return parsed;
-  }),
-]);
-
 // MPP-protected medication order endpoint
 app.post("/pharmacy/order", async (req, res) => {
-  const { drug, pharmacy, amount } = req.body;
-
-  if (!drug || !pharmacy || !amount) {
-    res.status(400).json({ error: "Missing required fields: drug, pharmacy, amount" });
+  const parsedOrder = MedicationOrderSchema.safeParse(req.body);
+  if (!parsedOrder.success) {
+    res.status(400).json({
+      error: "Invalid order request",
+      details: parsedOrder.error.issues.map((issue) => issue.message),
+    });
     return;
   }
 
-  const parsedAmount = OrderAmountSchema.safeParse(amount);
-  if (!parsedAmount.success) {
-    res.status(400).json({ error: "Invalid amount", details: parsedAmount.error.issues.map(i => i.message) });
-    return;
-  }
-
-  const safeDrug = sanitizeUserString(drug);
-  const safePharmacy = sanitizeUserString(pharmacy);
+  const order = parsedOrder.data as MedicationOrderInput;
+  const safeDrug = sanitizeUserString(order.drug);
+  const safePharmacy = sanitizeUserString(order.pharmacy);
 
   // Convert Express request to Web Request for mppx
   const headers = new Headers();
@@ -173,7 +173,7 @@ app.post("/pharmacy/order", async (req, res) => {
 
   // Run MPP charge flow
   const result = await mppx.charge({
-    amount: parsedAmount.data.toFixed(2),
+    amount: Number(order.amount).toFixed(2),
     description: `Medication: ${safeDrug} from ${safePharmacy}`,
   })(webReq);
 
@@ -187,24 +187,24 @@ app.post("/pharmacy/order", async (req, res) => {
   }
 
   // Payment verified and settled on Stellar — create order
-  const order = {
+  const newOrder = {
     id: `order-${Date.now()}`,
     drug: safeDrug,
     pharmacy: safePharmacy,
-    amount: parsedAmount.data,
+    amount: Number(order.amount),
     status: "confirmed",
     timestamp: new Date().toISOString(),
     network: NETWORK,
     protocol: "MPP Charge",
   };
-  await saveOrder(order);
+  await saveOrder(newOrder);
 
   // Return response with payment receipt headers
   const response = result.withReceipt(
     Response.json({
       success: true,
-      order,
-      message: `Payment of $${parsedAmount.data} USDC settled on Stellar. ${safeDrug} order from ${safePharmacy} confirmed.`,
+      order: newOrder,
+      message: `Payment of $${newOrder.amount} USDC settled on Stellar. ${safeDrug} order from ${safePharmacy} confirmed.`,
     })
   );
 

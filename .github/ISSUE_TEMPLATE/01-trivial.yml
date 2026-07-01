@@ -1,0 +1,40 @@
+name: "01 - Trivial Task"
+description: "Template for small, trivial tasks (e.g. quick adjustments, minor documentation, simple test fixes)"
+title: "trivial: <summary>"
+labels: ["trivial"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Provide a clear and concise description of the task.
+      placeholder: Describe the task...
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: List the conditions that must be met for this task to be resolved.
+      placeholder: |
+        - Criterion 1
+        - Criterion 2
+    validations:
+      required: true
+  - type: textarea
+    id: relevant_files
+    attributes:
+      label: Relevant Files
+      description: List files that are relevant to this task.
+      placeholder: |
+        - path/to/file.ts
+    validations:
+      required: false
+  - type: textarea
+    id: resources
+    attributes:
+      label: Resources
+      description: Add any links, docs, or resources that might help solve this task.
+      placeholder: Resources...
+    validations:
+      required: false

@@ -3,15 +3,22 @@
  * Implements #78: Append JSONL records, log events, rotate logs, and expose GET /agent/audit.
  */
 
-import { appendFileSync, existsSync, mkdirSync, statSync, unlinkSync, renameSync, readFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, statSync, unlinkSync, renameSync, readFileSync, openSync, readSync, closeSync, writeFileSync } from "fs";
 import { Router, Request, Response } from "express";
+import { fileURLToPath } from "url";
+import lock from "proper-lockfile";
+import { createHash } from "crypto";
 
-const DATA_DIR = new URL("../data", import.meta.url).pathname;
-const AUDIT_FILE = `${DATA_DIR}/audit.log.jsonl`;
+export function getAuditFilePath(): string {
+  const dataDir = process.env.DATA_DIR || fileURLToPath(new URL("../data", import.meta.url));
+  if (!existsSync(dataDir)) {
+    mkdirSync(dataDir, { recursive: true });
+  }
+  return `${dataDir}/audit.log.jsonl`;
+}
+
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_ARCHIVES = 12;
-
-if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
 export interface AuditEntry {
   event: string;
@@ -19,19 +26,70 @@ export interface AuditEntry {
   details?: Record<string, unknown>;
 }
 
-function rotateLogs() {
+export function canonicalize(val: any): string {
+  if (val === null) return "null";
+  if (Array.isArray(val)) {
+    return "[" + val.map(canonicalize).join(",") + "]";
+  }
+  if (typeof val === "object") {
+    const keys = Object.keys(val).sort();
+    const parts = keys.map((key) => {
+      const escapedKey = JSON.stringify(key);
+      const valStr = canonicalize(val[key]);
+      return `${escapedKey}:${valStr}`;
+    });
+    return "{" + parts.join(",") + "}";
+  }
+  return JSON.stringify(val);
+}
+
+export function getLastLine(filePath: string): string | null {
+  if (!existsSync(filePath)) return null;
+  const stat = statSync(filePath);
+  if (stat.size === 0) return null;
+
+  const fd = openSync(filePath, "r");
   try {
-    if (existsSync(AUDIT_FILE)) {
-      const stats = statSync(AUDIT_FILE);
+    const bufferSize = 1024;
+    const buffer = Buffer.alloc(bufferSize);
+    let position = stat.size;
+    let lastLine = "";
+
+    while (position > 0) {
+      const length = Math.min(position, bufferSize);
+      position -= length;
+      readSync(fd, buffer, 0, length, position);
+
+      const chunk = buffer.toString("utf8", 0, length);
+      lastLine = chunk + lastLine;
+
+      const newlineIndex = lastLine.lastIndexOf("\n", lastLine.length - 2);
+      if (newlineIndex !== -1) {
+        lastLine = lastLine.slice(newlineIndex + 1);
+        break;
+      }
+    }
+    const trimmed = lastLine.trim();
+    return trimmed || null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function rotateLogs() {
+  const auditFile = getAuditFilePath();
+  try {
+    if (existsSync(auditFile)) {
+      const stats = statSync(auditFile);
       if (stats.size >= MAX_FILE_SIZE) {
-        const oldestLog = `${AUDIT_FILE}.${MAX_ARCHIVES}`;
+        const oldestLog = `${auditFile}.${MAX_ARCHIVES}`;
         if (existsSync(oldestLog)) unlinkSync(oldestLog);
         for (let i = MAX_ARCHIVES - 1; i >= 1; i--) {
-          const currentLog = `${AUDIT_FILE}.${i}`;
-          const nextLog = `${AUDIT_FILE}.${i + 1}`;
+          const currentLog = `${auditFile}.${i}`;
+          const nextLog = `${auditFile}.${i + 1}`;
           if (existsSync(currentLog)) renameSync(currentLog, nextLog);
         }
-        renameSync(AUDIT_FILE, `${AUDIT_FILE}.1`);
+        renameSync(auditFile, `${auditFile}.1`);
       }
     }
   } catch (err) {
@@ -41,20 +99,64 @@ function rotateLogs() {
 
 export function appendAuditEntry(entry: AuditEntry): void {
   rotateLogs();
-  const line = JSON.stringify({
+  
+  const payload = {
     timestamp: new Date().toISOString(),
     ...entry,
-  });
+  };
+
+  const auditFile = getAuditFilePath();
+
+  let release: (() => void) | undefined;
   try {
-    appendFileSync(AUDIT_FILE, line + "\n");
+    if (!existsSync(auditFile)) {
+      writeFileSync(auditFile, "", "utf-8");
+    }
+
+    // Acquire lock synchronously to prevent race conditions during write
+    release = lock.lockSync(auditFile, { stale: 5000 });
+
+    const lastLine = getLastLine(auditFile);
+    let prevHash = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    if (lastLine) {
+      try {
+        const parsed = JSON.parse(lastLine);
+        if (parsed && typeof parsed.hash === "string") {
+          prevHash = parsed.hash;
+        }
+      } catch (e) {
+        // Fallback to genesis prevHash if last entry is malformed
+      }
+    }
+
+    const serializedPayload = canonicalize(payload);
+    const hashInput = prevHash + serializedPayload;
+    const hash = createHash("sha256").update(hashInput).digest("hex");
+
+    const line = JSON.stringify({
+      ...payload,
+      prevHash,
+      hash,
+    });
+
+    appendFileSync(auditFile, line + "\n");
   } catch (err: any) {
     process.stderr.write(`audit-log: failed to write entry: ${err?.message ?? err}\n`);
+  } finally {
+    if (release) {
+      try {
+        release();
+      } catch (err: any) {
+        process.stderr.write(`audit-log: failed to release lock: ${err?.message ?? err}\n`);
+      }
+    }
   }
 }
 
-export const AUDIT_FILE_PATH = AUDIT_FILE;
+export const AUDIT_FILE_PATH = getAuditFilePath();
 
-export const auditRouter = Router();
+export const auditRouter: import("express").Router = Router();
 
 // Middleware to check admin (assuming a basic check or skipped for now as per instructions)
 const requireAdmin = (req: Request, res: Response, next: Function) => {
@@ -67,12 +169,13 @@ auditRouter.get("/", requireAdmin, (req: Request, res: Response) => {
     const { from, to, event, page = "1", limit = "50" } = req.query;
     const pageNum = parseInt(page as string, 10) || 1;
     const limitNum = parseInt(limit as string, 10) || 50;
+    const auditFile = getAuditFilePath();
 
-    if (!existsSync(AUDIT_FILE)) {
+    if (!existsSync(auditFile)) {
       return res.json({ data: [], total: 0 });
     }
 
-    const fileContent = readFileSync(AUDIT_FILE, "utf-8");
+    const fileContent = readFileSync(auditFile, "utf-8");
     const lines = fileContent.trim().split("\n");
     
     let logs: any[] = [];

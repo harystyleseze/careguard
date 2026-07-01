@@ -1,61 +1,39 @@
-const EXPLORER_URL = "https://stellar.expert/explorer/testnet/tx";
+import { EXPLORER_TX_URL } from "../../lib/stellar-network";
+
+// Backend guarantees stellarTxHash is always a real 64-char hex hash or
+// undefined (#14) — no more base64/receipt decoding needed here.
+const STELLAR_TX_HASH_RE = /^[0-9a-f]{64}$/i;
 
 export interface TxLinkProps {
   hash?: string;
+  txHashStatus?: 'extracted' | 'extraction_failed';
 }
 
-export function TxLink({ hash }: TxLinkProps) {
-  if (!hash) return <span className="text-xs text-slate-300">-</span>;
-
-  let displayHash = hash;
-  let explorerHash = hash;
-  let decodeFailed = false;
-
-  if (hash.length > 64 && !hash.match(/^[0-9a-f]{64}$/i)) {
-    try {
-      const decoded = JSON.parse(atob(hash));
-      const txId = decoded.transaction || decoded.reference || decoded.hash;
-      if (txId) {
-        explorerHash = txId;
-        displayHash = txId;
-      }
-    } catch {
-      decodeFailed = true;
-    }
-  }
-
-  const isValidHash = /^[0-9a-f]{64}$/i.test(explorerHash);
-
-  if (isValidHash) {
+export function TxLink({ hash, txHashStatus }: TxLinkProps) {
+  if (txHashStatus === 'extraction_failed') {
     return (
-      <a
-        href={`${EXPLORER_URL}/${explorerHash}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-xs text-sky-600 hover:text-sky-800 underline font-mono"
-        title={`View on Stellar Explorer: ${explorerHash}`}
+      <span
+        className="text-xs text-yellow-500 font-medium"
+        title="x402 payment hash could not be extracted — transaction cannot be verified on-chain"
       >
-        {explorerHash.slice(0, 8)}...
-      </a>
+        ⚠ unverifiable
+      </span>
     );
   }
 
+  if (!hash || !STELLAR_TX_HASH_RE.test(hash)) {
+    return <span className="text-xs text-slate-300">-</span>;
+  }
+
   return (
-    <span className="inline-flex items-center gap-1 justify-end">
-      <span className="text-xs text-slate-400 font-mono" title={hash}>
-        {displayHash.slice(0, 12)}...
-      </span>
-      <span
-        className="text-[10px] leading-none text-slate-500 border border-slate-300 rounded-full w-4 h-4 inline-flex items-center justify-center"
-        title={
-          decodeFailed
-            ? "Couldn't extract a Stellar tx hash. The receipt may be in a different format."
-            : "Not a Stellar transaction hash."
-        }
-        aria-label="Transaction link info"
-      >
-        ?
-      </span>
-    </span>
+    <a
+      href={`${EXPLORER_TX_URL}/${hash}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-xs text-sky-600 hover:text-sky-800 underline font-mono"
+      title={`View on Stellar Explorer: ${hash}`}
+    >
+      {hash.slice(0, 8)}...
+    </a>
   );
 }

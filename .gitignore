@@ -5,11 +5,12 @@ dist/
 .env.local
 .dev-seed
 *.log
-data/audit.log.jsonl
-data/spending.json
-data/orders.json
-data/adherence.jsonl
-data/recipients/*/*.json
-!data/recipients/*/
+# data/ is a local working directory — PII-sensitive (medication lists, spending patterns, wallet activity)
+data/*
+!data/README.md
+!data/seed.json.example
+!data/.gitkeep
+data/**/*.json
+data/**/*.jsonl
 .DS_Store
 fix.md

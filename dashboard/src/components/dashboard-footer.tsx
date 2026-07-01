@@ -1,5 +1,7 @@
 "use client";
 
+import { EXPLORER_ACCOUNT_URL, NETWORK_LABEL } from "../lib/stellar-network";
+
 export interface DashboardFooterProps {
   agentWallet?: string;
 }
@@ -12,7 +14,7 @@ export function DashboardFooter({ agentWallet }: DashboardFooterProps) {
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
           {agentWallet && (
             <a
-              href={`https://stellar.expert/explorer/testnet/account/${agentWallet}`}
+              href={`${EXPLORER_ACCOUNT_URL}/${agentWallet}`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-sky-500 hover:text-sky-700 underline"

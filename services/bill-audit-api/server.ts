@@ -27,6 +27,7 @@ import { logger } from "../../shared/logger.ts";
 import { requestContextMiddleware } from "../../shared/request-context.ts";
 import { requestLoggerMiddleware } from "../../shared/request-logger.ts";
 import { sanitizeUserString } from "../../shared/sanitize.ts";
+import { billAuditOversizedRejectionsTotal } from "../../shared/metrics.ts";
 
 const PORT = parseInt(process.env.BILL_AUDIT_API_PORT || "3002");
 const PAY_TO = process.env.BILL_PROVIDER_PUBLIC_KEY;
@@ -71,21 +72,39 @@ process.on('SIGHUP', () => {
 });
 
 // Audit threshold configuration
+export const BILL_AUDIT_OVERCHARGE_MULTIPLIER = parseFloat(process.env.BILL_AUDIT_OVERCHARGE_MULTIPLIER || "1.5");
+export const BILL_AUDIT_SUGGESTED_MULTIPLIER = parseFloat(process.env.BILL_AUDIT_SUGGESTED_MULTIPLIER || "1.2");
+export const BILL_AUDIT_UPCODED_MULTIPLIER = parseFloat(process.env.BILL_AUDIT_UPCODED_MULTIPLIER || "3.0");
+
+if (
+  isNaN(BILL_AUDIT_OVERCHARGE_MULTIPLIER) ||
+  isNaN(BILL_AUDIT_SUGGESTED_MULTIPLIER) ||
+  isNaN(BILL_AUDIT_UPCODED_MULTIPLIER) ||
+  !(BILL_AUDIT_UPCODED_MULTIPLIER > BILL_AUDIT_OVERCHARGE_MULTIPLIER &&
+    BILL_AUDIT_OVERCHARGE_MULTIPLIER > BILL_AUDIT_SUGGESTED_MULTIPLIER &&
+    BILL_AUDIT_SUGGESTED_MULTIPLIER > 1.0)
+) {
+  throw new Error("Invalid bill-audit multipliers config: must satisfy UPCODED > OVERCHARGE > SUGGESTED > 1.0");
+}
+
 interface AuditThresholdConfig {
   default: number;
   byCpt: Record<string, number>;
 }
 
-let auditThresholds: AuditThresholdConfig = { default: 1.5, byCpt: {} };
+let auditThresholds: AuditThresholdConfig = { default: BILL_AUDIT_OVERCHARGE_MULTIPLIER, byCpt: {} };
 
 function loadAuditThresholds() {
   try {
     const thresholdsPath = new URL('./audit_thresholds.json', import.meta.url).pathname;
     auditThresholds = JSON.parse(readFileSync(thresholdsPath, 'utf-8')) as AuditThresholdConfig;
+    if (process.env.BILL_AUDIT_OVERCHARGE_MULTIPLIER) {
+      auditThresholds.default = BILL_AUDIT_OVERCHARGE_MULTIPLIER;
+    }
     logger.info({ default: auditThresholds.default, cptCount: Object.keys(auditThresholds.byCpt).length }, 'Loaded audit thresholds configuration');
   } catch (err: any) {
-    logger.error({ err: err.message }, 'Failed to load audit_thresholds.json, using default threshold of 1.5');
-    auditThresholds = { default: 1.5, byCpt: {} };
+    logger.error({ err: err.message }, `Failed to load audit_thresholds.json, using default threshold of ${BILL_AUDIT_OVERCHARGE_MULTIPLIER}`);
+    auditThresholds = { default: BILL_AUDIT_OVERCHARGE_MULTIPLIER, byCpt: {} };
   }
 }
 
@@ -139,21 +158,7 @@ checkRatesFreshness();
 
 interface BillItem { description: string; cptCode: string; quantity: number; chargedAmount: number; }
 
-// Zod schema for validating bill items
-const CPT_CODE_PATTERN = /^(?:\d{5}|J\d{4})$/;
-
-const BillItemSchema = z.object({
-  description: z.string().min(1, "description is required"),
-  cptCode: z.string().regex(CPT_CODE_PATTERN, "cptCode must be a valid CPT code (5 digits or J followed by 4 digits)"),
-  quantity: z.number().positive("quantity must be positive"),
-  chargedAmount: z.number().nonnegative("chargedAmount must be non-negative"),
-});
-
-const BillAuditRequestSchema = z.object({
-  lineItems: z.array(BillItemSchema).min(1, "lineItems must contain at least one item"),
-});
-
-function auditBill(lineItems: BillItem[]) {
+export function auditBill(lineItems: BillItem[]) {
   const results: any[] = [];
   let totalCharged = 0, totalCorrect = 0, errorCount = 0;
   const seenCodes: Record<string, number> = {};
@@ -161,7 +166,7 @@ function auditBill(lineItems: BillItem[]) {
   for (const item of lineItems) {
     totalCharged += item.chargedAmount;
     const fairRate = FAIR_MARKET_RATES[item.cptCode];
-    const fairAmount = fairRate ? fairRate.fairRate * item.quantity : null;
+    const fairAmount = fairRate !== undefined ? fairRate.fairRate * item.quantity : null;
     const threshold = getAuditThreshold(item.cptCode);
 
     seenCodes[item.cptCode] = (seenCodes[item.cptCode] || 0) + 1;
@@ -171,20 +176,21 @@ function auditBill(lineItems: BillItem[]) {
       continue;
     }
 
-    if (fairAmount && item.chargedAmount > fairAmount * threshold) {
+    if (fairAmount !== null && item.chargedAmount > fairAmount * threshold) {
       errorCount++;
-      const suggestedAmount = +(fairAmount * 1.2).toFixed(2);
+      const suggestedAmount = +(fairAmount * BILL_AUDIT_SUGGESTED_MULTIPLIER).toFixed(2);
       totalCorrect += suggestedAmount;
-      results.push({ description: item.description, cptCode: item.cptCode, quantity: item.quantity, chargedAmount: item.chargedAmount, fairMarketRate: fairAmount, status: item.chargedAmount > fairAmount * 3 ? "upcoded" : "overcharged", errorDescription: `Charged $${item.chargedAmount} — CMS fair market rate is $${fairAmount}. Overcharged by $${(item.chargedAmount - fairAmount).toFixed(2)}.`, suggestedAmount });
+      results.push({ description: item.description, cptCode: item.cptCode, quantity: item.quantity, chargedAmount: item.chargedAmount, fairMarketRate: fairAmount, status: item.chargedAmount > fairAmount * BILL_AUDIT_UPCODED_MULTIPLIER ? "upcoded" : "overcharged", errorDescription: `Charged $${item.chargedAmount} — CMS fair market rate is $${fairAmount}. Overcharged by $${(item.chargedAmount - fairAmount).toFixed(2)}.`, suggestedAmount });
       continue;
     }
 
-    const suggested = fairAmount ? Math.min(item.chargedAmount, +(fairAmount * 1.2).toFixed(2)) : item.chargedAmount;
+    const suggested = fairAmount !== null ? Math.min(item.chargedAmount, +(fairAmount * BILL_AUDIT_SUGGESTED_MULTIPLIER).toFixed(2)) : item.chargedAmount;
     totalCorrect += suggested;
     results.push({ description: item.description, cptCode: item.cptCode, quantity: item.quantity, chargedAmount: item.chargedAmount, fairMarketRate: fairAmount, status: "valid", errorDescription: null, suggestedAmount: suggested });
   }
 
   const totalOvercharge = +(totalCharged - totalCorrect).toFixed(2);
+
   const savingsPercent = totalCharged > 0 ? +((totalOvercharge / totalCharged) * 100).toFixed(1) : 0;
   const now = new Date();
   const validUntil = new Date(RATES_VALID_UNTIL);
@@ -214,9 +220,14 @@ app.get("/", (_req, res) => {
   });
 });
 
-app.get("/bill/sample", (_req, res) => {
+app.get("/bill/sample", (req, res) => {
+  // In standalone mode the recipient DB is unavailable; accept a patientName hint from the caller.
+  // In unified mode, server.ts intercepts this route and resolves the name from the recipients DB.
+  const patientName = typeof req.query.patientName === 'string'
+    ? req.query.patientName
+    : 'Rosa Garcia';
   res.json({
-    patientName: "Rosa Garcia", facilityName: "General Hospital", dateOfService: "2026-03-15",
+    patientName, facilityName: "General Hospital", dateOfService: "2026-03-15",
     lineItems: [
       { description: "Hospital care, high complexity", cptCode: "99233", quantity: 3, chargedAmount: 630 },
       { description: "Comprehensive metabolic panel", cptCode: "80053", quantity: 1, chargedAmount: 95 },
@@ -232,6 +243,18 @@ app.get("/bill/sample", (_req, res) => {
   });
 });
 
+// Reject oversized bill audit requests BEFORE x402 payment is charged (issue #13)
+const BILL_AUDIT_MAX_ITEMS = parseInt(process.env.BILL_AUDIT_MAX_ITEMS || "500", 10);
+app.post("/bill/audit", (req, res, next) => {
+  const items = req.body?.lineItems;
+  if (Array.isArray(items) && items.length > BILL_AUDIT_MAX_ITEMS) {
+    billAuditOversizedRejectionsTotal.inc();
+    res.status(400).json({ error: `lineItems exceeds max (${BILL_AUDIT_MAX_ITEMS})` });
+    return;
+  }
+  next();
+});
+
 // x402 payment middleware
 applyX402Middleware(app, {
   "POST /bill/audit": {
@@ -242,19 +265,20 @@ applyX402Middleware(app, {
 
 app.post("/bill/audit", (req, res) => {
   try {
-    const validatedData = BillAuditRequestSchema.parse(req.body);
-    const sanitizedLineItems = validatedData.lineItems.map(item => ({
+    const validatedData = validateBillAuditRequest(req.body);
+    const sanitizedLineItems = validatedData.lineItems.map((item) => ({
       ...item,
       description: sanitizeUserString(item.description),
     }));
     res.json(auditBill(sanitizedLineItems));
   } catch (error) {
     if (error instanceof BillAuditValidationError) {
+      const validationError = error as BillAuditValidationError;
       res.status(400).json({
         ok: false,
-        reason: error.code,
-        message: error.message,
-        issues: error.issues,
+        reason: validationError.code,
+        message: validationError.message,
+        issues: validationError.issues,
       });
     } else {
       res.status(400).json({ ok: false, reason: "INVALID_REQUEST_BODY" });

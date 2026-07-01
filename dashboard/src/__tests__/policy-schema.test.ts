@@ -24,7 +24,14 @@ describe('validatePolicy', () => {
   });
 
   it('accepts zero values', () => {
-    const r = validatePolicy({ ...valid, monthlyLimit: 0 });
+    const r = validatePolicy({
+      ...valid,
+      dailyLimit: 0,
+      monthlyLimit: 0,
+      medicationMonthlyBudget: 0,
+      billMonthlyBudget: 0,
+      approvalThreshold: 0,
+    });
     expect(r.isValid).toBe(true);
   });
 
@@ -82,14 +89,14 @@ describe('validatePolicy', () => {
     ).toBe(true);
   });
 
-  it('warns when category budgets exceed 120% of monthly limit', () => {
+  it('rejects when category budgets exceed monthly limit', () => {
     const r = validatePolicy({
       ...valid,
       medicationMonthlyBudget: 400,
       billMonthlyBudget: 400,
     });
-    expect(r.isValid).toBe(true);
-    expect(r.warnings.length).toBeGreaterThan(0);
+    expect(r.isValid).toBe(false);
+    expect(r.errors.length).toBeGreaterThan(0);
   });
 
   it('rejects missing fields', () => {

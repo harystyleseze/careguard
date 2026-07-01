@@ -1,0 +1,39 @@
+name: "99 - Bug Report"
+description: "Template for reporting a bug or unexpected behavior"
+title: "bug: <summary>"
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Provide a clear and concise description of the bug.
+      placeholder: Describe the bug...
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: List the conditions or behavioral fixes that will resolve the bug.
+      placeholder: |
+        - What should happen instead...
+    validations:
+      required: true
+  - type: textarea
+    id: relevant_files
+    attributes:
+      label: Relevant Files
+      description: List files that are relevant to or contain the bug.
+      placeholder: |
+        - path/to/file.ts
+    validations:
+      required: false
+  - type: textarea
+    id: resources
+    attributes:
+      label: Resources
+      description: Add any logs, stack traces, screenshots, or context resources.
+      placeholder: Resources...
+    validations:
+      required: false

@@ -41,7 +41,7 @@ const {
 
 const POLICY = {
   dailyLimit: 100,
-  monthlyLimit: 500,
+  monthlyLimit: 800,
   medicationMonthlyBudget: 300,
   billMonthlyBudget: 500,
   approvalThreshold: 75,

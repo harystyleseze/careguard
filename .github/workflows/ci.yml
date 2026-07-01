@@ -24,13 +24,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+          check-latest: true
           cache: "pnpm"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Type check
-        run: pnpm typecheck
+        run: npx tsc --noEmit -p tsconfig.json && npx tsc --noEmit -p dashboard/tsconfig.json
 
       - name: Lint
         run: pnpm lint
@@ -44,6 +45,12 @@ jobs:
             echo "::error::Sensitive data file detected in PR diff (data/spending.json or data/orders.json). Remove it before merging."
             exit 1
           fi
+
+      - name: Run evals (requires LLM_API_KEY)
+        if: secrets.LLM_API_KEY != ''
+        run: npx vitest run --include '**/evals/**/*.spec.{ts,tsx}'
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
 
       - name: Security audit (high/critical)
         run: |

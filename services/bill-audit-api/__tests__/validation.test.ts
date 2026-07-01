@@ -7,6 +7,7 @@ describe("bill audit line item validation", () => {
     ["zero qty", [{ description: "Office visit", cptCode: "99213", quantity: 0, chargedAmount: 130 }]],
     ["negative amount", [{ description: "Office visit", cptCode: "99213", quantity: 1, chargedAmount: -1 }]],
     ["malformed cpt", [{ description: "Office visit", cptCode: "AB123", quantity: 1, chargedAmount: 130 }]],
+    ["too long description", [{ description: "x".repeat(81), cptCode: "99213", quantity: 1, chargedAmount: 130 }]],
   ])("rejects %s", (_label, lineItems) => {
     try {
       validateLineItems(lineItems as any);

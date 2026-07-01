@@ -1,7 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import type { RecipientProfile } from "../lib/types";
 import type { AgentInfo } from "./types";
+import { EXPLORER_ACCOUNT_URL } from "../lib/stellar-network";
+
+export interface RecipientOption {
+  id: string;
+  name: string;
+}
 
 export interface DashboardHeaderProps {
   recipient: RecipientProfile;
@@ -11,6 +18,13 @@ export interface DashboardHeaderProps {
   agentPaused: boolean;
   walletBalance: string | null;
   onTogglePause: () => void;
+  recipients?: RecipientOption[];
+  selectedRecipientId?: string;
+  onSelectRecipient?: (id: string) => void;
+  // per-source health (Issue #213)
+  agentInfoError?: string | null;
+  spendingError?: string | null;
+  transactionsError?: string | null;
 }
 
 export function DashboardHeader({
@@ -21,7 +35,21 @@ export function DashboardHeader({
   agentPaused,
   walletBalance,
   onTogglePause,
+  recipients,
+  selectedRecipientId,
+  onSelectRecipient,
+  agentInfoError,
+  spendingError,
+  transactionsError,
 }: DashboardHeaderProps) {
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+
+  const sourceErrors: { source: string; error: string }[] = [
+    ...(agentInfoError ? [{ source: 'Agent', error: agentInfoError }] : []),
+    ...(spendingError ? [{ source: 'Spending', error: spendingError }] : []),
+    ...(transactionsError ? [{ source: 'Transactions', error: transactionsError }] : []),
+  ];
+  const anySourceDown = sourceErrors.length > 0;
   return (
     <header className="sticky top-0 z-10 border-b border-slate-200 bg-white">
       <div className="mx-auto max-w-7xl px-4 py-3 sm:py-4">

@@ -3,8 +3,8 @@ services:
     name: careguard-api
     runtime: node
     plan: free
-    buildCommand: npm ci
-    startCommand: node --experimental-strip-types --experimental-transform-types --no-warnings server.ts
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/server.js
     healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
@@ -69,3 +69,5 @@ services:
         value: http://localhost:3004
       - key: PHARMACY_PAYMENT_URL
         value: http://localhost:3004
+      - key: MAX_SINGLE_TX_USDC
+        value: "100"

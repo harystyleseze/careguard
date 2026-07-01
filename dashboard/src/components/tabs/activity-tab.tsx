@@ -26,6 +26,8 @@ export interface ActivityTabProps {
   setPageSize: (size: number) => void;
   spending: SpendingData | null;
   onResetAgent: () => void;
+  loadingTransactions?: boolean;
+  loadingSpending?: boolean;
 }
 
 function transactionStatusClass(status: Transaction["status"]) {
@@ -96,11 +98,36 @@ export function ActivityTab({
   const [showAllLogEntries, setShowAllLogEntries] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  // allTransactions arrives pre-sorted newest-first from fetchTransactions (#220).
+  // useMemo ensures the merge only reruns when transactions or audit events change,
+  // not on unrelated parent state changes (agentLog, loading flags, etc.).
   const mergedTimeline = useMemo(() => {
-    const items: Array<{ ts: number, kind: "tx" | "audit", id: string, data: any }> = [];
-    for (const tx of allTransactions) items.push({ kind: "tx", ts: new Date(tx.timestamp).getTime(), id: tx.id, data: tx });
-    for (const au of auditEvents) items.push({ kind: "audit", ts: new Date(au.timestamp).getTime(), id: `audit-${au.timestamp}-${au.event}`, data: au });
-    return items.sort((a, b) => b.ts - a.ts);
+    type TimelineItem = { ts: number; kind: "tx" | "audit"; id: string; data: any };
+    const txItems: TimelineItem[] = allTransactions.map((tx) => ({
+      kind: "tx",
+      ts: new Date(tx.timestamp).getTime(),
+      id: tx.id,
+      data: tx,
+    }));
+    const auditItems: TimelineItem[] = auditEvents.map((au) => ({
+      kind: "audit",
+      ts: new Date(au.timestamp).getTime(),
+      id: `audit-${au.timestamp}-${au.event}`,
+      data: au,
+    }));
+    // Merge the two newest-first sequences. txItems is guaranteed pre-sorted;
+    // auditItems are sorted here. A linear merge keeps this O(n) when both
+    // inputs are already ordered.
+    auditItems.sort((a, b) => b.ts - a.ts);
+    const merged: TimelineItem[] = [];
+    let ti = 0, ai = 0;
+    while (ti < txItems.length && ai < auditItems.length) {
+      if (txItems[ti].ts >= auditItems[ai].ts) merged.push(txItems[ti++]);
+      else merged.push(auditItems[ai++]);
+    }
+    while (ti < txItems.length) merged.push(txItems[ti++]);
+    while (ai < auditItems.length) merged.push(auditItems[ai++]);
+    return merged;
   }, [allTransactions, auditEvents]);
 
   return (
@@ -351,7 +378,7 @@ export function ActivityTab({
                           </span>
                         </td>
                         <td className="px-4 py-2 text-right">
-                          <TxLink hash={tx.stellarTxHash} />
+                          <TxLink hash={tx.stellarTxHash} txHashStatus={tx.txHashStatus} />
                         </td>
                       </tr>
                     );

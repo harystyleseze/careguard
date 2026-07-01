@@ -57,6 +57,19 @@ export const policyBlocksTotal = new Counter({
   registers: [registry],
 });
 
+export const paymentRejectedTotal = new Counter({
+  name: "payment_rejected_total",
+  help: "Total payments rejected by spending policy, labeled by reason",
+  labelNames: ["reason"] as const,
+  registers: [registry],
+});
+
+export const agentIterationLimitTotal = new Counter({
+  name: "agent_iteration_limit_total",
+  help: "Total agent runs that hit the iteration limit before completing",
+  registers: [registry],
+});
+
 export const agentLlmTokensTotal = new Counter({
   name: "agent_llm_tokens_total",
   help: "Total LLM tokens consumed",
@@ -91,9 +104,47 @@ export const agentTransactionsTotal = new Counter({
   registers: [registry],
 });
 
+export const x402TxExtractionFailedTotal = new Counter({
+  name: "x402_tx_extraction_failed_total",
+  help: "Total x402 payment response header extraction failures",
+  registers: [registry],
+});
+
+export const pharmacyUnknownDrugTotal = new Counter({
+  name: "pharmacy_unknown_drug_total",
+  help: "Total pharmacy price lookups for unknown drugs",
+  labelNames: ["drug"] as const,
+  registers: [registry],
+});
+
 export const agentLlmErrorTotal = new Counter({
   name: "agent_llm_error_total",
   help: "Total LLM API errors during agent runs",
+  registers: [registry],
+});
+
+export const agentLlmLatencyMs = new Gauge({
+  name: "agent_llm_latency_ms",
+  help: "LLM API latency in milliseconds",
+  labelNames: ["model"] as const,
+  registers: [registry],
+});
+
+export const stellarFeeBumpsTotal = new Counter({
+  name: "stellar_fee_bumps_total",
+  help: "Total Stellar fee-bump transactions submitted",
+  registers: [registry],
+});
+
+export const stellarTxBadSeqRetriesTotal = new Counter({
+  name: "stellar_tx_bad_seq_retries_total",
+  help: "Total Stellar tx_bad_seq retry attempts",
+  registers: [registry],
+});
+
+export const billAuditOversizedRejectionsTotal = new Counter({
+  name: "bill_audit_oversized_rejections_total",
+  help: "Total bill audit requests rejected for exceeding BILL_AUDIT_MAX_ITEMS",
   registers: [registry],
 });
 

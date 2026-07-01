@@ -88,6 +88,8 @@ For a full runtime flow diagram, module map, and integration details, see [docs/
 
 ## Quick Start
 
+**Prerequisites:** Node.js 22 or later, npm.
+
 See [QUICKSTART.md](QUICKSTART.md) for the full setup guide.
 
 ```bash
@@ -111,6 +113,8 @@ cd dashboard && npm run dev
 
 # 6. Open http://localhost:3000
 ```
+
+> **Note:** `data/` is a **local working directory**. Spending snapshots, transaction logs, and orders contain medication lists, spending patterns, and wallet activity — they are excluded from version control by `.gitignore` and must never be committed. See `docs/adr/002-pii-in-persistence.md` for details.
 
 ### Docker dev (one command)
 
@@ -156,6 +160,31 @@ Health checks are enabled on every service. Targets:
 | `grafana`   | `GET /api/health`                             |
 
 Boot time on a warm Docker is ~30s (cold first build is much longer due to npm install). If the dashboard waits forever for `server: healthy`, check `docker compose logs server` — the most common cause is missing/invalid `OZ_FACILITATOR_API_KEY` or `AGENT_SECRET_KEY` in `.env`.
+
+---
+
+## Running Tests
+
+```bash
+# Install dependencies (if not already done)
+pnpm install
+
+# Run all tests (root backend + dashboard)
+pnpm test
+
+# Watch mode
+pnpm test:watch
+
+# Run tests with coverage
+pnpm test -- --coverage
+```
+
+Tests are organized in two workspaces:
+
+- **Root workspace** – backend tests for `agent/`, `services/`, `shared/`, `scripts/` (Node environment)
+- **Dashboard workspace** – frontend tests for `dashboard/src/` (jsdom environment via `dashboard/vitest.config.ts`)
+
+Shared test helpers (environment scrubber, fetch mock, Horizon mock) live in `tests/setup.ts`.
 
 ---
 
@@ -217,7 +246,7 @@ careguard/
 │   └── types.ts           # Shared TypeScript types
 ├── scripts/
 │   └── setup-wallets.ts   # Testnet wallet creation + USDC trustlines
-├── data/                  # Persisted spending data + orders
+├── data/                  # Local working directory (see note below)
 ├── .env.example           # Environment variable template
 ├── QUICKSTART.md          # Setup guide
 ```

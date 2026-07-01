@@ -38,7 +38,7 @@ function auditBill(lineItems: BillItem[]) {
   for (const item of lineItems) {
     totalCharged += item.chargedAmount;
     const fairRate = FAIR_MARKET_RATES[item.cptCode];
-    const fairAmount = fairRate ? fairRate.fairRate * item.quantity : null;
+    const fairAmount = fairRate !== undefined ? fairRate.fairRate * item.quantity : null;
 
     seenCodes[item.cptCode] = (seenCodes[item.cptCode] || 0) + 1;
     if (seenCodes[item.cptCode] > 1 && !["96372", "97110"].includes(item.cptCode)) {
@@ -47,7 +47,7 @@ function auditBill(lineItems: BillItem[]) {
       continue;
     }
 
-    if (fairAmount && item.chargedAmount > fairAmount * 1.5) {
+    if (fairAmount !== null && item.chargedAmount > fairAmount * 1.5) {
       errorCount++;
       const suggestedAmount = +(fairAmount * 1.2).toFixed(2);
       totalCorrect += suggestedAmount;
@@ -56,7 +56,7 @@ function auditBill(lineItems: BillItem[]) {
       continue;
     }
 
-    const suggested = fairAmount ? Math.min(item.chargedAmount, +(fairAmount * 1.2).toFixed(2)) : item.chargedAmount;
+    const suggested = fairAmount !== null ? Math.min(item.chargedAmount, +(fairAmount * 1.2).toFixed(2)) : item.chargedAmount;
     totalCorrect += suggested;
     results.push({ ...item, fairMarketRate: fairAmount, status: "valid", suggestedAmount: suggested });
   }
@@ -114,6 +114,34 @@ describe('auditBill — valid items', () => {
       { description: 'ECG', cptCode: '93000', quantity: 1, chargedAmount: 35 },
     ]);
     expect(result.totalOvercharge).toBe(0);
+  });
+});
+
+// ── auditBill: zero fairAmount (e.g., preventive services covered by insurance) ─
+
+describe('auditBill — zero fairAmount handling', () => {
+  it('flags a $50 charge above $0 fair rate as overcharge of $50', () => {
+    FAIR_MARKET_RATES["00000"] = { description: "Preventive service", fairRate: 0 };
+    try {
+      const result = auditBill([
+        { description: 'Preventive screening', cptCode: '00000', quantity: 1, chargedAmount: 50 },
+      ]);
+      // With !== null check: fairAmount=0 → 0 !== null → enters overcharge logic
+      // Since 50 > 0 * 3, it's "upcoded" — but the overcharge amount is $50
+      expect(result.lineItems[0].status).toBe('upcoded');
+      expect(result.totalOvercharge).toBeCloseTo(50, 1);
+      expect(result.errorCount).toBe(1);
+    } finally {
+      delete FAIR_MARKET_RATES["00000"];
+    }
+  });
+
+  it('does not flag items with unknown CPT code (fairAmount = null)', () => {
+    const result = auditBill([
+      { description: 'Unknown service', cptCode: '99999', quantity: 1, chargedAmount: 100 },
+    ]);
+    expect(result.lineItems[0].status).toBe('valid');
+    expect(result.errorCount).toBe(0);
   });
 });
 
@@ -199,8 +227,9 @@ describe('formatTxHashDisplay — tx hash extraction', () => {
   });
 
   it('extracts transaction field from base64-encoded JSON header', () => {
-    const payload = JSON.stringify({ transaction: 'abc123realhash' });
-    const encoded = btoa(payload) + 'X'.repeat(20); // ensure length > 64
+    const payload = JSON.stringify({ transaction: 'abc123realhash', extra: 'padding_to_make_it_longer_than_64_chars' });
+    const encoded = btoa(payload);
+    expect(encoded.length).toBeGreaterThan(64);
     const result = formatTxHashDisplay(encoded);
     expect(result.decodeFailed).toBe(false);
     expect(result.display).toContain('abc123realhash');

@@ -13,6 +13,7 @@ vi.mock('fs', () => ({
   writeFileSync: vi.fn(),
   existsSync: vi.fn().mockReturnValue(false),
   mkdirSync: vi.fn(),
+  renameSync: vi.fn(),
 }));
 vi.mock('@stellar/stellar-sdk', () => ({
   Keypair: { fromSecret: vi.fn().mockReturnValue({ publicKey: () => 'GPUB123', sign: vi.fn() }) },
@@ -40,7 +41,7 @@ import {
 
 const DEFAULT_POLICY = {
   dailyLimit: 100,
-  monthlyLimit: 500,
+  monthlyLimit: 800,
   medicationMonthlyBudget: 300,
   billMonthlyBudget: 500,
   approvalThreshold: 75,

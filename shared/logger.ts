@@ -32,7 +32,7 @@ export const logger = pino({
   },
   serializers: {
     task: (v: unknown) =>
-      typeof v === "string" ? v.slice(0, 80) + "…" : v,
+      typeof v === "string" ? v.slice(0, 100) + "…" : v,
   },
   formatters: {
     log(obj) {

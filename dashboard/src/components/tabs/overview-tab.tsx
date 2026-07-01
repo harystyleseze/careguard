@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { Bar } from "../primitives/bar";
 import { Btn } from "../primitives/btn";
 import { Card } from "../primitives/card";
-import type { AgentResult, SpendingData } from "../types";
+import type { AgentResult, AgentLlmError, SpendingData } from "../types";
 import type { RecipientProfile } from "../../lib/types";
+import { agentFetch } from "../../lib/agent-fetch";
 
 export interface OverviewTabProps {
   spending: SpendingData | null;
@@ -14,6 +15,7 @@ export interface OverviewTabProps {
   loading: boolean;
   activeTask: string;
   onRunTask: (task: string, label: string) => void;
+  onCancelTask?: () => void;
   recipient?: RecipientProfile;
 }
 
@@ -30,6 +32,8 @@ export function OverviewTab({
   loading,
   activeTask,
   onRunTask,
+  onCancelTask,
+  recipient,
 }: OverviewTabProps) {
   const savings = agentResult
     ? agentResult.toolCalls
@@ -155,9 +159,30 @@ export function OverviewTab({
           <div className="mt-4 flex items-center gap-2 text-sm text-sky-600">
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-sky-600 border-t-transparent" />
             Agent working...
+            {onCancelTask && (
+              <button
+                onClick={onCancelTask}
+                className="px-3 py-1 bg-red-50 text-red-600 rounded-lg text-xs font-medium hover:bg-red-100 cursor-pointer transition-all"
+              >
+                Cancel
+              </button>
+            )}
           </div>
         )}
       </div>
+
+      {agentResult?.events?.some((e) => e.kind === "iteration_limit_reached") && (
+        <div
+          role="alert"
+          className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 text-sm text-yellow-800"
+        >
+          Task may be incomplete — agent ran out of steps
+        </div>
+      )}
+
+      {agentResult?.error && (
+        <LlmErrorBanner error={agentResult.error} />
+      )}
 
       {agentResult && (
         <div
@@ -201,11 +226,24 @@ export function OverviewTab({
   );
 }
 
+function LlmErrorBanner({ error }: { error: AgentLlmError }) {
+  return (
+    <div
+      role="alert"
+      aria-live="assertive"
+      className="bg-red-50 border border-red-300 rounded-xl p-4 text-sm text-red-800"
+    >
+      <p className="font-semibold mb-1">⚠ LLM error at iteration {error.iteration} — results below are partial</p>
+      <p className="text-red-700">{error.message}{error.code ? ` (${error.code})` : ""}</p>
+    </div>
+  );
+}
+
 function AdherencePrompt() {
   const [adherence, setAdherence] = useState<{ pending: Array<{ id: string; drug: string; dueDate: string }>; flagged: Array<{ id: string; drug: string }> } | null>(null);
 
   useEffect(() => {
-    fetch("/agent/adherence/pending?recipient_id=rosa")
+    agentFetch("/agent/adherence/pending?recipient_id=rosa")
       .then((r) => r.json())
       .then((data) => setAdherence(data))
       .catch(() => {});
@@ -213,7 +251,7 @@ function AdherencePrompt() {
 
   const handleConfirm = async (recordId: string) => {
     try {
-      await fetch("/agent/adherence/confirm", {
+      await agentFetch("/agent/adherence/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ record_id: recordId }),

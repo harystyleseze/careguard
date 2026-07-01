@@ -4,14 +4,27 @@ import { useState } from "react";
 import { copyText } from "../../lib/clipboard";
 import { Toast } from "../primitives/toast";
 import type { AgentInfo } from "../types";
+import { EXPLORER_ACCOUNT_URL, NETWORK_LABEL } from "../../lib/stellar-network";
 
 export interface WalletTabProps {
   agentInfo: AgentInfo | null;
   walletBalance: string | null;
   walletXlm: string | null;
+  walletBalanceState?: 'loading' | 'ok' | 'error';
+  walletBalanceError?: string | null;
+  loadingWalletBalance?: boolean;
+  onRetryWalletBalance?: () => void;
 }
 
-export function WalletTab({ agentInfo, walletBalance, walletXlm }: WalletTabProps) {
+export function WalletTab({
+  agentInfo,
+  walletBalance,
+  walletXlm,
+  walletBalanceState = 'loading',
+  walletBalanceError,
+  loadingWalletBalance = false,
+  onRetryWalletBalance,
+}: WalletTabProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [toastFallback, setToastFallback] = useState<string | undefined>(undefined);
@@ -48,21 +61,46 @@ export function WalletTab({ agentInfo, walletBalance, walletXlm }: WalletTabProp
         <p className="text-xs text-slate-500 mb-4">
           This is the AI agent&apos;s Stellar wallet. It holds USDC for paying
           pharmacies, medical bills, and API query fees. All balances are on
-          Stellar testnet.
+          {NETWORK_LABEL.replace('Stellar ', '').toLowerCase()}.
         </p>
         <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="bg-sky-50 rounded-lg p-4 text-center border border-sky-200">
             <div className="text-2xl font-bold text-sky-700">
               ${walletBalance ?? "0.00"}
             </div>
-            <div className="text-xs text-slate-500 mt-1">USDC Balance</div>
-          </div>
-          <div className="bg-slate-50 rounded-lg p-4 text-center border border-slate-200">
-            <div className="text-2xl font-bold text-slate-700">
-              {walletXlm ?? "0.00"}
+          )}
+          {walletBalanceState === 'error' && (
+            <div className="bg-red-50 rounded-lg p-4 text-center border border-red-200 col-span-2">
+              <div className="text-sm font-medium text-red-700 mb-2">
+                {walletBalanceError || 'Balance unavailable'}
+              </div>
+              {onRetryWalletBalance && (
+                <button
+                  onClick={onRetryWalletBalance}
+                  disabled={loadingWalletBalance}
+                  className="px-4 py-1.5 bg-red-100 text-red-700 rounded-lg text-xs font-medium hover:bg-red-200 disabled:opacity-50 cursor-pointer transition-all"
+                >
+                  {loadingWalletBalance ? 'Retrying...' : 'Try again'}
+                </button>
+              )}
             </div>
-            <div className="text-xs text-slate-500 mt-1">XLM Balance</div>
-          </div>
+          )}
+          {walletBalanceState === 'ok' && (
+            <>
+              <div className="bg-sky-50 rounded-lg p-4 text-center border border-sky-200">
+                <div className="text-2xl font-bold text-sky-700">
+                  ${walletBalance ?? "0.00"}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">USDC Balance</div>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center border border-slate-200">
+                <div className="text-2xl font-bold text-slate-700">
+                  {walletXlm ?? "0.00"}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">XLM Balance</div>
+              </div>
+            </>
+          )}
         </div>
         <div className="space-y-3">
           <div>
@@ -94,7 +132,7 @@ export function WalletTab({ agentInfo, walletBalance, walletXlm }: WalletTabProp
               Network
             </label>
             <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
-              Stellar Testnet
+              {NETWORK_LABEL}
             </div>
           </div>
           <div>
@@ -109,7 +147,7 @@ export function WalletTab({ agentInfo, walletBalance, walletXlm }: WalletTabProp
         <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
           {agentInfo?.agentWallet && (
             <a
-              href={`https://stellar.expert/explorer/testnet/account/${agentInfo.agentWallet}`}
+              href={`${EXPLORER_ACCOUNT_URL}/${agentInfo.agentWallet}`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-center rounded-lg bg-sky-500 px-4 py-3 text-sm font-medium text-white transition-all cursor-pointer hover:bg-sky-600 active:bg-sky-700"

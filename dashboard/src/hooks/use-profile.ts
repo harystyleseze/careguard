@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
+import { AGENT_URL } from "../lib/agent-url";
 
-const AGENT_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3004";
+import { agentFetch } from "../lib/agent-fetch";
 
 export interface RecipientProfile {
   name: string;
@@ -31,7 +32,7 @@ export function useProfile() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${AGENT_URL}/agent/profile`);
+      const res = await agentFetch(`${AGENT_URL}/agent/profile`);
       if (res.ok) {
         const data = await res.json();
         setProfile(data);
