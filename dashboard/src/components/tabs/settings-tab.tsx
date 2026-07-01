@@ -112,7 +112,7 @@ export function SettingsTab({
       id="tabpanel-settings"
       aria-labelledby="tab-settings"
       tabIndex={0}
-      className="space-y-6 max-w-2xl"
+      className="w-full max-w-none space-y-6 sm:max-w-2xl"
     >
       <Toast
         message={toastMsg}
@@ -176,7 +176,7 @@ export function SettingsTab({
               <div className={readClass}>{recipient.age ?? "N/A"}</div>
             )}
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-slate-600 mb-1">
               Medications (comma-separated)
             </label>
@@ -222,7 +222,7 @@ export function SettingsTab({
 
       <div className="bg-white rounded-xl border border-slate-200 p-6">
         <h2 className="text-sm font-semibold text-slate-700 mb-4">Caregiver</h2>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Name</label>
             {editing ? (
@@ -304,13 +304,13 @@ export function SettingsTab({
             <label className="block text-xs font-medium text-slate-600 mb-1">Agent Status</label>
             <div className="flex items-center gap-2">
               <div
-                className={`px-3 py-2 flex-1 bg-slate-50 border border-slate-200 rounded-lg text-sm ${agentPaused ? "text-amber-600" : "text-green-600"}`}
+                className={`min-h-11 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm ${agentPaused ? "text-amber-600" : "text-green-600"}`}
               >
                 {agentPaused ? "Paused" : "Active"}
               </div>
               <button
                 onClick={onTogglePause}
-                className={`px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-all ${agentPaused ? "bg-green-500 text-white hover:bg-green-600" : "bg-amber-500 text-white hover:bg-amber-600"}`}
+                className={`w-full rounded-lg px-4 py-3 text-sm font-medium cursor-pointer transition-all min-h-11 sm:w-auto ${agentPaused ? "bg-green-500 text-white hover:bg-green-600" : "bg-amber-500 text-white hover:bg-amber-600"}`}
               >
                 {agentPaused ? "Resume Agent" : "Pause Agent"}
               </button>

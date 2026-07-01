@@ -46,7 +46,7 @@ export function WalletTab({
       id="tabpanel-wallet"
       aria-labelledby="tab-wallet"
       tabIndex={0}
-      className="space-y-6 max-w-2xl"
+      className="w-full max-w-none space-y-6 sm:max-w-2xl"
     >
       <Toast
         message={toastMsg}
@@ -63,13 +63,10 @@ export function WalletTab({
           pharmacies, medical bills, and API query fees. All balances are on
           {NETWORK_LABEL.replace('Stellar ', '').toLowerCase()}.
         </p>
-        <div className="grid grid-cols-2 gap-4 mb-6">
-          {walletBalanceState === 'loading' && (
-            <div className="bg-sky-50 rounded-lg p-4 text-center border border-sky-200 col-span-2">
-              <div className="text-sm font-medium text-sky-600">
-                <span className="inline-block w-4 h-4 border-2 border-sky-600 border-t-transparent rounded-full animate-spin mr-2 align-middle" />
-                Loading wallet balance...
-              </div>
+        <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="bg-sky-50 rounded-lg p-4 text-center border border-sky-200">
+            <div className="text-2xl font-bold text-sky-700">
+              ${walletBalance ?? "0.00"}
             </div>
           )}
           {walletBalanceState === 'error' && (
@@ -110,8 +107,8 @@ export function WalletTab({
             <label className="block text-xs font-medium text-slate-600 mb-1">
               Wallet Address
             </label>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono break-all">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <code className="w-full min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-[11px] leading-5 font-mono break-all">
                 {agentInfo?.agentWallet || "Not connected"}
               </code>
               {agentInfo?.agentWallet && (
@@ -119,7 +116,7 @@ export function WalletTab({
                   onClick={() =>
                     handleCopy(agentInfo.agentWallet, "wallet-address")
                   }
-                  className={`px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                  className={`w-full rounded-lg px-4 py-3 text-xs font-medium transition-all cursor-pointer sm:w-auto ${
                     copiedId === "wallet-address"
                       ? "bg-green-100 text-green-700"
                       : "bg-slate-100 text-slate-600 hover:bg-slate-200"
@@ -147,13 +144,13 @@ export function WalletTab({
             </div>
           </div>
         </div>
-        <div className="mt-6 flex gap-3">
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
           {agentInfo?.agentWallet && (
             <a
               href={`${EXPLORER_ACCOUNT_URL}/${agentInfo.agentWallet}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex-1 text-center px-4 py-2 bg-sky-500 text-white rounded-lg text-sm font-medium hover:bg-sky-600 active:bg-sky-700 cursor-pointer transition-all"
+              className="text-center rounded-lg bg-sky-500 px-4 py-3 text-sm font-medium text-white transition-all cursor-pointer hover:bg-sky-600 active:bg-sky-700"
             >
               View on Stellar Explorer
             </a>
@@ -162,7 +159,7 @@ export function WalletTab({
             href="https://faucet.circle.com"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex-1 text-center px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200 active:bg-slate-300 cursor-pointer transition-all"
+            className="text-center rounded-lg bg-slate-100 px-4 py-3 text-sm font-medium text-slate-700 transition-all cursor-pointer hover:bg-slate-200 active:bg-slate-300"
           >
             Fund with USDC
           </a>
@@ -174,7 +171,7 @@ export function WalletTab({
           How Payments Work
         </h2>
         <div className="space-y-3 text-xs text-slate-600">
-          <div className="flex gap-3 items-start">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
             <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded font-medium shrink-0">
               x402
             </span>
@@ -184,7 +181,7 @@ export function WalletTab({
               entry, and the OZ Facilitator settles the payment on Stellar.
             </span>
           </div>
-          <div className="flex gap-3 items-start">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
             <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded font-medium shrink-0">
               MPP
             </span>
@@ -194,7 +191,7 @@ export function WalletTab({
               transaction.
             </span>
           </div>
-          <div className="flex gap-3 items-start">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
             <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded font-medium shrink-0">
               USDC
             </span>

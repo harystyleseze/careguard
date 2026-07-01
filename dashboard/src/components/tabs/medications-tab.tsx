@@ -31,8 +31,8 @@ export function MedicationsTab({ agentResult, recipient }: MedicationsTabProps) 
       tabIndex={0}
       className="space-y-6"
     >
-      <div className="bg-white rounded-xl border border-slate-200 p-6">
-        <div className="flex items-center justify-between mb-4">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-sm font-semibold text-slate-700">
             {recipient.name}&apos;s Medications
           </h2>
@@ -51,11 +51,11 @@ export function MedicationsTab({ agentResult, recipient }: MedicationsTabProps) 
                     interactionResult: interactionResult
                       ? DrugInteractionResultSchema.parse(interactionResult)
                       : undefined,
-                  },
+                    },
                   { recipient },
                 );
               }}
-              className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
+              className="min-h-11 rounded-lg bg-sky-50 px-4 py-3 text-xs font-medium text-sky-700 transition-all cursor-pointer hover:bg-sky-100 active:bg-sky-200"
             >
               Download PDF
             </button>
@@ -71,9 +71,9 @@ export function MedicationsTab({ agentResult, recipient }: MedicationsTabProps) 
             return (
               <div
                 key={drug}
-                className="flex items-center justify-between p-4 bg-slate-50 rounded-lg"
+                className="flex flex-col gap-3 rounded-lg bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
               >
-                <div>
+                <div className="min-w-0">
                   <div className="font-medium text-sm">{drug}</div>
                   <div className="text-xs text-slate-500">
                     {r
@@ -82,7 +82,7 @@ export function MedicationsTab({ agentResult, recipient }: MedicationsTabProps) 
                   </div>
                 </div>
                 {r && (
-                  <div className="text-right">
+                  <div className="text-left sm:text-right">
                     <div className="text-sm font-medium text-green-600">
                       Save ${r.potentialSavings}/mo
                     </div>
@@ -96,15 +96,22 @@ export function MedicationsTab({ agentResult, recipient }: MedicationsTabProps) 
           })}
         </div>
       </div>
-      {interactionCalls && interactionCalls.length > 0 && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
+          {interactionCalls && interactionCalls.length > 0 && (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
           <h2 className="text-sm font-semibold text-slate-700 mb-4">
             Drug Interactions
           </h2>
           {interactionCalls.map((t, i) => (
             <div key={i} className="space-y-2">
-              <p className="text-sm text-slate-600">{t.result.summary}</p>
-              {t.result.interactions?.map((ix: any, j: number) => (
+              {(() => {
+                const interaction = DrugInteractionResultSchema.parse(t.result);
+
+                return (
+                  <>
+                    <p className="text-sm text-slate-600">
+                      {interaction.summary}
+                    </p>
+                    {interaction.interactions?.map((ix, j: number) => (
                 <div
                   key={j}
                   className={`p-3 rounded-lg text-sm ${
@@ -122,7 +129,10 @@ export function MedicationsTab({ agentResult, recipient }: MedicationsTabProps) 
                     {ix.recommendation}
                   </div>
                 </div>
-              ))}
+                    ))}
+                  </>
+                );
+              })()}
             </div>
           ))}
         </div>

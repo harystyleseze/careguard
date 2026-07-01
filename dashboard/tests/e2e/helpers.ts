@@ -13,8 +13,24 @@ export async function mockDashboardApis(page: Page) {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(spending) });
   });
 
+  await page.route("**/agent/wallet", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ usdc: "123.45", xlm: "42.00" }),
+    });
+  });
+
   await page.route("**/agent/transactions", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(transactions) });
+  });
+
+  await page.route("**/agent/pending-approvals", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ approvals: [] }),
+    });
   });
 
   await page.route("**/agent/run", async (route) => {
@@ -27,6 +43,22 @@ export async function mockDashboardApis(page: Page) {
 
   await page.route("**/agent/reset", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
+  });
+
+  await page.route("**/agent/pause", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ paused: true, pausedReason: null }),
+    });
+  });
+
+  await page.route("**/agent/resume", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ paused: false, pausedReason: null }),
+    });
   });
 
   await page.route("**/horizon-testnet.stellar.org/**", async (route) => {
