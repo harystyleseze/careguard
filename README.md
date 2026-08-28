@@ -111,6 +111,7 @@ flowchart TD
 ## Quick links
 
 - [Getting started guide for caregivers](docs/guides/getting-started-caregiver.md)
+- [Approvals tab guide for caregivers](docs/guides/approvals-tab.md)
 - [Quick start setup guide](QUICKSTART.md)
 - [Architecture overview](docs/ARCHITECTURE.md)
 - [Spending policy for caregivers](docs/guides/spending-policy-for-caregivers.md)
