@@ -115,6 +115,7 @@ flowchart TD
 - [Architecture overview](docs/ARCHITECTURE.md)
 - [Spending policy for caregivers](docs/guides/spending-policy-for-caregivers.md)
 - [Spending policy technical reference](docs/SPENDING-POLICY.md)
+- [Settings tab guide for caregivers](docs/guides/settings-tab.md)
 - [Category budget examples](docs/guides/category-budgets-examples.md)
 - [Testnet explained for caregivers](docs/guides/testnet-explained.md)
 - [Using the /docs API explorer](docs/api-examples/using-the-docs-ui.md)
