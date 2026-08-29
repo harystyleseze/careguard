@@ -70,6 +70,8 @@ If CareGuard finds billing errors on your submission, you can immediately take a
 2. **Generate Dispute Letter**: Click **Dispute** to automatically create a formal, formatted dispute letter addressed to the healthcare facility's billing department.
 3. **Email Text Template**: Click **Email Text** to open a ready-to-send dispute message in your email client or web browser.
 
+See [Disputing a Medical Bill](bill-disputes.md) for what triggers the dispute letter, what it contains, and its current limitations (for example, CareGuard does not send it for you).
+
 ---
 
 ## Need Help?
