@@ -535,7 +535,8 @@ export function generateSpec(): OpenAPISpec {
           },
           responses: {
             "200": {
-              description: "Audit results",
+              description:
+                "Audit results. See docs/api-examples/bill-audit.md for a full curl example including the x402 payment flow.",
             },
             "402": paymentRequiredResponse(),
             "413": bodyTooLargeResponse(),
