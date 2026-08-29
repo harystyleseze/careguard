@@ -157,7 +157,7 @@ paths:
                 $ref: '#/components/schemas/ReadinessResponse'
   /agent/spending:
     get:
-      summary: 'Get agent spending summary'
+      summary: 'Get agent spending summary. See docs/api-examples/agent-spending.md for a full field reference and sample response.'
       tags:
         - 'Agent'
       responses:
@@ -168,18 +168,24 @@ paths:
               schema:
                 type: 'object'
                 properties:
-                  totalSpent:
-                    type: 'number'
-                  categories:
+                  policy:
                     type: 'object'
+                    description: 'The current spending policy for this care recipient.'
+                  spending:
+                    type: 'object'
+                    description: 'Month-to-date totals by category: medications, bills, serviceFees, total.'
+                  budgetRemaining:
+                    type: 'object'
+                    description: 'Remaining budget for medications and bills, computed from policy minus spending.'
+                  transactionCount:
+                    type: 'number'
+                  recentTransactions:
+                    type: 'array'
+                    description: 'The 5 most recent transactions, newest last.'
+                    items:
+                      type: 'object'
         401:
-          description: 'Missing or invalid CAREGIVER_TOKEN.'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        403:
-          description: 'Caregiver token invalid or insufficient access.'
+          description: 'Missing or invalid AGENT_API_KEY.'
           content:
             application/json:
               schema:
