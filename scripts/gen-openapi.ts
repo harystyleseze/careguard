@@ -565,7 +565,8 @@ export function generateSpec(): OpenAPISpec {
           ],
           responses: {
             "200": {
-              description: "Drug interaction results",
+              description:
+                "Drug interaction results. See docs/api-examples/drug-interactions.md for a full curl example including the x402 payment flow.",
             },
             "400": errorResponse(
               "Validation error. `code` is one of VALIDATION_MISSING_FIELD, VALIDATION_INVALID_INPUT, VALIDATION_INSUFFICIENT_SCORE.",
