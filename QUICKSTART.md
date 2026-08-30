@@ -129,6 +129,22 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 - Set medication and bill category budgets
 - Set the caregiver approval threshold
 
+### Testing Multi-Pharmacy Routing Locally
+
+`npm run setup` already creates `PHARMACY_2_SECRET_KEY` and
+`PHARMACY_2_PUBLIC_KEY`; no extra wallet setup is needed. To exercise the
+alternate routing path, set this in `.env`:
+
+```bash
+MULTI_PHARMACY_MODE=true
+```
+
+Restart `npm run dev`, open the dashboard, and run **Compare Medication
+Prices** from the Overview tab. The agent order flow should route eligible
+medication payments to the second pharmacy wallet. The routing branch lives in
+`services/drug-interaction-api` and the unified server's multi-pharmacy payment
+selection.
+
 ### Activity Tab
 - Terminal-style agent log showing every tool call
 - Transaction table with clickable Stellar Explorer links
@@ -195,6 +211,7 @@ for b in d['balances']:
 | Groq 429 rate limit | Wait for reset, or switch to a different model/provider |
 | Dashboard can't connect | Ensure backend services are running (`npm run dev`) |
 | Port already in use | Kill existing processes on the ports (see below) |
+| Local lock contention or stale `.lock` directory | Run `npm run clear:stale-locks` to inspect, then `npm run clear:stale-locks -- --yes` to remove stale `proper-lockfile` locks |
 
 For symptoms beyond setup-time issues — stuck agent spinner, repeated 402s,
 blank wallet balance, dashboard "Disconnected", startup hangs on Horizon —
