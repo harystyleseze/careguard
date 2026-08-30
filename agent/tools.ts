@@ -701,7 +701,7 @@ const SpendingTrackerSchema = z.object({
   // Accept both the legacy Transaction shape (timestamp/type/recipient/status)
   // and the upstream shape (createdAt/metadata). normalizeTransactionCategories
   // casts entries to Transaction after loading, so loose validation is intentional.
-  transactions: z.array(z.record(z.unknown())),
+  transactions: z.array(z.record(z.string(), z.unknown())),
   monthTotals: z
     .object({
       yearMonth: z.string(),
@@ -742,7 +742,7 @@ export const SpendingPolicySchema = z
       .max(10_000, "approvalThreshold cannot exceed $10,000"),
     holdTimeSeconds: z.number().min(0).max(86_400).default(0),
     timezone: z.string().optional(),
-    toolFees: z.record(z.number().min(0)).optional(),
+    toolFees: z.record(z.string(), z.number().min(0)).optional(),
     notifications: z
       .object({
         email: z.boolean(),
@@ -888,7 +888,7 @@ function readSpendingFromDisk(recipientId?: string): SpendingTracker {
       const validated = SpendingTrackerSchema.safeParse(parsed);
       if (!validated.success) {
         logger.warn(
-          { file: snapshotFile, errors: validated.error.errors },
+          { file: snapshotFile, errors: validated.error.issues },
           "[Persistence] Snapshot schema invalid",
         );
         rotateCorruptedFile(snapshotFile);
@@ -961,7 +961,7 @@ function readSpendingFromDisk(recipientId?: string): SpendingTracker {
     const validated = SpendingTrackerSchema.safeParse(parsed);
     if (!validated.success) {
       logger.error(
-        { file: legacyFile, errors: validated.error.errors },
+        { file: legacyFile, errors: validated.error.issues },
         "[Persistence] spending.json schema invalid",
       );
       const rotated = rotateCorruptedFile(legacyFile);
@@ -2856,7 +2856,7 @@ export function validateToolInput(
 
   const unknownKeys = result.error.issues
     .filter((issue) => issue.code === "unrecognized_keys")
-    .flatMap((issue) => (issue as z.ZodUnrecognizedKeysIssue).keys);
+    .flatMap((issue) => (issue as { keys?: string[] }).keys ?? []);
   if (unknownKeys.length > 0) {
     throw new Error(
       `Invalid tool input for ${name}: unknown field(s) not allowed: ${unknownKeys.join(", ")}`,
