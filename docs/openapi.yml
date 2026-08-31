@@ -2,7 +2,7 @@ openapi: '3.1.0'
 info:
   title: 'CareGuard API'
   version: '1.0.0'
-  description: 'OpenAPI spec for CareGuard services: agent spending, pharmacy, bill audit, drug interactions, and payments.'
+  description: 'OpenAPI spec for CareGuard services: agent spending, pharmacy, bill audit, drug interactions, and payments. See docs/api-examples/rate-limits.md for rate-limit behavior, response headers, and retry guidance.'
 servers:
   - url: 'http://localhost:3000'
     description: 'Development server'
@@ -185,7 +185,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         429:
-          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header.'
+          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header. See docs/api-examples/rate-limits.md for per-endpoint limits, response headers, and retry guidance.'
           content:
             application/json:
               schema:
@@ -199,7 +199,6 @@ paths:
   /pharmacy/compare:
     get:
       summary: 'Compare pharmacy prices for a drug'
-      description: 'Returns pharmacy price comparison results for a given medication. See docs/api-examples/pharmacy-compare.md for a full curl example including the x402 payment flow.'
       tags:
         - 'Pharmacy'
       security:
@@ -250,7 +249,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         429:
-          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header.'
+          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header. See docs/api-examples/rate-limits.md for per-endpoint limits, response headers, and retry guidance.'
           content:
             application/json:
               schema:
@@ -373,7 +372,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         429:
-          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header.'
+          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header. See docs/api-examples/rate-limits.md for per-endpoint limits, response headers, and retry guidance.'
           content:
             application/json:
               schema:
@@ -402,7 +401,7 @@ paths:
           description: 'Comma-separated medication names. Each medication name is limited to 80 characters.'
       responses:
         200:
-          description: 'Drug interaction results'
+          description: 'Drug interaction results. See docs/api-examples/drug-interactions.md for a full curl example including the x402 payment flow.'
         400:
           description: 'Validation error. `code` is one of VALIDATION_MISSING_FIELD, VALIDATION_INVALID_INPUT, VALIDATION_INSUFFICIENT_SCORE.'
           content:
@@ -416,7 +415,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/X402PaymentChallenge'
         429:
-          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header.'
+          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header. See docs/api-examples/rate-limits.md for per-endpoint limits, response headers, and retry guidance.'
           content:
             application/json:
               schema:
@@ -473,7 +472,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/X402PaymentChallenge'
         429:
-          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header.'
+          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header. See docs/api-examples/rate-limits.md for per-endpoint limits, response headers, and retry guidance.'
           content:
             application/json:
               schema:

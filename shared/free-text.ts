@@ -7,7 +7,7 @@ export const MAX_FREE_TEXT_LIST_LENGTH =
 
 export function freeTextSchema(fieldName: string) {
   return z
-    .string({ required_error: `${fieldName} is required` })
+    .string({ error: `${fieldName} is required` })
     .trim()
     .min(1, `${fieldName} is required`)
     .max(
@@ -21,7 +21,7 @@ export function optionalFreeTextSchema(fieldName: string) {
 }
 
 export const zipCodeSchema = z
-  .string({ required_error: "zip is required" })
+  .string({ error: "zip is required" })
   .trim()
   .regex(/^\d{5}$/, "zip must be a 5-digit ZIP code");
 
@@ -30,7 +30,7 @@ export function delimitedFreeTextListSchema(
   delimiter = ",",
 ) {
   return z
-    .string({ required_error: `${fieldName} is required` })
+    .string({ error: `${fieldName} is required` })
     .trim()
     .min(1, `${fieldName} is required`)
     .max(
@@ -45,7 +45,7 @@ export function delimitedFreeTextListSchema(
 
       if (entries.length === 0) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           message: `${fieldName} must contain at least one value`,
         });
         return z.NEVER;
@@ -53,7 +53,7 @@ export function delimitedFreeTextListSchema(
 
       if (entries.length > MAX_TEXT_LIST_ITEMS) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           message: `${fieldName} must contain at most ${MAX_TEXT_LIST_ITEMS} values`,
         });
         return z.NEVER;
@@ -62,7 +62,7 @@ export function delimitedFreeTextListSchema(
       for (const entry of entries) {
         if (entry.length > MAX_FREE_TEXT_LENGTH) {
           ctx.addIssue({
-            code: z.ZodIssueCode.custom,
+            code: "custom",
             message: `each ${fieldName} value must be at most ${MAX_FREE_TEXT_LENGTH} characters`,
           });
           return z.NEVER;

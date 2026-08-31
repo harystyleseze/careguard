@@ -36,7 +36,7 @@ export interface TaskValidationResult {
 export function validateTask(raw: unknown): TaskValidationResult {
   const parsed = TaskInputSchema.safeParse(raw);
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.errors[0].message, suspicious: false };
+    return { ok: false, error: parsed.error.issues[0].message, suspicious: false };
   }
 
   const stripped = parsed.data;
