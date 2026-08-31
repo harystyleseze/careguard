@@ -2,6 +2,7 @@ openapi: '3.1.0'
 info:
   title: 'CareGuard API'
   version: '1.0.0'
+  description: 'OpenAPI spec for CareGuard services: agent spending, pharmacy, bill audit, drug interactions, and payments. For a consolidated reference of error JSON shapes, status codes, and retry guidance, see docs/api-examples/error-responses.md.'
   description: 'OpenAPI spec for CareGuard services: agent spending, pharmacy, bill audit, drug interactions, and payments. See docs/api-examples/rate-limits.md for rate-limit behavior, response headers, and retry guidance.'
 servers:
   - url: 'http://localhost:3000'
@@ -25,6 +26,7 @@ components:
   schemas:
     Error:
       type: 'object'
+      description: 'Standard error shape used across CareGuard endpoints. See docs/api-examples/error-responses.md for sample JSON per error category and docs/error-codes.md for the full code registry.'
       required:
         - 'error'
         - 'code'
