@@ -4,6 +4,7 @@
 
 The Bill Audit API (`services/bill-audit-api/server.ts`) audits medical bill line items for overcharges, duplicate charges, and upcoding by comparing charged amounts against CMS Medicare fair-market rates.
 
+For a full request/response example against the live `POST /bill/audit` endpoint, including the x402 payment flow and the `$0.01`/audit price, see [docs/api-examples/bill-audit.md](../api-examples/bill-audit.md).
 ## Local sample PDFs
 
 Generate disposable PDF fixtures for the dashboard upload flow with:
