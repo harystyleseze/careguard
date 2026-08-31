@@ -67,8 +67,8 @@ After processing completes, the **Bills** tab displays a comprehensive summary:
 If CareGuard finds billing errors on your submission, you can immediately take action from the **Bills** tab:
 
 1. **Download PDF Audit Report**: Generate a downloadable PDF report detailing all audit findings to keep for your records or share with insurance.
-2. **Generate Dispute Letter**: Click **Dispute** to automatically create a formal, formatted dispute letter addressed to the healthcare facility's billing department.
-3. **Email Text Template**: Click **Email Text** to open a ready-to-send dispute message in your email client or web browser.
+2. **Generate Dispute Letter**: Click **Dispute** to automatically create a formal, formatted dispute letter addressed to the healthcare facility's billing department, downloaded as a PDF.
+3. **Email Text Template**: Click **Email Text** to open the dispute letter as a formatted page in a new browser tab, ready to copy into an email you send yourself. CareGuard does not send the email — see [Sending a Generated Dispute Email](sending-a-dispute-email.md) for what is and is not automated and how to get the letter to the provider.
 
 ---
 

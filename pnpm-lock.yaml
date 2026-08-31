@@ -13,7 +13,7 @@ importers:
         version: 8.55.2
       '@stellar/mpp':
         specifier: ^0.4.0
-        version: 0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.6.5(express@5.2.1)(typescript@5.8.3)(viem@2.47.6(typescript@5.8.3)(zod@3.25.76)))
+        version: 0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.6.5(express@5.2.1)(typescript@5.8.3)(viem@2.47.6(typescript@5.8.3)(zod@4.3.6)))
       '@stellar/stellar-sdk':
         specifier: ^14.6.1
         version: 14.6.1
@@ -64,7 +64,7 @@ importers:
         version: 5.0.8(jspdf@4.2.1)
       mppx:
         specifier: ^0.6.5
-        version: 0.6.5(express@5.2.1)(typescript@5.8.3)(viem@2.47.6(typescript@5.8.3)(zod@3.25.76))
+        version: 0.6.5(express@5.2.1)(typescript@5.8.3)(viem@2.47.6(typescript@5.8.3)(zod@4.3.6))
       next:
         specifier: ^16.2.9
         version: 16.2.9(@babel/core@7.29.0)(@opentelemetry/api@1.9.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -73,7 +73,7 @@ importers:
         version: 4.6.0
       openai:
         specifier: ^6.36.0
-        version: 6.36.0(ws@8.18.3)(zod@3.25.76)
+        version: 6.36.0(ws@8.18.3)(zod@4.3.6)
       pdf-parse:
         specifier: ^2.4.5
         version: 2.4.5
@@ -99,20 +99,20 @@ importers:
         specifier: ^4.21.0
         version: 4.21.0
       zod:
-        specifier: ^3.25.76
-        version: 3.25.76
+        specifier: ^4.0.0
+        version: 4.3.6
     devDependencies:
       '@testing-library/dom':
         specifier: ^10.4.1
         version: 10.4.1
       '@testing-library/jest-dom':
-        specifier: ^6.4.0
+        specifier: ^6.6.3
         version: 6.9.1
       '@testing-library/react':
         specifier: ^16.0.0
         version: 16.3.2(@testing-library/dom@10.4.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       '@testing-library/user-event':
-        specifier: ^14.5.0
+        specifier: ^14.6.1
         version: 14.6.1(@testing-library/dom@10.4.1)
       '@types/cors':
         specifier: ^2.8.19
@@ -131,7 +131,7 @@ importers:
         version: 4.7.0(vite@5.4.21(@types/node@25.6.0)(lightningcss@1.32.0))
       '@vitest/coverage-v8':
         specifier: ^3.2.7
-        version: 3.2.7(vitest@3.2.7(@types/node@25.6.0)(jsdom@25.0.1)(lightningcss@1.32.0))
+        version: 3.2.7(vitest@3.2.7(@types/node@25.6.0)(jsdom@26.1.0)(lightningcss@1.32.0))
       concurrently:
         specifier: ^10.0.5
         version: 10.0.5
@@ -139,8 +139,8 @@ importers:
         specifier: ^8.13.1
         version: 8.13.1(@types/ioredis-mock@8.2.7(ioredis@5.10.1))(ioredis@5.10.1)
       jsdom:
-        specifier: ^25.0.0
-        version: 25.0.1
+        specifier: ^26.0.0
+        version: 26.1.0
       pino-pretty:
         specifier: ^13.1.3
         version: 13.1.3
@@ -154,11 +154,11 @@ importers:
         specifier: ^7.2.2
         version: 7.2.2
       typescript:
-        specifier: 5.8.3
+        specifier: ^5.8.3
         version: 5.8.3
       vitest:
         specifier: ^3.2.7
-        version: 3.2.7(@types/node@25.6.0)(jsdom@25.0.1)(lightningcss@1.32.0)
+        version: 3.2.7(@types/node@25.6.0)(jsdom@26.1.0)(lightningcss@1.32.0)
 
 packages:
 
@@ -2396,11 +2396,11 @@ packages:
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
 
-  jsdom@25.0.1:
-    resolution: {integrity: sha512-8i7LzZj7BF8uplX+ZyOlIz86V6TAsSs+np6m1kpW9u0JWi4z/1t+FzcK1aek+ybTnAC4KhBL4uXCNT0wcUIeCw==}
+  jsdom@26.1.0:
+    resolution: {integrity: sha512-Cvc9WUhxSMEo4McES3P7oK3QaXldCfNWp7pl2NNeiIFlCoLr3kfq9kb1fxftiwk1FLV7CvpvDfonxtzUDeSOPg==}
     engines: {node: '>=18'}
     peerDependencies:
-      canvas: ^2.11.2
+      canvas: ^3.0.0
     peerDependenciesMeta:
       canvas:
         optional: true
@@ -2947,9 +2947,6 @@ packages:
   router@2.2.0:
     resolution: {integrity: sha512-nLTrUKm2UyiL7rlhapu/Zl45FwNgkZGaCpZbIHajDYgwlJCOzLSk+cIPAnsEqV955GjILJnKbdQC1nVPz+gAYQ==}
     engines: {node: '>= 18'}
-
-  rrweb-cssom@0.7.1:
-    resolution: {integrity: sha512-TrEMa7JGdVm0UThDJSx7ddw5nVm3UJS9o9CCIZ72B1vSyEZoziDqBYP3XIoi/12lKrJR8rE3jeFHMok2F/Mnsg==}
 
   rrweb-cssom@0.8.0:
     resolution: {integrity: sha512-guoltQEx+9aMf2gDZ0s62EcV8lsXR+0w8915TC3ITdn2YueuNjdAYh/levpU9nFaoChh9RUS5ZdQMrKfVEN9tw==}
@@ -4457,18 +4454,18 @@ snapshots:
       '@noble/hashes': 1.8.0
       apg-js: 4.4.0
 
-  '@signinwithethereum/siwe@4.2.0(viem@2.47.6(typescript@5.8.3)(zod@3.25.76))':
+  '@signinwithethereum/siwe@4.2.0(viem@2.47.6(typescript@5.8.3)(zod@4.3.6))':
     dependencies:
       '@signinwithethereum/siwe-parser': 4.2.0
     optionalDependencies:
-      viem: 2.47.6(typescript@5.8.3)(zod@3.25.76)
+      viem: 2.47.6(typescript@5.8.3)(zod@4.3.6)
 
   '@stellar/js-xdr@3.1.2': {}
 
-  '@stellar/mpp@0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.6.5(express@5.2.1)(typescript@5.8.3)(viem@2.47.6(typescript@5.8.3)(zod@3.25.76)))':
+  '@stellar/mpp@0.4.0(@stellar/stellar-sdk@14.6.1)(mppx@0.6.5(express@5.2.1)(typescript@5.8.3)(viem@2.47.6(typescript@5.8.3)(zod@4.3.6)))':
     dependencies:
       '@stellar/stellar-sdk': 14.6.1
-      mppx: 0.6.5(express@5.2.1)(typescript@5.8.3)(viem@2.47.6(typescript@5.8.3)(zod@3.25.76))
+      mppx: 0.6.5(express@5.2.1)(typescript@5.8.3)(viem@2.47.6(typescript@5.8.3)(zod@4.3.6))
       zod: 4.3.6
 
   '@stellar/stellar-base@14.1.0':
@@ -4749,7 +4746,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@vitest/coverage-v8@3.2.7(vitest@3.2.7(@types/node@25.6.0)(jsdom@25.0.1)(lightningcss@1.32.0))':
+  '@vitest/coverage-v8@3.2.7(vitest@3.2.7(@types/node@25.6.0)(jsdom@26.1.0)(lightningcss@1.32.0))':
     dependencies:
       '@ampproject/remapping': 2.3.0
       '@bcoe/v8-coverage': 1.0.2
@@ -4764,7 +4761,7 @@ snapshots:
       std-env: 3.10.0
       test-exclude: 7.0.2
       tinyrainbow: 2.0.0
-      vitest: 3.2.7(@types/node@25.6.0)(jsdom@25.0.1)(lightningcss@1.32.0)
+      vitest: 3.2.7(@types/node@25.6.0)(jsdom@26.1.0)(lightningcss@1.32.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -4831,7 +4828,7 @@ snapshots:
     dependencies:
       '@noble/curves': 1.9.7
       '@scure/base': 1.2.6
-      '@signinwithethereum/siwe': 4.2.0(viem@2.47.6(typescript@5.8.3)(zod@3.25.76))
+      '@signinwithethereum/siwe': 4.2.0(viem@2.47.6(typescript@5.8.3)(zod@4.3.6))
       '@x402/core': 2.11.0
       ajv: 8.18.0
       jose: 5.10.0
@@ -5630,19 +5627,18 @@ snapshots:
 
   js-tokens@9.0.1: {}
 
-  jsdom@25.0.1:
+  jsdom@26.1.0:
     dependencies:
       cssstyle: 4.6.0
       data-urls: 5.0.0
       decimal.js: 10.6.0
-      form-data: 4.0.5
       html-encoding-sniffer: 4.0.0
       http-proxy-agent: 7.0.2
       https-proxy-agent: 7.0.6
       is-potential-custom-element-name: 1.0.1
       nwsapi: 2.2.23
       parse5: 7.3.0
-      rrweb-cssom: 0.7.1
+      rrweb-cssom: 0.8.0
       saxes: 6.0.0
       symbol-tree: 3.2.4
       tough-cookie: 5.1.2
@@ -5796,11 +5792,11 @@ snapshots:
 
   module-details-from-path@1.0.4: {}
 
-  mppx@0.6.5(express@5.2.1)(typescript@5.8.3)(viem@2.47.6(typescript@5.8.3)(zod@3.25.76)):
+  mppx@0.6.5(express@5.2.1)(typescript@5.8.3)(viem@2.47.6(typescript@5.8.3)(zod@4.3.6)):
     dependencies:
       incur: 0.3.25
       ox: 0.14.15(typescript@5.8.3)(zod@4.3.6)
-      viem: 2.47.6(typescript@5.8.3)(zod@3.25.76)
+      viem: 2.47.6(typescript@5.8.3)(zod@4.3.6)
       zod: 4.3.6
     optionalDependencies:
       express: 5.2.1
@@ -5860,10 +5856,10 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  openai@6.36.0(ws@8.18.3)(zod@3.25.76):
+  openai@6.36.0(ws@8.18.3)(zod@4.3.6):
     optionalDependencies:
       ws: 8.18.3
-      zod: 3.25.76
+      zod: 4.3.6
 
   ox@0.14.15(typescript@5.8.3)(zod@4.3.6):
     dependencies:
@@ -5889,6 +5885,21 @@ snapshots:
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
       abitype: 1.2.3(typescript@5.8.3)(zod@3.25.76)
+      eventemitter3: 5.0.1
+    optionalDependencies:
+      typescript: 5.8.3
+    transitivePeerDependencies:
+      - zod
+
+  ox@0.14.7(typescript@5.8.3)(zod@4.3.6):
+    dependencies:
+      '@adraffy/ens-normalize': 1.11.1
+      '@noble/ciphers': 1.3.0
+      '@noble/curves': 1.9.1
+      '@noble/hashes': 1.8.0
+      '@scure/bip32': 1.7.0
+      '@scure/bip39': 1.6.0
+      abitype: 1.2.3(typescript@5.8.3)(zod@4.3.6)
       eventemitter3: 5.0.1
     optionalDependencies:
       typescript: 5.8.3
@@ -6169,8 +6180,6 @@ snapshots:
       path-to-regexp: 8.4.2
     transitivePeerDependencies:
       - supports-color
-
-  rrweb-cssom@0.7.1: {}
 
   rrweb-cssom@0.8.0: {}
 
@@ -6547,6 +6556,23 @@ snapshots:
       - utf-8-validate
       - zod
 
+  viem@2.47.6(typescript@5.8.3)(zod@4.3.6):
+    dependencies:
+      '@noble/curves': 1.9.1
+      '@noble/hashes': 1.8.0
+      '@scure/bip32': 1.7.0
+      '@scure/bip39': 1.6.0
+      abitype: 1.2.3(typescript@5.8.3)(zod@4.3.6)
+      isows: 1.0.7(ws@8.18.3)
+      ox: 0.14.7(typescript@5.8.3)(zod@4.3.6)
+      ws: 8.18.3
+    optionalDependencies:
+      typescript: 5.8.3
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+      - zod
+
   vite-node@3.2.4(@types/node@25.6.0)(lightningcss@1.32.0):
     dependencies:
       cac: 6.7.14
@@ -6575,7 +6601,7 @@ snapshots:
       fsevents: 2.3.3
       lightningcss: 1.32.0
 
-  vitest@3.2.7(@types/node@25.6.0)(jsdom@25.0.1)(lightningcss@1.32.0):
+  vitest@3.2.7(@types/node@25.6.0)(jsdom@26.1.0)(lightningcss@1.32.0):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.7
@@ -6602,7 +6628,7 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 25.6.0
-      jsdom: 25.0.1
+      jsdom: 26.1.0
     transitivePeerDependencies:
       - less
       - lightningcss
