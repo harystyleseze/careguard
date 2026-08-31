@@ -367,7 +367,8 @@ export function generateSpec(): OpenAPISpec {
       },
       "/agent/spending": {
         get: {
-          summary: "Get agent spending summary",
+          summary:
+            "Get agent spending summary. See docs/api-examples/agent-spending.md for a full field reference and sample response.",
           tags: ["Agent"],
           responses: {
             "200": {
@@ -377,15 +378,34 @@ export function generateSpec(): OpenAPISpec {
                   schema: {
                     type: "object",
                     properties: {
-                      totalSpent: { type: "number" },
-                      categories: { type: "object" },
+                      policy: {
+                        type: "object",
+                        description:
+                          "The current spending policy for this care recipient.",
+                      },
+                      spending: {
+                        type: "object",
+                        description:
+                          "Month-to-date totals by category: medications, bills, serviceFees, total.",
+                      },
+                      budgetRemaining: {
+                        type: "object",
+                        description:
+                          "Remaining budget for medications and bills, computed from policy minus spending.",
+                      },
+                      transactionCount: { type: "number" },
+                      recentTransactions: {
+                        type: "array",
+                        description:
+                          "The 5 most recent transactions, newest last.",
+                        items: { type: "object" },
+                      },
                     },
                   },
                 },
               },
             },
-            "401": errorResponse("Missing or invalid CAREGIVER_TOKEN."),
-            "403": errorResponse("Caregiver token invalid or insufficient access."),
+            "401": errorResponse("Missing or invalid AGENT_API_KEY."),
             "429": RATE_LIMIT_RESPONSE,
             "500": SERVER_ERROR_RESPONSE,
           },
