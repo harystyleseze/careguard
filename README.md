@@ -247,3 +247,7 @@ careguard/
 ## License
 
 MIT
+
+## Recent Changes
+- Ongoing improvements and fixes as part of active development.
+- See commit history and open issues for detailed change tracking.
