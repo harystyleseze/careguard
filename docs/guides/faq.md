@@ -15,3 +15,15 @@ Open the app's `/docs` route to explore the OpenAPI schema in a browser. See [..
 ## Where do I start if I want to run the app locally?
 
 Start with the [README.md](../../README.md) and then the [QUICKSTART.md](../../QUICKSTART.md) guide.
+
+## What do terms like x402, USDC, and testnet mean?
+
+The [Glossary](glossary.md) explains the payment and technical terms used across the
+dashboard and docs — x402, MPP, USDC, Stellar, testnet, spending policy, approval
+threshold, and more — in plain language.
+
+## Can I manage more than one care recipient?
+
+Partly. CareGuard can store multiple recipients and the dashboard can switch between them,
+but there is no dashboard button to add one yet, and spending limits and activity are
+shared across all recipients. See [Managing Multiple Care Recipients](multiple-care-recipients.md).

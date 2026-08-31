@@ -92,6 +92,38 @@ For deployment topology (Docker Compose and Render), see [docs/deployment/topolo
 
 ## Quick Start
 
+> Maria lives 800 miles from her 78-year-old mother Rosa. Rosa takes 4 medications from 3 pharmacies. Last month, Rosa's blood pressure medication cost $47 at CVS — $12 at Costco, 2 miles away. Nobody knew.
+>
+> Rosa's hospital sent a $2,500 bill with $1,195 in errors — duplicate charges and upcoded procedures. Rosa would have paid it.
+>
+> **CareGuard found $69.76/month in medication savings and caught $1,195 in billing errors — for $0.03 in agent API costs.**
+
+---
+
+## Quick links
+
+- [Getting started guide for caregivers](docs/guides/getting-started-caregiver.md)
+- [Approvals tab guide for caregivers](docs/guides/approvals-tab.md)
+- [Quick start setup guide](QUICKSTART.md)
+- [Architecture overview](docs/ARCHITECTURE.md)
+- [Spending policy for caregivers](docs/guides/spending-policy-for-caregivers.md)
+- [Spending policy technical reference](docs/SPENDING-POLICY.md)
+- [Category budget examples](docs/guides/category-budgets-examples.md)
+- [Testnet explained for caregivers](docs/guides/testnet-explained.md)
+- [Using the /docs API explorer](docs/api-examples/using-the-docs-ui.md)
+- [Drug interaction check API example](docs/api-examples/drug-interactions.md)
+- [OpenAPI spec](docs/openapi.yml)
+
+---
+
+## Developer docs and architecture
+
+The developer-facing setup and runtime details live in these focused guides:
+
+- [QUICKSTART.md](QUICKSTART.md) — local environment setup, wallets, env vars, and starting the stack
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — runtime flow, module boundaries, integrations, and data model
+- [docs/SPENDING-POLICY.md](docs/SPENDING-POLICY.md) — how daily/monthly limits and category budgets are enforced
+- [docs/api-examples/using-the-docs-ui.md](docs/api-examples/using-the-docs-ui.md) — how to browse the `/docs` Scalar API explorer
 **Prerequisites:** Node.js 22 or later, npm.
 
 See [QUICKSTART.md](QUICKSTART.md) for the full setup guide.

@@ -71,14 +71,14 @@ describe("SettingsTab — edit mode (Issue #79)", () => {
   it("shows inputs when Edit is clicked", () => {
     render(<SettingsTab {...buildProps()} />);
     fireEvent.click(screen.getByRole("button", { name: /Edit/i }));
-    expect(screen.getByLabelText(/Recipient Name/i)).toBeTruthy();
+    expect(screen.getByLabelText(/^Name$/i)).toBeTruthy();
     expect(screen.getByLabelText(/Caregiver Name/i)).toBeTruthy();
   });
 
   it("pre-populates inputs with current prop values", () => {
     render(<SettingsTab {...buildProps()} />);
     fireEvent.click(screen.getByRole("button", { name: /Edit/i }));
-    const nameInput = screen.getByLabelText(/Recipient Name/i) as HTMLInputElement;
+    const nameInput = screen.getByLabelText(/^Name$/i) as HTMLInputElement;
     expect(nameInput.value).toBe("Rosa Garcia");
   });
 
@@ -105,7 +105,7 @@ describe("SettingsTab — save (Issue #79)", () => {
     render(<SettingsTab {...buildProps({ onUpdateProfile })} />);
 
     fireEvent.click(screen.getByRole("button", { name: /Edit/i }));
-    const nameInput = screen.getByLabelText(/Recipient Name/i);
+    const nameInput = screen.getByLabelText(/^Name$/i);
     fireEvent.change(nameInput, { target: { value: "Rosa M. Garcia" } });
     fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
 
@@ -153,7 +153,7 @@ describe("SettingsTab — agent status (Issue #79)", () => {
   it("reads /agent/status via agentPaused prop — shows Paused + Resume button", () => {
     render(<SettingsTab {...buildProps({ agentPaused: true })} />);
     expect(screen.getByText("Paused")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Resume Agent/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Resume$/i })).toBeTruthy();
   });
 
   it("shows Active when agentPaused is false", () => {
@@ -164,7 +164,12 @@ describe("SettingsTab — agent status (Issue #79)", () => {
   it("calls onTogglePause when pause/resume button clicked", () => {
     const onTogglePause = vi.fn();
     render(<SettingsTab {...buildProps({ onTogglePause })} />);
-    fireEvent.click(screen.getByRole("button", { name: /Pause Agent/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Pause$/i }));
     expect(onTogglePause).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders formatted NETWORK_LABEL in Network field (Issue #1113)", () => {
+    render(<SettingsTab {...buildProps({ agentInfo: { network: "stellar:testnet" } as any })} />);
+    expect(screen.getByText("Stellar Testnet")).toBeTruthy();
   });
 });

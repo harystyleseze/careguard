@@ -5,6 +5,7 @@ import { copyText } from "../../lib/clipboard";
 import type { CaregiverProfile, RecipientProfile } from "../../lib/types";
 import { Toast } from "../primitives/toast";
 import type { AgentInfo } from "../types";
+import { NETWORK_LABEL } from "../../lib/stellar-network";
 import { getTranslations, type Locale } from "../../i18n";
 
 export interface RecipientOption {
@@ -328,8 +329,8 @@ export function SettingsTab({
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">{t.wallet.network}</label>
-            <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
-              {agentInfo?.network || "stellar:testnet"}
+            <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+              {NETWORK_LABEL}
             </div>
           </div>
           <div>
