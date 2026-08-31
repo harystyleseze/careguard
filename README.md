@@ -103,6 +103,7 @@ For deployment topology (Docker Compose and Render), see [docs/deployment/topolo
 ## Quick links
 
 - [Getting started guide for caregivers](docs/guides/getting-started-caregiver.md)
+- [Caregiver FAQ](docs/guides/faq.md)
 - [Approvals tab guide for caregivers](docs/guides/approvals-tab.md)
 - [Quick start setup guide](QUICKSTART.md)
 - [Architecture overview](docs/ARCHITECTURE.md)
