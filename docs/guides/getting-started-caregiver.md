@@ -124,7 +124,10 @@ The agent does not make any payments without your knowledge. If a payment requir
 
 ## Need help?
 
+- [Glossary](glossary.md) — plain-language definitions of x402, USDC, testnet, spending policy, and other terms
 - [Spending Policy for Caregivers](spending-policy-for-caregivers.md) — understanding the Policy tab
 - [Category Budget Examples](category-budgets-examples.md) — worked examples of budget configurations
 - [Testnet Explained](testnet-explained.md) — why CareGuard uses testnet money
+- [What It Costs](what-it-costs.md) — the agent's own operating costs versus real payments
+- [Managing Multiple Care Recipients](multiple-care-recipients.md) — current support and limitations
 - [FAQ](faq.md) — common questions and answers

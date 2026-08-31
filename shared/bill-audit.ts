@@ -25,7 +25,7 @@ export type ValidationIssue = {
   message: string;
 };
 
-function formatIssues(issues: z.ZodIssue[]): ValidationIssue[] {
+function formatIssues(issues: z.ZodError["issues"]): ValidationIssue[] {
   return issues.map((issue) => ({
     path: issue.path.length > 0 ? issue.path.join(".") : "<root>",
     message: issue.message,

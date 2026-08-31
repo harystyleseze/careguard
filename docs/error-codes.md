@@ -112,3 +112,4 @@ Returned when trying to post tasks or execute actions while the coordinator agen
 
 - `docs/openapi.yml` — `Error.code` field enum (keep in sync with this registry)
 - `docs/troubleshooting.md` — operator-facing troubleshooting guide
+- `docs/api-examples/error-responses.md` — sample error JSON per category, HTTP status list, and retryable vs non-retryable guidance

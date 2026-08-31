@@ -32,16 +32,19 @@
     "load:pharmacy-order": "k6 run load/pharmacy-order.js",
     "load:agent-stream": "k6 run load/agent-stream.js",
     "check:env-vars": "tsx scripts/check-env-vars.ts",
-    "check:vitest-lock": "node scripts/check-vitest-version-lock.mjs"
+    "check:vitest-lock": "node scripts/check-vitest-version-lock.mjs",
+    "simulate:spending-reset": "node --import tsx scripts/simulate-spending-reset.ts",
+    "generate:sample-bill": "node --import tsx scripts/generate-sample-bill.ts",
+    "clear:stale-locks": "node --import tsx scripts/clear-stale-locks.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@sentry/node": "^8.45.1",
-    "@stellar/mpp": "~0.7.1",
-    "@stellar/stellar-sdk": "^17.0.1",
+    "@sentry/node": "^10.62.0",
+    "@stellar/mpp": "^0.4.0",
+    "@stellar/stellar-sdk": "^14.6.1",
     "@tailwindcss/postcss": "^4.3.1",
     "@tanstack/react-virtual": "^3.14.10",
     "@x402/core": "^2.11.0",

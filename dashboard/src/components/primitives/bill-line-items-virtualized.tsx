@@ -19,6 +19,7 @@ export interface BillLineItemsVirtualizedProps {
 function ItemRow({ item }: { item: BillLineItem }) {
   return (
     <div
+      data-testid="line-item"
       className={`flex items-center justify-between p-3 rounded-lg text-sm ${
         item.status === "valid"
           ? "bg-slate-50"
@@ -30,7 +31,7 @@ function ItemRow({ item }: { item: BillLineItem }) {
       <div className="flex-1">
         <div className="font-medium">{item.description}</div>
         <div className="hidden md:block text-xs text-slate-500">
-          CPT: {item.cptCode}
+          CPT: {item.cptCode || "N/A"}
         </div>
         <details className="md:hidden mt-1">
           <summary className="cursor-pointer text-xs text-slate-500">
