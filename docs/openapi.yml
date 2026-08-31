@@ -431,6 +431,7 @@ paths:
   /pharmacy/order:
     post:
       summary: 'Submit a paid pharmacy order'
+      description: 'Submits a medication order and pays via MPP Charge on Stellar (X-Payment-Challenge / X-Payment-Authorization headers), distinct from the x402 flow used by other endpoints. See docs/api-examples/pharmacy-order.md for a full walkthrough and docs/services/mpp.md for persistence internals.'
       tags:
         - 'Pharmacy Payments'
       requestBody:
