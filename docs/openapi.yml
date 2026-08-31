@@ -401,7 +401,7 @@ paths:
           description: 'Comma-separated medication names. Each medication name is limited to 80 characters.'
       responses:
         200:
-          description: 'Drug interaction results'
+          description: 'Drug interaction results. See docs/api-examples/drug-interactions.md for a full curl example including the x402 payment flow.'
         400:
           description: 'Validation error. `code` is one of VALIDATION_MISSING_FIELD, VALIDATION_INVALID_INPUT, VALIDATION_INSUFFICIENT_SCORE.'
           content:

@@ -111,6 +111,7 @@ For deployment topology (Docker Compose and Render), see [docs/deployment/topolo
 - [Category budget examples](docs/guides/category-budgets-examples.md)
 - [Testnet explained for caregivers](docs/guides/testnet-explained.md)
 - [Using the /docs API explorer](docs/api-examples/using-the-docs-ui.md)
+- [Drug interaction check API example](docs/api-examples/drug-interactions.md)
 - [OpenAPI spec](docs/openapi.yml)
 
 ---
