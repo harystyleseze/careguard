@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import fs from "node:fs/promises";
-import pdfParse from "pdf-parse";
+import { PDFParse } from "pdf-parse";
 import { mockDashboardApis } from "./helpers";
 
 test("pdf download buttons trigger browser downloads", async ({ page }) => {
@@ -17,7 +17,9 @@ test("pdf download buttons trigger browser downloads", async ({ page }) => {
   expect(medPath).toBeTruthy();
   if (medPath) {
     const buffer = await fs.readFile(medPath);
-    const parsed = await pdfParse(buffer);
+    const parser = new PDFParse({ data: buffer });
+    const parsed = await parser.getText();
+    await parser.destroy();
     expect(parsed.text).toContain("Ada Lovelace");
   }
 

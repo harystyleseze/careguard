@@ -45,6 +45,7 @@ shared/__tests__/test-data-*/
 # Generated PDF / dispute letter artefacts from local runs
 *.pdf
 generated/
+services/bill-audit-api/fixtures/generated/
 
 # TypeScript build output and incremental compile cache
 *.tsbuildinfo

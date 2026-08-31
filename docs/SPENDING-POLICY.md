@@ -39,6 +39,20 @@ The default is `America/Phoenix` because it matches the CareGuard caregiver pers
 
 `agent/tz.ts` exports `getLocalDateStr(tz, date?)` which uses `Intl.DateTimeFormat('en-CA', { timeZone: tz })` to format a date as `YYYY-MM-DD` in the given timezone. `checkSpendingPolicy` in `agent/tools.ts` calls this to determine both "today" and the date of each past transaction before comparing.
 
+### Local reset simulation
+
+Use the helper script to verify daily reset behavior without changing your
+system clock:
+
+```bash
+npm run simulate:spending-reset -- --timezone=America/New_York --recipient=rosa
+```
+
+The script reads local spending state from `data/recipients/<recipient>/spending.json`
+or the legacy `data/spending.json`, simulates one minute before and after the
+next local midnight, and prints the before/after spending totals. Pass
+`--now=<ISO timestamp>` to reproduce a specific boundary.
+
 ## Platform Cap (`MAX_SINGLE_TX_USDC`)
 
 A deployment-level ceiling sits **above** all caregiver-controlled policy limits.

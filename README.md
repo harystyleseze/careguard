@@ -1,41 +1,15 @@
 # CareGuard
 
-**An autonomous AI agent that helps caregivers manage elderly healthcare spending on Stellar testnet.**
+[![CI](https://github.com/harystyleseze/careguard/actions/workflows/ci.yml/badge.svg)](https://github.com/harystyleseze/careguard/actions/workflows/ci.yml)
 
-CareGuard compares medication prices, audits medical bills for errors, checks drug interactions, and executes payments only within carefully defined caregiver spending policies.
+**An autonomous AI agent that manages elderly healthcare spending on Stellar.**
 
-## Table of contents
+Compares medication prices across pharmacies, audits medical bills for errors, checks drug interactions, and executes real USDC payments — all within caregiver-controlled spending policies. Every transaction settles on Stellar testnet via x402 and MPP.
 
-- [Caregiver overview](#caregiver-overview)
-- [The problem CareGuard solves](#the-problem)
-- [How CareGuard works](#how-careguard-works)
-- [Use case: Maria & Rosa](#use-case-maria--rosa)
-- [Quick links](#quick-links)
-- [Developer docs and architecture](#developer-docs-and-architecture)
-- [Verified results](#verified-results)
-- [Why CareGuard](#why-careguard)
-- [Market context](#market-context)
-- [License](#license)
 
 ---
 
-## Caregiver overview
-
-CareGuard is built to reduce the stress, time, and financial risk of managing health costs for an aging loved one.
-
-It helps a caregiver:
-
-- compare medication prices across nearby pharmacies
-- catch billing mistakes before paying a hospital or provider bill
-- check for harmful drug interactions before a refill is approved
-- set spending limits that the agent cannot exceed
-- review every transaction in a clear activity log
-
-The product is designed around a simple principle: the agent helps with decisions, but the caregiver stays in control.
-
----
-
-## The problem
+## The Problem
 
 **63 million American caregivers** spend $7,200/year out of pocket and 27 hours/week managing their aging parents' healthcare:
 
@@ -46,44 +20,62 @@ The product is designed around a simple principle: the agent helps with decision
 
 There is no tool that autonomously discovers the cheapest options, catches billing errors, and handles payments — with guardrails a caregiver can trust.
 
----
-
-## How CareGuard works
+## How CareGuard Works
 
 CareGuard is an AI agent with a Stellar wallet that acts on behalf of a family caregiver:
 
-1. **Compares medication prices** across pharmacies and checks for the lowest cost option
-2. **Checks drug interactions** before ordering or approving medication
-3. **Orders medications** from the cheapest verified pharmacy
-4. **Audits medical bills** for duplicates, upcoding, and other overcharges
-5. **Pays corrected bill amounts** only when the policy allows it
-6. **Enforces spending policies** — daily/monthly limits, category budgets, and caregiver approval thresholds
+1. **Compares medication prices** across 5 pharmacies per drug — pays $0.002/query via x402 on Stellar
+2. **Checks drug interactions** before ordering — pays $0.001/check via x402
+3. **Orders medications** from the cheapest pharmacy — pays via MPP Charge on Stellar (real USDC)
+4. **Audits medical bills** for duplicates, upcoding, overcharges — pays $0.01/audit via x402
+5. **Pays corrected bill amounts** via direct Stellar USDC transfer
+6. **Enforces spending policies** — daily/monthly limits, category budgets, caregiver approval thresholds
 
 Every payment is a real Stellar testnet transaction verifiable on [stellar.expert](https://stellar.expert/explorer/testnet).
 
-For the full runtime flow, module map, and integration details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+### USE CASE: Maria & Rosa
 
-```mermaid
-flowchart TD
-  A[Caregiver dashboard request] --> B[HTTP /agent/run]
-  B --> C[runAgent task loop]
-  C --> D[Tool call executeTool]
-  D --> E1[x402 APIs: /pharmacy/compare, /bill/audit, /drug/interactions]
-  D --> E2[MPP charge: /pharmacy/order]
-  D --> E3[Direct Stellar USDC transfer]
-  E1 --> F[Persist spending + transaction data]
-  E2 --> F
-  E3 --> F
-  F --> G[Return agent response + tool calls + spending summary]
+> Maria lives 800 miles from her 78-year-old mother Rosa. Rosa takes 4 medications from 3 pharmacies. Last month, Rosa's blood pressure medication cost $47 at CVS — $12 at Costco, 2 miles away. Nobody knew.
+>
+> Rosa's hospital sent a $2,500 bill with $1,195 in errors — duplicate charges and upcoded procedures. Rosa would have paid it.
+>
+> **CareGuard found $69.76/month in medication savings and caught $1,195 in billing errors — for $0.03 in agent API costs.**
+
+---
+
+## Architecture
+
+For a full runtime flow diagram, module map, and integration details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+For deployment topology (Docker Compose and Render), see [docs/deployment/topology.md](docs/deployment/topology.md).
+
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   CAREGIVER DASHBOARD (Next.js)              │
+│  Spending overview | Medications | Bills | Policy | Activity │
+├─────────────────────────────────────────────────────────────┤
+│                 AI AGENT (Groq LLM + tool-use)               │
+│  Autonomous decision-making with 7 tools                     │
+├──────────────────┬───────────────┬──────────────────────────┤
+│   x402 Client    │  MPP Client   │   Spending Policy Engine │
+│  Signs Stellar   │  Signs Stellar│   Daily/monthly limits   │
+│  transactions    │  transactions │   Category budgets       │
+│  per API query   │  per order    │   Approval thresholds    │
+├──────────────────┴───────────────┴──────────────────────────┤
+│                  STELLAR TESTNET (USDC)                       │
+│  OZ Facilitator (x402) | MPP Charge | Direct transfers       │
+│  All tx verifiable on stellar.expert                          │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Payment protocols used
+### Payment Protocols Used
 
-| Protocol | Purpose | How it works |
+| Protocol | Purpose | How It Works |
 |----------|---------|--------------|
 | **x402** | Agent pays for API queries (pharmacy prices, bill audits, drug interactions) | Agent calls x402-protected endpoint → gets 402 → signs Stellar auth entry → OZ Facilitator settles payment → agent receives data |
 | **MPP Charge** | Agent pays pharmacies for medication orders | Agent orders medication → gets 402 challenge → signs Stellar payment tx → server broadcasts → order confirmed |
-| **Stellar USDC transfer** | Agent pays medical bills | Agent builds Stellar payment tx → signs with keypair → submits to Horizon → USDC transferred |
+| **Stellar USDC Transfer** | Agent pays medical bills | Agent builds Stellar payment tx → signs with keypair → submits to Horizon → USDC transferred |
 
 ### Services
 
@@ -98,7 +90,7 @@ flowchart TD
 
 ---
 
-## Use case: Maria & Rosa
+## Quick Start
 
 > Maria lives 800 miles from her 78-year-old mother Rosa. Rosa takes 4 medications from 3 pharmacies. Last month, Rosa's blood pressure medication cost $47 at CVS — $12 at Costco, 2 miles away. Nobody knew.
 >
@@ -131,8 +123,9 @@ The developer-facing setup and runtime details live in these focused guides:
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — runtime flow, module boundaries, integrations, and data model
 - [docs/SPENDING-POLICY.md](docs/SPENDING-POLICY.md) — how daily/monthly limits and category budgets are enforced
 - [docs/api-examples/using-the-docs-ui.md](docs/api-examples/using-the-docs-ui.md) — how to browse the `/docs` Scalar API explorer
+**Prerequisites:** Node.js 22 or later, npm.
 
-### Local quick start
+See [QUICKSTART.md](QUICKSTART.md) for the full setup guide.
 
 ```bash
 # 1. Clone and install
@@ -156,9 +149,11 @@ cd dashboard && npm run dev
 # 6. Open http://localhost:3000
 ```
 
-### Docker development
+> **Note:** `data/` is a **local working directory**. Spending snapshots, transaction logs, and orders contain medication lists, spending patterns, and wallet activity — they are excluded from version control by `.gitignore` and must never be committed. See `docs/adr/002-pii-in-persistence.md` for details.
 
-For a single-command boot of the full stack — server, dashboard, redis, prometheus, and grafana — use Docker Compose:
+### Docker dev (one command)
+
+For a single-command boot of the full stack — server, dashboard, redis, prometheus, grafana — use Docker Compose. See [issue #111](https://github.com/harystyleseze/careguard/issues/111).
 
 ```bash
 # 1. Configure .env (same as above)
@@ -175,11 +170,35 @@ docker compose up
 #   Redis:      localhost:6379
 ```
 
-The default `docker-compose.yml` builds the production-shape multi-stage images. The auto-loaded `docker-compose.override.yml` swaps the `server` and `dashboard` services for hot-reload dev mode.
+The default `docker-compose.yml` builds the production-shape multi-stage images. The auto-loaded `docker-compose.override.yml` swaps the `server` and `dashboard` services for hot-reload dev mode (mounts the source tree, runs `npm run dev`).
+
+To run the prod-shape stack without the dev overrides:
+
+```bash
+docker compose -f docker-compose.yml up
+```
+
+To tear everything down (including volumes — drops the spending log, redis data, grafana dashboards):
+
+```bash
+docker compose down -v
+```
+
+Health checks are enabled on every service. Targets:
+
+| Service     | Health probe                                  |
+|-------------|-----------------------------------------------|
+| `server`    | `GET /` returns 200                           |
+| `dashboard` | `GET /` returns 200                           |
+| `redis`     | `redis-cli ping` returns PONG                 |
+| `prometheus`| `GET /-/ready`                                |
+| `grafana`   | `GET /api/health`                             |
+
+Boot time on a warm Docker is ~30s (cold first build is much longer due to npm install). If the dashboard waits forever for `server: healthy`, check `docker compose logs server` — the most common cause is missing/invalid `OZ_FACILITATOR_API_KEY` or `AGENT_SECRET_KEY` in `.env`.
 
 See [docs/observability/health-checks.md](docs/observability/health-checks.md) for the `/health` and `/ready` response schemas and what each dependency check means.
 
-For a symptom-to-resolution index (stuck agent spinner, repeated 402s, blank wallet balance, dashboard "Disconnected", startup hangs on Horizon, missing env), see [docs/troubleshooting.md](docs/troubleshooting.md).
+For local Grafana — which dashboards are pre-provisioned, which `prom-client` metric each panel shows, and how to add a dashboard/panel without committing experimental JSON — see [docs/LOCAL-MONITORING.md](docs/LOCAL-MONITORING.md).
 
 ---
 
@@ -202,17 +221,16 @@ hosting setup, CI validation, and how the x402 `X-PAYMENT` auth scheme works.
 
 ```bash
 # Install dependencies (if not already done)
-npm install --legacy-peer-deps
-cd dashboard && npm install --legacy-peer-deps && cd ..
+pnpm install
 
 # Run all tests (root backend + dashboard)
-npm run test:all
+pnpm test
 
 # Watch mode
-npm run test:watch
+pnpm test:watch
 
 # Run tests with coverage
-npm test -- --coverage
+pnpm test -- --coverage
 ```
 
 Tests are organized in two workspaces:
@@ -226,9 +244,32 @@ Shared test helpers (environment scrubber, fetch mock, Horizon mock) live in `te
 
 ---
 
-## Verified results
+## Tech Stack
 
-From a real end-to-end test on Stellar testnet:
+| Component | Technology | Package |
+|-----------|-----------|---------|
+| AI Agent | Any OpenAI-compatible LLM (Groq, OpenRouter, OpenAI) | `openai` |
+| x402 Server | Express + OZ Facilitator on Stellar | `@x402/express`, `@x402/stellar` |
+| x402 Client | Auto 402-handling fetch wrapper | `@x402/fetch` |
+| MPP Server | Express + Stellar charge mode | `@stellar/mpp`, `mppx` |
+| MPP Client | Auto 402-handling fetch | `@stellar/mpp`, `mppx` |
+| Bill Payments | Direct Stellar USDC transfers | `@stellar/stellar-sdk` v14 |
+| Dashboard | Next.js + TypeScript + Tailwind | `next`, `react` |
+| Persistence | JSON file storage | `fs` |
+
+### Key Dependencies
+
+- `@stellar/stellar-sdk` ^14.6.1 — Stellar network interaction
+- `@x402/express` + `@x402/stellar` — x402 payment middleware (server-side)
+- `@x402/fetch` — x402 payment client (auto 402 handling)
+- `@stellar/mpp` + `mppx` — MPP charge mode (server + client)
+- `openai` — OpenAI-compatible LLM client (Groq, OpenRouter, etc.)
+
+---
+
+## Verified Results
+
+From real end-to-end test on Stellar testnet:
 
 | Metric | Value |
 |--------|-------|
@@ -245,33 +286,9 @@ For detailed cost analysis, per-operation breakdown, and cost estimation workshe
 
 ---
 
-## Why CareGuard
+## Project Structure
 
-### Application of technology
-Uses x402 (per-query API payments) + MPP Charge (medication orders) + direct Stellar USDC transfers (bill payments) + a spending policy engine — each payment protocol in its appropriate context.
-
-### Business value
-63M caregivers, $7,200/yr out of pocket, $220B medical debt, 80% of bills have errors. CareGuard saves Rosa $2,320 in year one for $0.03 in API costs.
-
----
-
-## Market context
-
-| Metric | Value | Source |
-|--------|-------|--------|
-| American caregivers | 63 million | AARP 2025 |
-| Caregiver OOP spending | $7,200/year | AARP |
-| Medical bills with errors | 80% | Orbdoc/Aptarro |
-| US medical debt | $220 billion | Peterson-KFF |
-| Medication non-adherence cost | $100-300B/year | CDC |
-| Caregiver app market | $8.4B → $56.9B by 2032 | Wise Guy Reports |
-| Hospital price transparency | Rules took effect April 1, 2026 | CMS |
-
----
-
-## Project structure
-
-```text
+```
 careguard/
 ├── agent/
 │   ├── server.ts          # AI agent with LLM tool-use + REST API
@@ -290,9 +307,32 @@ careguard/
 ├── data/                  # Local working directory (see note below)
 ├── .env.example           # Environment variable template
 ├── QUICKSTART.md          # Setup guide
-├── docs/                  # Architecture, policy, API docs, and guides
-└── README.md              # Caregiver overview and entry point
 ```
+
+---
+
+## Why CareGuard
+
+### Application of Technology
+Uses x402 (per-query API payments) + MPP Charge (medication orders) + direct Stellar USDC transfers (bill payments) + spending policy engine — each payment protocol in its appropriate context.
+
+### Business Value
+63M caregivers, $7,200/yr out of pocket, $220B medical debt, 80% of bills have errors. CareGuard saves Rosa $2,320 in year one for $0.03 in API costs.
+
+---
+
+## Market Context
+
+| Metric | Value | Source |
+|--------|-------|--------|
+| American caregivers | 63 million | AARP 2025 |
+| Caregiver OOP spending | $7,200/year | AARP |
+| Medical bills with errors | 80% | Orbdoc/Aptarro |
+| US medical debt | $220 billion | Peterson-KFF |
+| Medication non-adherence cost | $100-300B/year | CDC |
+| Caregiver app market | $8.4B → $56.9B by 2032 | Wise Guy Reports |
+| Hospital price transparency | Rules took effect April 1, 2026 | CMS |
+
 
 ---
 
