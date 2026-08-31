@@ -88,7 +88,8 @@ function bodyTooLargeResponse() {
 
 const RATE_LIMIT_RESPONSE = errorResponse(
   "Too many requests for this route's rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; " +
-    "back off and retry after the `Retry-After` header.",
+    "back off and retry after the `Retry-After` header. See docs/api-examples/rate-limits.md " +
+    "for per-endpoint limits, response headers, and retry guidance.",
 );
 
 const SERVER_ERROR_RESPONSE = errorResponse(
@@ -167,7 +168,8 @@ export function generateSpec(): OpenAPISpec {
       title: "CareGuard API",
       version: "1.0.0",
       description:
-        "OpenAPI spec for CareGuard services: agent spending, pharmacy, bill audit, drug interactions, and payments.",
+        "OpenAPI spec for CareGuard services: agent spending, pharmacy, bill audit, drug interactions, and payments. " +
+        "See docs/api-examples/rate-limits.md for rate-limit behavior, response headers, and retry guidance.",
     },
     servers: [
       {
