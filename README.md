@@ -342,3 +342,7 @@ Uses x402 (per-query API payments) + MPP Charge (medication orders) + direct Ste
 ## License
 
 MIT
+
+## Recent Changes
+- Ongoing improvements and fixes as part of active development.
+- See commit history and open issues for detailed change tracking.
