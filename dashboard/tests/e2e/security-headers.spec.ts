@@ -10,5 +10,8 @@ test("security headers are present", async ({ page }) => {
   expect(headers["x-content-type-options"]).toBe("nosniff");
   expect(headers["referrer-policy"]).toBe("strict-origin-when-cross-origin");
   expect(headers["permissions-policy"]).toContain("camera=()");
-  expect(headers["content-security-policy-report-only"]).toContain("default-src 'self'");
+  expect(headers["content-security-policy"]).toContain("default-src 'self'");
+  expect(headers["content-security-policy"]).toContain("https://horizon-testnet.stellar.org");
+  expect(headers["content-security-policy"]).toContain("https://stellar.expert");
+  expect(headers["content-security-policy-report-only"]).toBeUndefined();
 });
