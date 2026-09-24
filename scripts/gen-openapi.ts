@@ -7,7 +7,7 @@
  */
 
 import { z } from "zod";
-import { writeFileSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import {
@@ -667,12 +667,46 @@ export function generateSpec(): OpenAPISpec {
 }
 
 export function saveSpec() {
-  mkdirSync(docsDir, { recursive: true });
-
   const spec = generateSpec();
   const yaml = specToYaml(spec);
 
   const filePath = path.resolve(docsDir, "openapi.yml");
+  if (process.argv.includes("--check")) {
+    let committedYaml: string;
+    try {
+      committedYaml = readFileSync(filePath, "utf-8");
+    } catch {
+      console.error(`OpenAPI spec is missing: ${filePath}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    if (committedYaml !== yaml) {
+      console.error(`OpenAPI spec is stale: ${filePath}`);
+      const expectedLines = yaml.split("\n");
+      const actualLines = committedYaml.split("\n");
+      let firstDifference = 0;
+      while (
+        firstDifference < expectedLines.length &&
+        firstDifference < actualLines.length &&
+        expectedLines[firstDifference] === actualLines[firstDifference]
+      ) {
+        firstDifference += 1;
+      }
+      const lineNumber = firstDifference + 1;
+      console.error(`First difference at line ${lineNumber}:`);
+      console.error(`  committed: ${actualLines[firstDifference] ?? "<missing>"}`);
+      console.error(`  generated: ${expectedLines[firstDifference] ?? "<missing>"}`);
+      console.error("Run `npm run gen-openapi` and commit the updated spec.");
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(`✓ OpenAPI spec is up to date: ${filePath}`);
+    return;
+  }
+
+  mkdirSync(docsDir, { recursive: true });
   writeFileSync(filePath, yaml, "utf-8");
 
   console.log(`✓ OpenAPI spec generated: ${filePath}`);
