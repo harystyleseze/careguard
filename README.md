@@ -33,6 +33,11 @@ CareGuard is an AI agent with a Stellar wallet that acts on behalf of a family c
 
 Every payment is a real Stellar testnet transaction verifiable on [stellar.expert](https://stellar.expert/explorer/testnet).
 
+## Testing
+
+See [load testing prerequisites](load/README.md) for k6 installation, required
+services and environment variables, and how to read load-test results.
+
 ### USE CASE: Maria & Rosa
 
 > Maria lives 800 miles from her 78-year-old mother Rosa. Rosa takes 4 medications from 3 pharmacies. Last month, Rosa's blood pressure medication cost $47 at CVS — $12 at Costco, 2 miles away. Nobody knew.

@@ -12,6 +12,25 @@ npm run setup   # generates testnet wallets
 
 See [QUICKSTART.md](QUICKSTART.md) for full environment setup.
 
+## Testing
+
+Run `npm test` for the unit and integration test suite. Run `npm run e2e` for
+the normal Playwright end-to-end suite; use `npm run e2e:debug` when debugging
+locally because it opens Playwright in headed UI mode. The CI-facing `e2e`
+script remains unchanged.
+
+`npm run lint` currently only runs TypeScript with `tsc --noEmit`; it is not a
+style linter because this repository does not currently configure ESLint,
+Biome, or another style-linting tool. `npm run typecheck` runs the project
+build-mode type check (`tsc -b`). Both script names remain available for their
+existing uses. Adding a real style linter is a future follow-up, outside the
+scope of these commands.
+
+Before pushing changes that affect API routes or schemas, run
+`npm run gen-openapi -- --check` to verify that the committed
+`docs/openapi.yml` is current. This check is suitable for CI or a pre-push
+hook; run `npm run gen-openapi` first when it reports a stale spec.
+
 ## Node.js Version Policy
 
 This project requires **Node.js 22** and will refuse to install on earlier versions.
