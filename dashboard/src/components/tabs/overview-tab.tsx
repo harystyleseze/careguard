@@ -16,6 +16,8 @@ export interface OverviewTabProps {
   agentPaused: boolean;
   loading: boolean;
   activeTask: string;
+  /** Tool currently executing inside the running task, when known (#1253). */
+  activeTool?: string | null;
   onRunTask: (task: string, label: string) => void;
   onCancelTask?: () => void;
   recipient?: RecipientProfile;
@@ -34,6 +36,7 @@ export function OverviewTab({
   agentPaused,
   loading,
   activeTask,
+  activeTool,
   onRunTask,
   onCancelTask,
   recipient,
@@ -162,9 +165,13 @@ export function OverviewTab({
           />
         </div>
         {loading && (
-          <div className="mt-4 flex items-center gap-3 text-sm text-sky-600">
+          <div className="mt-4 flex items-center gap-3 text-sm text-sky-600" aria-live="polite">
             <div className="w-4 h-4 border-2 border-sky-600 border-t-transparent rounded-full animate-spin" />
-            {t.tasks.working}
+            {/* #1253: name the in-flight tool when the agent state has one,
+                fall back to the generic message otherwise. */}
+            {activeTool
+              ? t.tasks.workingStep.replace("{step}", activeTool)
+              : t.tasks.working}
             {onCancelTask && (
               <button
                 onClick={onCancelTask}
@@ -211,22 +218,82 @@ export function OverviewTab({
 
       {/* Medication Adherence Prompt (Issue #264) */}
       {agentResult?.toolCalls.some((t) => t.tool === "pay_for_medication" && t.result?.success) && (
-        <div className="bg-white rounded-xl border border-amber-200 p-6">
-          <h2 className="text-sm font-semibold text-amber-800 mb-2">
-            Medication Adherence Check
-          </h2>
+        <MedicationAdherenceCheck recipientName={recipient?.name || "the care recipient"} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Post-payment adherence check (Issue #1254). Distinguishes itself from the
+ * AdherencePrompt list (#264, which has per-record Confirm buttons): this card
+ * records today's dose against the most recent pending adherence record for
+ * the recipient, disables both buttons once a choice is recorded, and shows
+ * an inline confirmation so the action is never a silent no-op.
+ */
+function MedicationAdherenceCheck({ recipientName }: { recipientName: string }) {
+  const [recorded, setRecorded] = useState<"taken" | "not_yet" | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const record = async (choice: "taken" | "not_yet") => {
+    if (recorded || submitting) return;
+    setSubmitting(true);
+    try {
+      const pendingRes = await agentFetch("/agent/adherence/pending?recipient_id=rosa");
+      const pending = pendingRes.ok ? await pendingRes.json() : null;
+      const recordId = pending?.pending?.[0]?.id;
+
+      if (recordId) {
+        await agentFetch(
+          choice === "taken" ? "/agent/adherence/confirm" : "/agent/adherence/skip",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ record_id: recordId }),
+          },
+        );
+      }
+      // Recorded (or nothing pending to record against) — either way the
+      // choice is acknowledged and the buttons lock.
+      setRecorded(choice);
+    } catch {
+      // Leave the buttons enabled so the caregiver can retry the recording.
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-amber-200 p-6">
+      <h2 className="text-sm font-semibold text-amber-800 mb-2">
+        Medication Adherence Check
+      </h2>
+      {recorded ? (
+        <p className="text-sm text-green-700" role="status">
+          ✓ {recorded === "taken" ? `Recorded — ${recipientName} took their medication today.` : "Recorded — dose not yet taken."}
+        </p>
+      ) : (
+        <>
           <p className="text-sm text-amber-700">
-            Did {recipient?.name || "the care recipient"} take their medication today?
+            Did {recipientName} take their medication today?
           </p>
           <div className="mt-3 flex gap-2">
-            <button className="px-4 py-2 bg-green-50 text-green-700 rounded-lg text-xs font-medium hover:bg-green-100 cursor-pointer transition-all">
+            <button
+              onClick={() => record("taken")}
+              disabled={submitting}
+              className="px-4 py-2 bg-green-50 text-green-700 rounded-lg text-xs font-medium hover:bg-green-100 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               Yes — Taken
             </button>
-            <button className="px-4 py-2 bg-red-50 text-red-700 rounded-lg text-xs font-medium hover:bg-red-100 cursor-pointer transition-all">
+            <button
+              onClick={() => record("not_yet")}
+              disabled={submitting}
+              className="px-4 py-2 bg-red-50 text-red-700 rounded-lg text-xs font-medium hover:bg-red-100 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               Not Yet
             </button>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

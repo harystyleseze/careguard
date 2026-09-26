@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { captureException } from "@/lib/sentry";
+import { ConfirmDialog } from "@/components/primitives/confirm-dialog";
 
 export default function Error({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
   useEffect(() => {
     console.error("Dashboard error:", error);
     captureException(error, { digest: error.digest });
@@ -20,6 +23,18 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Reset the agent?"
+        description="This will clear all local data — every transaction, the agent log, and all audit results — before the page reloads. This cannot be undone."
+        confirmLabel="Reset agent"
+        destructive
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={() => {
+          setConfirmOpen(false);
+          void handleResetAgent();
+        }}
+      />
       <div className="bg-white rounded-xl border border-slate-200 p-8 max-w-md text-center">
         <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
           <svg className="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -45,11 +60,15 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
           </button>
         </div>
         <button
-          onClick={handleResetAgent}
+          onClick={() => setConfirmOpen(true)}
           className="mt-3 w-full py-2 px-4 border border-slate-300 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 active:bg-slate-100 transition-all cursor-pointer"
         >
           Reset Agent
         </button>
+        <p className="mt-2 text-xs text-slate-500">
+          Resets the agent's local state — this clears all transactions, logs, and
+          audit results. Your dashboard settings are not affected.
+        </p>
         {error.digest && (
           <p className="mt-4 text-xs text-slate-400">Error ID: {error.digest}</p>
         )}

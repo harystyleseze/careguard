@@ -9,6 +9,7 @@ import {
 } from "../../lib/schemas";
 import { POLICY_FIELD_T_KEY as FIELD_T_KEY } from "../../lib/policy-field-labels";
 import type { SpendingData } from "../types";
+import { Bar } from "../primitives/bar";
 import { Toast } from "../primitives/toast";
 import { getTranslations, type Locale } from "../../i18n";
 
@@ -213,9 +214,35 @@ export function PolicyTab({
                   Warning: {warnMsg}
                 </p>
               )}
+          </div>
+        );
+      })}
+        {spending && (
+          <div className="border border-dashed border-slate-300 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-medium text-slate-600">
+                {t.policyPreview.title}
+              </span>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-amber-600">
+                {t.policyPreview.unsaved}
+              </span>
             </div>
-          );
-        })}
+            <div className="space-y-3">
+              <Bar
+                label={t.budget.medications}
+                spent={spending.spending.medications}
+                budget={Number(policyForm.medicationMonthlyBudget)}
+                locale={locale}
+              />
+              <Bar
+                label={t.budget.medicalBills}
+                spent={spending.spending.bills}
+                budget={Number(policyForm.billMonthlyBudget)}
+                locale={locale}
+              />
+            </div>
+          </div>
+        )}
         <div className="flex gap-2">
           <button
             type="button"

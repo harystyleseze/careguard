@@ -49,6 +49,10 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const [agentResult, setAgentResult] = useState<AgentResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeTask, setActiveTask] = useState('');
+  // #1253: the tool currently executing inside the agent run (via SSE), so
+  // the loading text can say which step is in progress instead of a static
+  // "Agent working...".
+  const [activeTool, setActiveTool] = useState<string | null>(null);
   const [agentLog, setAgentLog] = useState<AgentLogEntry[]>([]);
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null);
   const [agentConnected, setAgentConnected] = useState(false);
@@ -121,12 +125,13 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     } catch {}
   }, []);
 
+  // Issue #1259: poll regardless of the active tab so the Approvals nav badge
+  // reflects pending items from anywhere in the dashboard.
   useEffect(() => {
-    if (activeTab !== 'approvals') return;
     void fetchApprovals();
     const interval = setInterval(fetchApprovals, 5000);
     return () => clearInterval(interval);
-  }, [activeTab, fetchApprovals]);
+  }, [fetchApprovals]);
 
   const updateApproval = useCallback(async (txId: string, approve: boolean) => {
     setApprovalsLoading(true);
@@ -389,6 +394,16 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
           setAgentPaused(Boolean(data.paused));
         } catch {}
       });
+
+      // #1253: which tool of the running task is executing right now.
+      es.addEventListener('run_progress', (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (typeof data.tool === 'string' && data.tool.length > 0) {
+            setActiveTool(data.tool);
+          }
+        } catch {}
+      });
     }
 
     connect();
@@ -453,6 +468,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       }
       setLoading(true);
       setActiveTask(label);
+      setActiveTool(null);
       addLogEntry(`[${new Date().toLocaleTimeString()}] Starting: ${label}`);
       
       const controller = new AbortController();
@@ -533,6 +549,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         clearTimeout(timeoutId);
         setLoading(false);
         setActiveTask('');
+        setActiveTool(null);
         setAbortController(null);
       }
     },
@@ -637,6 +654,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     agentResult,
     loading,
     activeTask,
+    activeTool,
     agentLog,
     setAgentLog,
     agentInfo,

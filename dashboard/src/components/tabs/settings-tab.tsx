@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { copyText } from "../../lib/clipboard";
 import type { CaregiverProfile, RecipientProfile } from "../../lib/types";
 import { Toast } from "../primitives/toast";
@@ -43,6 +43,10 @@ export function SettingsTab({
 }: SettingsTabProps) {
   const t = getTranslations(locale);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // Issue #1257: brief loading feedback while the parent refetches data for a
+  // newly selected recipient. The switch completes when the parent applies the
+  // selection (selectedRecipientId/recipient props update).
+  const [switching, setSwitching] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [toastFallback, setToastFallback] = useState<string | undefined>(undefined);
   const [editing, setEditing] = useState(false);
@@ -75,6 +79,16 @@ export function SettingsTab({
   };
 
   const cancelEditing = () => setEditing(false);
+
+  const handleSelectRecipient = (id: string) => {
+    if (!onSelectRecipient || switching || id === (selectedRecipientId ?? "")) return;
+    setSwitching(true);
+    onSelectRecipient(id);
+  };
+
+  useEffect(() => {
+    setSwitching(false);
+  }, [selectedRecipientId, recipient]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -132,16 +146,29 @@ export function SettingsTab({
           <div className="flex items-center gap-3">
             <h2 className="text-sm font-semibold text-slate-700">{t.settings.recipient}</h2>
             {recipients && recipients.length > 1 && onSelectRecipient && (
-              <select
-                className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500"
-                value={selectedRecipientId ?? ''}
-                onChange={(e) => onSelectRecipient(e.target.value)}
-                aria-label={t.settings.recipient}
-              >
-                {recipients.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
-                ))}
-              </select>
+              <div className="flex items-center gap-1.5" aria-busy={switching}>
+                <select
+                  className={`text-xs border border-slate-200 rounded-lg px-2 py-1 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500 ${switching ? "opacity-60" : ""}`}
+                  value={selectedRecipientId ?? ''}
+                  onChange={(e) => handleSelectRecipient(e.target.value)}
+                  disabled={switching}
+                  aria-label={t.settings.recipient}
+                >
+                  {recipients.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+                {switching && (
+                  <span
+                    aria-hidden="true"
+                    data-testid="recipient-switch-spinner"
+                    className="inline-block w-3 h-3 border-2 border-sky-600 border-t-transparent rounded-full animate-spin"
+                  />
+                )}
+                <span role="status" className="sr-only">
+                  {switching ? t.common.loading : recipient.name}
+                </span>
+              </div>
             )}
           </div>
           {!editing && (

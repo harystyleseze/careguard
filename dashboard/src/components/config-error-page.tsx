@@ -26,6 +26,20 @@ export function ConfigErrorPage() {
           deployment cannot connect to the CareGuard agent.
         </p>
 
+        <div
+          className="bg-sky-50 border border-sky-200 rounded-lg p-4 text-left mb-6"
+          data-testid="caregiver-guidance"
+        >
+          <p className="text-sm font-medium text-slate-700 mb-1">
+            Not the person who set this up?
+          </p>
+          <p className="text-sm text-slate-600">
+            No action is needed from you. Please contact whoever set up this
+            dashboard for you — they can fix the configuration and the page
+            will work again.
+          </p>
+        </div>
+
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-left mb-6">
           <p className="text-xs font-mono font-semibold text-red-700 mb-1">
             Missing environment variable:

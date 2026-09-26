@@ -43,6 +43,7 @@
     "benchmark:investigations:1319-1322": "node --import tsx benchmarks/investigation-1319-1322.ts",
     "benchmark:transactions": "node --import tsx benchmarks/agent-transactions.ts",
     "benchmark:security-middleware": "node --import tsx benchmarks/security-middleware-overhead.ts",
+    "benchmark:scaling": "node --import tsx benchmarks/scaling-investigations-1295-1298.ts",
     "benchmark:pharmacy-compare": "node --import tsx benchmarks/pharmacy-compare-1293.ts",
     "benchmark:pricing-fanout": "node --import tsx benchmarks/pricing-provider-fanout-1294.ts",
     "benchmark:spending-policy": "node --import tsx benchmarks/spending-policy-1292.ts",

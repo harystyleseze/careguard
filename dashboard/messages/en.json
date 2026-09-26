@@ -39,6 +39,10 @@
     "medications": "Medications",
     "medicalBills": "Medical Bills"
   },
+  "policyPreview": {
+    "title": "Budget Preview",
+    "unsaved": "Unsaved"
+  },
   "tasks": {
     "comparePrices": "Compare Medication Prices",
     "findCheapest": "Find cheapest pharmacies for Rosa's 4 medications",
@@ -47,7 +51,8 @@
     "overBudget": "Try Over-Budget Payment",
     "demoPayment": "Demo: agent attempts $600 payment (over $500 bill limit)",
     "agentPaused": "Agent is paused",
-    "working": "Agent working..."
+    "working": "Agent working...",
+    "workingStep": "Agent working — running {step}..."
   },
   "medications": {
     "title": "Rosa's Medications",
