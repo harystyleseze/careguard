@@ -48,6 +48,7 @@
     "benchmark:pricing-fanout": "node --import tsx benchmarks/pricing-provider-fanout-1294.ts",
     "benchmark:spending-policy": "node --import tsx benchmarks/spending-policy-1292.ts",
     "benchmark:redis-rate-limit": "node --import tsx benchmarks/redis-rate-limit-1291.ts",
+    "benchmark:agent-queue": "node --import tsx benchmarks/agent-queue-concurrency.ts",
     "seed:recipients": "node --import tsx scripts/seed-recipients.ts",
     "seed:orders": "node --import tsx scripts/seed-orders.ts",
     "seed:adherence": "node --import tsx scripts/seed-adherence.ts",

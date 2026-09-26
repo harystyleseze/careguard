@@ -265,7 +265,7 @@ export function PolicyTab({
         <button
           type="submit"
           disabled={!validation.isValid}
-          className={`w-full py-2 rounded-lg text-sm font-medium transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${policySaved
+          className={`w-full py-2 rounded-lg text-sm font-medium transition-colors duration-700 ease-in-out cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${policySaved
               ? "bg-green-500 text-white"
               : "bg-sky-500 text-white hover:bg-sky-600 active:bg-sky-700"
             }`}
