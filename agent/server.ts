@@ -212,21 +212,8 @@ function saveAgentState(state: { paused: boolean }): void {
 
 let agentPaused = loadAgentState().paused;
 
-// In-memory cache for wallet balances (5s TTL)
-interface WalletCacheEntry {
-  data: { usdc: string; xlm: string; address: string };
-  expiresAt: number;
-}
-const walletCache = new Map<string, WalletCacheEntry>();
-const WALLET_CACHE_TTL_MS = 5000;
-
 app.get("/agent/wallet", async (req, res) => {
   const address = agentKeypair.publicKey();
-  const now = Date.now();
-  const cached = walletCache.get(address);
-  if (cached && cached.expiresAt > now) {
-    return res.json(cached.data);
-  }
   try {
     const balances = await fetchWalletBalances(address, STELLAR_CONFIG.horizonUrl, process.env.USDC_ISSUER || "");
     const data = {
@@ -234,7 +221,6 @@ app.get("/agent/wallet", async (req, res) => {
       xlm: balances.xlm.toFixed(2),
       address,
     };
-    walletCache.set(address, { data, expiresAt: now + WALLET_CACHE_TTL_MS });
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: `Failed to load wallet: ${err.message}` });
