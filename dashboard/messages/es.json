@@ -57,6 +57,7 @@
   "medications": {
     "title": "Medicamentos de Rosa",
     "downloadPdf": "Descargar PDF",
+    "downloadPdfHint": "Primero ejecute una comparación de precios para habilitar la exportación a PDF",
     "best": "Mejor",
     "notYetCompared": "Aún no comparado",
     "save": "Ahorrar",
@@ -87,7 +88,9 @@
     "approvalThreshold": "Umbral de Aprobación del Cuidador ($)",
     "holdTime": "Tiempo de Espera Antes de Aprobación Automática (segundos)",
     "refresh": "Actualizar del servidor",
+    "refreshHint": "Vuelve a cargar los valores de política más recientes del servidor",
     "discard": "Descartar cambios",
+    "discardHint": "Restaura los últimos valores guardados y descarta sus ediciones",
     "updatePolicy": "Actualizar Política",
     "policySaved": "Política Guardada"
   },
@@ -96,6 +99,8 @@
     "downloadReport": "Descargar Informe",
     "preparingReport": "Preparando informe…",
     "reset": "Reiniciar Todo",
+    "clearLogTitle": "Borra solo el registro del agente en pantalla — las transacciones y datos guardados permanecen intactos",
+    "resetTitle": "Elimina permanentemente todas las transacciones, el registro del agente y todos los resultados de auditoría",
     "noActivity": "Sin actividad del agente...",
     "noTransactions": "Sin transacciones",
     "time": "Hora",

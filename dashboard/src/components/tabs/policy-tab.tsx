@@ -244,23 +244,65 @@ export function PolicyTab({
           </div>
         )}
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={onForceSync}
-            className="flex-1 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 active:bg-slate-300 transition-all cursor-pointer"
-          >
-            {t.policy.refresh}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (spending?.policy) setPolicyForm(spending.policy);
-              setPolicyDirty(false);
-            }}
-            className="flex-1 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 active:bg-slate-300 transition-all cursor-pointer"
-          >
-            {t.policy.discard}
-          </button>
+          <div className="flex-1 flex flex-col gap-1">
+            <button
+              type="button"
+              onClick={onForceSync}
+              title={t.policy.refreshHint}
+              className="flex items-center justify-center gap-1.5 w-full py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 active:bg-slate-300 transition-all cursor-pointer"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+                className="w-4 h-4"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"
+                />
+              </svg>
+              {t.policy.refresh}
+            </button>
+            <span className="text-[10px] text-slate-400 text-center">
+              {t.policy.refreshHint}
+            </span>
+          </div>
+          <div className="flex-1 flex flex-col gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                if (spending?.policy) setPolicyForm(spending.policy);
+                setPolicyDirty(false);
+              }}
+              title={t.policy.discardHint}
+              className="flex items-center justify-center gap-1.5 w-full py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 active:bg-slate-300 transition-all cursor-pointer"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+                className="w-4 h-4"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
+                />
+              </svg>
+              {t.policy.discard}
+            </button>
+            <span className="text-[10px] text-slate-400 text-center">
+              {t.policy.discardHint}
+            </span>
+          </div>
         </div>
         <button
           type="submit"

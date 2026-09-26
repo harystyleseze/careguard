@@ -57,6 +57,7 @@
   "medications": {
     "title": "Rosa's Medications",
     "downloadPdf": "Download PDF",
+    "downloadPdfHint": "Run a price comparison first to enable the PDF export",
     "best": "Best",
     "notYetCompared": "Not yet compared",
     "save": "Save",
@@ -87,7 +88,9 @@
     "approvalThreshold": "Caregiver Approval Threshold ($)",
     "holdTime": "Hold Time Before Auto-Approval (seconds)",
     "refresh": "Refresh from server",
+    "refreshHint": "Reloads the latest policy values from the server",
     "discard": "Discard changes",
+    "discardHint": "Restores the last saved values and discards your edits",
     "updatePolicy": "Update Policy",
     "policySaved": "Policy Saved"
   },
@@ -96,6 +99,8 @@
     "downloadReport": "Download Report",
     "preparingReport": "Preparing report…",
     "reset": "Reset All",
+    "clearLogTitle": "Clear only the on-screen agent log — saved transactions and data stay untouched",
+    "resetTitle": "Permanently delete all transactions, the agent log, and all audit results",
     "noActivity": "No agent activity yet...",
     "noTransactions": "No transactions yet",
     "time": "Time",

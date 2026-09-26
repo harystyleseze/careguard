@@ -220,13 +220,16 @@ export function ActivityTab({
           )}
           <button
             onClick={() => setAgentLog([])}
+            title={t.clearLogTitle}
             className="text-xs text-amber-500 hover:text-amber-700 hover:underline active:text-amber-800 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-500 rounded px-1"
           >
             Clear Log
           </button>
+          <span aria-hidden="true" className="h-4 w-px bg-slate-300" />
           <button
             onClick={() => setConfirmOpen(true)}
-            className="text-xs text-red-500 hover:text-red-700 hover:underline active:text-red-800 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 rounded px-1"
+            title={t.resetTitle}
+            className="text-xs font-medium text-red-600 border border-red-200 bg-red-50 rounded-md px-2 py-1 hover:bg-red-100 hover:border-red-300 hover:text-red-700 active:bg-red-200 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500"
           >
             {t.reset}
           </button>
@@ -329,8 +332,13 @@ export function ActivityTab({
                     <select
                       value={pageSize}
                       onChange={(e) => {
-                        setPageSize(Number(e.target.value));
-                        setCurrentPage(0);
+                        const nextSize = Number(e.target.value);
+                        setPageSize(nextSize);
+                        // Keep the first visible row in view across the page-size
+                        // change instead of silently jumping back to page 1 (#1283).
+                        setCurrentPage(
+                          Math.floor((currentPage * pageSize) / nextSize),
+                        );
                       }}
                       className="px-2 py-1 text-xs border border-slate-300 rounded bg-white"
                     >

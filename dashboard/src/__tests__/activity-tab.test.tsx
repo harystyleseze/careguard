@@ -7,7 +7,7 @@
  *  3. Audit events and transactions are correctly interleaved by timestamp.
  */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ActivityTab } from "../components/tabs/activity-tab";
 import type { ActivityTabProps } from "../components/tabs/activity-tab";
@@ -130,6 +130,116 @@ describe("ActivityTab — newest-first ordering (#220)", () => {
     // Audit event should appear between the two transactions.
     const auditCell = screen.getByText("agent.started");
     expect(auditCell).toBeTruthy();
+  });
+});
+
+describe("ActivityTab — page-size change preserves position (#1283)", () => {
+  it("keeps the first visible row in view instead of jumping to page 1", () => {
+    const setCurrentPage = vi.fn();
+    const setPageSize = vi.fn();
+    render(
+      <ActivityTab
+        {...baseProps({
+          currentPage: 4,
+          pageSize: 10,
+          setCurrentPage,
+          setPageSize,
+          pagination: {
+            total: 500,
+            offset: 40,
+            limit: 10,
+            hasPrevious: true,
+            hasMore: true,
+          },
+        })}
+      />,
+    );
+
+    const select = screen.getByRole("combobox");
+    fireEvent.change(select, { target: { value: "25" } });
+
+    expect(setPageSize).toHaveBeenCalledWith(25);
+    // First visible row was 4 * 10 = 40; with 25 per page that is page 1.
+    expect(setCurrentPage).toHaveBeenCalledWith(1);
+  });
+
+  it("stays on page 1 when already on the first page", () => {
+    const setCurrentPage = vi.fn();
+    render(
+      <ActivityTab
+        {...baseProps({
+          currentPage: 0,
+          pageSize: 25,
+          setCurrentPage,
+          pagination: {
+            total: 500,
+            offset: 0,
+            limit: 25,
+            hasPrevious: false,
+            hasMore: true,
+          },
+        })}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "50" },
+    });
+
+    expect(setCurrentPage).toHaveBeenCalledWith(0);
+  });
+
+  it("handles being on the last page when reducing page size", () => {
+    const setCurrentPage = vi.fn();
+    render(
+      <ActivityTab
+        {...baseProps({
+          currentPage: 1,
+          pageSize: 50,
+          setCurrentPage,
+          pagination: {
+            total: 100,
+            offset: 50,
+            limit: 50,
+            hasPrevious: true,
+            hasMore: false,
+          },
+        })}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "25" },
+    });
+
+    // First visible row was 50; with 25 per page that is page 2 — still the
+    // last page, and the row the caregiver was viewing stays in view.
+    expect(setCurrentPage).toHaveBeenCalledWith(2);
+  });
+});
+
+describe("ActivityTab — Clear Log vs Reset All separation (#1278)", () => {
+  it("renders Clear Log as a low-friction text link", () => {
+    render(<ActivityTab {...baseProps()} />);
+    const clearLog = screen.getByRole("button", { name: /Clear Log/i });
+    expect(clearLog.className).toContain("text-amber-500");
+    expect(clearLog).toHaveAttribute("title");
+  });
+
+  it("renders Reset All as a separated, bordered danger-zone action", () => {
+    render(<ActivityTab {...baseProps()} />);
+    const reset = screen.getByRole("button", { name: /Reset All/i });
+    expect(reset.className).toContain("border-red-200");
+    expect(reset.className).toContain("bg-red-50");
+    expect(reset.className).toContain("text-red-600");
+  });
+
+  it("keeps both actions keyboard accessible via focus-visible rings", () => {
+    render(<ActivityTab {...baseProps()} />);
+    const clearLog = screen.getByRole("button", { name: /Clear Log/i });
+    const reset = screen.getByRole("button", { name: /Reset All/i });
+    expect(clearLog.className).toContain("focus-visible:ring-amber-500");
+    expect(reset.className).toContain("focus-visible:ring-red-500");
   });
 });
 
