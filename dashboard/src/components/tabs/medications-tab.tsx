@@ -40,9 +40,10 @@ export function MedicationsTab({ agentResult, recipient, locale = "en" }: Medica
           <h2 className="text-sm font-semibold text-slate-700">
             {t.title}
           </h2>
-          {hasPriceResults && (
+          <div className="flex flex-col items-end gap-1">
             <button
               onClick={() => {
+                if (!hasPriceResults) return;
                 try {
                   const priceResults = agentResult!.toolCalls
                     .filter((t) => t.tool === "compare_pharmacy_prices")
@@ -63,11 +64,24 @@ export function MedicationsTab({ agentResult, recipient, locale = "en" }: Medica
                   toast.error("Couldn't parse medication result — try again");
                 }
               }}
-              className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
+              disabled={!hasPriceResults}
+              title={hasPriceResults ? undefined : t.downloadPdfHint}
+              aria-describedby={
+                !hasPriceResults ? "medications-download-hint" : undefined
+              }
+              className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-sky-50"
             >
               {t.downloadPdf}
             </button>
-          )}
+            {!hasPriceResults && (
+              <span
+                id="medications-download-hint"
+                className="text-[10px] text-slate-400"
+              >
+                {t.downloadPdfHint}
+              </span>
+            )}
+          </div>
         </div>
         <div className="space-y-3">
           {MEDS.map((drug) => {

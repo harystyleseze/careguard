@@ -151,6 +151,59 @@ describe("PolicyTab — form interaction (Issue #47)", () => {
 //   shouldSyncPolicy = forcePolicySync || (activeTabRef.current !== "policy" && !policyDirtyRef.current)
 // When activeTab === "policy", shouldSyncPolicy is false, so setPolicyForm is NOT called.
 
+describe("PolicyTab — Refresh vs Discard clarification (#1281)", () => {
+  it("shows helper text under each button explaining what it does", () => {
+    render(<PolicyTab {...buildProps()} />);
+    expect(
+      screen.getByText("Reloads the latest policy values from the server"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Restores the last saved values and discards your edits"),
+    ).toBeTruthy();
+  });
+
+  it("gives both buttons title tooltips with the same explanation", () => {
+    render(<PolicyTab {...buildProps()} />);
+    expect(screen.getByRole("button", { name: /Refresh from server/i })).toHaveAttribute(
+      "title",
+      "Reloads the latest policy values from the server",
+    );
+    expect(screen.getByRole("button", { name: /Discard changes/i })).toHaveAttribute(
+      "title",
+      "Restores the last saved values and discards your edits",
+    );
+  });
+
+  it("keeps behavior unchanged: refresh calls onForceSync, discard resets the form", () => {
+    const onForceSync = vi.fn();
+    const setPolicyForm = vi.fn();
+    const setPolicyDirty = vi.fn();
+    render(
+      <PolicyTab
+        {...buildProps({
+          onForceSync,
+          setPolicyForm,
+          setPolicyDirty,
+          spending: {
+            policy: { ...BASE_POLICY },
+            spending: { medications: 0, bills: 0, serviceFees: 0, total: 0 },
+            budgetRemaining: { medications: 0, bills: 0 },
+            transactionCount: 0,
+            recentTransactions: [],
+          } as never,
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Refresh from server/i }));
+    expect(onForceSync).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /Discard changes/i }));
+    expect(setPolicyForm).toHaveBeenCalledWith(BASE_POLICY);
+    expect(setPolicyDirty).toHaveBeenCalledWith(false);
+  });
+});
+
 describe("Polling guard — activeTab !== 'policy' prevents overwriting edits (Issue #47)", () => {
   it("shouldSyncPolicy is false when activeTab is 'policy'", () => {
     const activeTab = "policy";
@@ -252,7 +305,13 @@ describe("PolicyTab — limit-increase confirmation (Issue #216)", () => {
   ): PolicyTabProps {
     return buildProps({
       policyForm: { ...BASE_POLICY, ...formOverrides },
-      spending: { policy: { ...BASE_POLICY } } as never,
+      spending: {
+        policy: { ...BASE_POLICY },
+        spending: { medications: 0, bills: 0, serviceFees: 0, total: 0 },
+        budgetRemaining: { medications: 0, bills: 0 },
+        transactionCount: 0,
+        recentTransactions: [],
+      } as never,
       onUpdatePolicy,
     });
   }
