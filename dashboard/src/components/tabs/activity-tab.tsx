@@ -40,6 +40,63 @@ export interface ActivityTabProps {
   locale?: Locale;
 }
 
+/** Plain-language explanation for each transaction status (#1269). */
+const STATUS_EXPLANATIONS: Record<string, string> = {
+  completed:
+    "The payment went through successfully and was recorded on the Stellar network.",
+  pending:
+    "Waiting to be processed. Held payments count down in the Approvals tab and are approved automatically when the hold time ends unless cancelled.",
+  approved:
+    "Approved and in progress — the payment is being completed on the network.",
+  blocked:
+    "The payment was stopped before any funds moved. This can mean a spending-policy limit was hit, the wallet had insufficient funds, or the network transaction failed.",
+  disputed:
+    "A charge in this transaction is being disputed. See the Bills tab for audit details.",
+  cancelled:
+    "The payment was cancelled before it completed. No funds were sent.",
+  rejected:
+    "The payment was refused and did not go through.",
+};
+
+function statusExplanation(status: string): string {
+  return STATUS_EXPLANATIONS[status] ?? "Current state of this transaction.";
+}
+
+/**
+ * Status badge with a touch-friendly (click/tap, not hover-only) explanation.
+ * Collapsed view keeps the original compact badge; expanding reveals what the
+ * status means, plus the block reason for blocked transactions when present.
+ */
+function StatusBadge({ status, reason }: { status: string; reason?: string }) {
+  const explanation = statusExplanation(status);
+  return (
+    <details className="inline-block text-left group">
+      <summary
+        title={explanation}
+        className="list-none cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500 rounded"
+      >
+        <span
+          className={`px-2 py-0.5 rounded text-xs ${status === "completed"
+            ? "bg-green-100 text-green-700"
+            : status === "blocked"
+              ? "bg-red-100 text-red-700"
+              : "bg-amber-100 text-amber-700"
+            }`}
+        >
+          {status}
+        </span>
+        <span className="sr-only"> — {explanation}</span>
+      </summary>
+      <div className="mt-1 w-48 rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-600 shadow-sm">
+        <p>{explanation}</p>
+        {status === "blocked" && reason && (
+          <p className="mt-1 font-medium text-red-600">Reason: {reason}</p>
+        )}
+      </div>
+    </details>
+  );
+}
+
 export function ActivityTab({
   recipient,
   agentLog,
@@ -385,16 +442,13 @@ export function ActivityTab({
                             : tx.amount.toFixed(2)}
                         </td>
                         <td className="px-4 py-2 text-right">
-                          <span
-                            className={`px-2 py-0.5 rounded text-xs ${tx.status === "completed"
-                              ? "bg-green-100 text-green-700"
-                              : tx.status === "blocked"
-                                ? "bg-red-100 text-red-700"
-                                : "bg-amber-100 text-amber-700"
-                              }`}
-                          >
-                            {tx.status}
-                          </span>
+                          <StatusBadge
+                            status={tx.status}
+                            reason={
+                              (tx as { blockedReason?: string }).blockedReason ??
+                              (tx as { blockReason?: string }).blockReason
+                            }
+                          />
                         </td>
                         <td className="px-4 py-2 text-right">
                           <TxLink hash={tx.stellarTxHash} txHashStatus={tx.txHashStatus} />

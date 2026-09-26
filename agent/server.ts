@@ -44,7 +44,7 @@ import {
   payForMedication,
   payBill,
 } from "./tools.ts";
-import { getPendingAdherences } from "../shared/adherence.ts";
+import { getPendingAdherences, skipAdherence } from "../shared/adherence.ts";
 import { notify } from "../shared/notifications.ts";
 import { resolveStellarNetwork, validateSignerKeyForNetwork } from "../shared/stellar-network.ts";
 import { verifyWebhook } from "../shared/verify-webhook.ts";
@@ -212,21 +212,8 @@ function saveAgentState(state: { paused: boolean }): void {
 
 let agentPaused = loadAgentState().paused;
 
-// In-memory cache for wallet balances (5s TTL)
-interface WalletCacheEntry {
-  data: { usdc: string; xlm: string; address: string };
-  expiresAt: number;
-}
-const walletCache = new Map<string, WalletCacheEntry>();
-const WALLET_CACHE_TTL_MS = 5000;
-
 app.get("/agent/wallet", async (req, res) => {
   const address = agentKeypair.publicKey();
-  const now = Date.now();
-  const cached = walletCache.get(address);
-  if (cached && cached.expiresAt > now) {
-    return res.json(cached.data);
-  }
   try {
     const balances = await fetchWalletBalances(address, STELLAR_CONFIG.horizonUrl, process.env.USDC_ISSUER || "");
     const data = {
@@ -234,7 +221,6 @@ app.get("/agent/wallet", async (req, res) => {
       xlm: balances.xlm.toFixed(2),
       address,
     };
-    walletCache.set(address, { data, expiresAt: now + WALLET_CACHE_TTL_MS });
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: `Failed to load wallet: ${err.message}` });
@@ -377,12 +363,30 @@ app.post("/agent/run", async (req, res) => {
 
   const activeRecipient = recipientProfiles.rosa ?? Object.values(recipientProfiles)[0];
   try {
-    const result = await agentQueue.enqueue(() => runAgent({
-      task,
-      profile: {
-        recipient: activeRecipient,
-        caregiver: caregiverProfile,
+    const result = await agentQueue.enqueue(
+      () =>
+        runAgent({
+          task,
+          profile: {
+            recipient: activeRecipient,
+            caregiver: caregiverProfile,
+          },
+          llm,
+          model: LLM_MODEL,
+          maxIterations: MAX_ITERATIONS,
+          maxToolCallsPerRun: MAX_TOOL_CALLS_PER_RUN,
+          llmToolTemperature: LLM_TOOL_TEMPERATURE,
+          llmSummaryTemperature: LLM_SUMMARY_TEMPERATURE,
+          llmMaxTokensToolResult: LLM_MAX_TOKENS_TOOL_RESULT,
+          llmMaxTokensSimple: LLM_MAX_TOKENS_SIMPLE,
+          llmMaxTokensSummary: LLM_MAX_TOKENS_SUMMARY,
+          llmContextWindow: parseInt(process.env.LLM_CONTEXT_WINDOW || "32768", 10),
+          piiScrub: _piiScrub,
+        }),
+      (queueWaitMs) => {
+        res.setHeader("Server-Timing", `agent-queue;dur=${queueWaitMs.toFixed(2)}`);
       },
+    );
       llm,
       model: LLM_MODEL,
       maxIterations: MAX_ITERATIONS,
@@ -394,6 +398,9 @@ app.post("/agent/run", async (req, res) => {
       llmMaxTokensSummary: LLM_MAX_TOKENS_SUMMARY,
       llmContextWindow: parseInt(process.env.LLM_CONTEXT_WINDOW || "32768", 10),
       piiScrub: _piiScrub,
+      // #1253: surface the in-flight tool so the dashboard's loading state can
+      // show which step of a multi-tool-call task is running.
+      onProgress: (progress) => broadcastSSE("run_progress", progress),
     }));
     agentRunsTotal.inc({ status: "success" });
     logger.info({ toolCalls: result.toolCalls.length, truncated: result.truncated, promptTokens: result.llmUsage.promptTokens, completionTokens: result.llmUsage.completionTokens }, "agent task complete");
@@ -564,6 +571,15 @@ app.post("/agent/adherence/confirm", (req, res) => {
   if (!record_id) return res.status(400).json({ error: "record_id is required" });
   const success = confirmAdherenceReminder(record_id);
   res.json({ success: success.success });
+});
+
+// #1254: the OverviewTab adherence check's "Not Yet" — marks the most recent
+// pending dose as skipped so persistent skips can escalate to flagged.
+app.post("/agent/adherence/skip", (req, res) => {
+  const { record_id } = req.body ?? {};
+  if (!record_id) return res.status(400).json({ error: "record_id is required" });
+  const success = skipAdherence(record_id);
+  res.json({ success });
 });
 
 // --- Dispute letter endpoint (#266) ---

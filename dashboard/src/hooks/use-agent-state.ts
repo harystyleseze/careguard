@@ -49,6 +49,10 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const [agentResult, setAgentResult] = useState<AgentResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeTask, setActiveTask] = useState('');
+  // #1253: the tool currently executing inside the agent run (via SSE), so
+  // the loading text can say which step is in progress instead of a static
+  // "Agent working...".
+  const [activeTool, setActiveTool] = useState<string | null>(null);
   const [agentLog, setAgentLog] = useState<AgentLogEntry[]>([]);
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null);
   const [agentConnected, setAgentConnected] = useState(false);
@@ -67,7 +71,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const [loadingWalletBalance, setLoadingWalletBalance] = useState(false);
   const [liveMessage, setLiveMessage] = useState('');
   const [policyForm, setPolicyForm] = useState<PolicyForm>(DEFAULT_POLICY);
-  const [policyDirty, setPolicyDirty] = useState(false);
+  const [policyDirty, setPolicyDirtyState] = useState(false);
   const [policySaved, setPolicySaved] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [approvals, setApprovals] = useState<Transaction[]>([]);
@@ -85,6 +89,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
 
   const activeTabRef = useRef(activeTab);
   const policyDirtyRef = useRef(policyDirty);
+  const policySavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastConnectionStateRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -93,6 +98,23 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   useEffect(() => {
     policyDirtyRef.current = policyDirty;
   }, [policyDirty]);
+
+  const clearPolicySavedTimer = useCallback(() => {
+    if (policySavedTimerRef.current !== null) {
+      clearTimeout(policySavedTimerRef.current);
+      policySavedTimerRef.current = null;
+    }
+  }, []);
+
+  const setPolicyDirty = useCallback((dirty: boolean) => {
+    setPolicyDirtyState(dirty);
+    if (dirty) {
+      setPolicySaved(false);
+      clearPolicySavedTimer();
+    }
+  }, [clearPolicySavedTimer]);
+
+  useEffect(() => clearPolicySavedTimer, [clearPolicySavedTimer]);
 
   const fetchApprovals = useCallback(async () => {
     try {
@@ -103,12 +125,13 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     } catch {}
   }, []);
 
+  // Issue #1259: poll regardless of the active tab so the Approvals nav badge
+  // reflects pending items from anywhere in the dashboard.
   useEffect(() => {
-    if (activeTab !== 'approvals') return;
     void fetchApprovals();
     const interval = setInterval(fetchApprovals, 5000);
     return () => clearInterval(interval);
-  }, [activeTab, fetchApprovals]);
+  }, [fetchApprovals]);
 
   const updateApproval = useCallback(async (txId: string, approve: boolean) => {
     setApprovalsLoading(true);
@@ -238,7 +261,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
           (activeTabRef.current !== 'policy' && !policyDirtyRef.current);
         if (shouldSyncPolicy) {
           setPolicyForm(data.policy);
-          setPolicyDirty(false);
+          setPolicyDirtyState(false);
         }
       } catch (err: unknown) {
         setSpendingError(err instanceof Error ? err.message : 'Spending unavailable');
@@ -371,6 +394,16 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
           setAgentPaused(Boolean(data.paused));
         } catch {}
       });
+
+      // #1253: which tool of the running task is executing right now.
+      es.addEventListener('run_progress', (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (typeof data.tool === 'string' && data.tool.length > 0) {
+            setActiveTool(data.tool);
+          }
+        } catch {}
+      });
     }
 
     connect();
@@ -435,6 +468,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       }
       setLoading(true);
       setActiveTask(label);
+      setActiveTool(null);
       addLogEntry(`[${new Date().toLocaleTimeString()}] Starting: ${label}`);
       
       const controller = new AbortController();
@@ -515,6 +549,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         clearTimeout(timeoutId);
         setLoading(false);
         setActiveTask('');
+        setActiveTool(null);
         setAbortController(null);
       }
     },
@@ -532,6 +567,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     error?: string;
   }> => {
     try {
+      clearPolicySavedTimer();
       setPolicySaved(false);
       const res = await agentFetch(`${AGENT_URL}/agent/policy`, {
         method: 'POST',
@@ -552,13 +588,17 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
           const data = SpendingDataSchema.parse(await spendingRes.json());
           setSpending(data);
           setPolicyForm(data.policy);
-          setPolicyDirty(false);
+          setPolicyDirtyState(false);
         }
         addLogEntry(
           `[${new Date().toLocaleTimeString()}] Policy updated: daily=$${policyForm.dailyLimit}, monthly=$${policyForm.monthlyLimit}, meds=$${policyForm.medicationMonthlyBudget}, bills=$${policyForm.billMonthlyBudget}, approval=$${policyForm.approvalThreshold}`,
         );
         setLiveMessage('Policy updated');
-        setTimeout(() => setPolicySaved(false), 3000);
+        clearPolicySavedTimer();
+        policySavedTimerRef.current = setTimeout(() => {
+          setPolicySaved(false);
+          policySavedTimerRef.current = null;
+        }, 3000);
         return { ok: true };
       }
       return { ok: false, error: 'Unknown error' };
@@ -568,7 +608,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
       );
       return { ok: false, error: err.message };
     }
-  }, [addLogEntry, policyForm]);
+  }, [addLogEntry, clearPolicySavedTimer, policyForm]);
 
   const resetAgent = useCallback(async () => {
     addLogEntry('Resetting agent state...', 'system');
@@ -614,6 +654,7 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
     agentResult,
     loading,
     activeTask,
+    activeTool,
     agentLog,
     setAgentLog,
     agentInfo,

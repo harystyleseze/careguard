@@ -81,8 +81,6 @@ import { appendAuditEntry } from "../shared/audit-log.ts";
 import { notify } from "../shared/notifications.ts";
 import {
   getAdherenceSummary,
-  getPendingAdherences,
-  getFlaggedAdherences,
   confirmAdherence,
 } from "../shared/adherence.ts";
 import { Journal } from "./journal.ts";
@@ -2734,12 +2732,11 @@ export function generateDisputeLetter(
 // --- Tool: Adherence status (Issue #264) ---
 export function getAdherenceStatus(recipientId: string = "rosa") {
   const summary = getAdherenceSummary(recipientId);
-  const pending = getPendingAdherences(recipientId);
-  const flagged = getFlaggedAdherences(recipientId);
+  const { flaggedRecords, ...publicSummary } = summary;
   return {
-    ...summary,
-    pendingReminders: pending.length,
-    flaggedReminders: flagged,
+    ...publicSummary,
+    pendingReminders: summary.pendingNow.length,
+    flaggedReminders: flaggedRecords,
   };
 }
 

@@ -90,14 +90,34 @@ export function getFlaggedAdherences(recipientId: string): AdherenceRecord[] {
   );
 }
 
-export function getAdherenceSummary(recipientId: string) {
-  const records = readAdherenceRecords().filter((r) => r.recipientId === recipientId);
-  const total = records.length;
-  const confirmed = records.filter((r) => r.status === "confirmed").length;
-  const skipped = records.filter((r) => r.status === "skipped").length;
-  const pending = records.filter((r) => r.status === "pending").length;
-  const flagged = records.filter((r) => r.status === "flagged").length;
-  const pendingNow = getPendingAdherences(recipientId);
+export function summarizeAdherenceRecords(
+  records: readonly AdherenceRecord[],
+  recipientId: string,
+  now: Date = new Date(),
+) {
+  let total = 0;
+  let confirmed = 0;
+  let skipped = 0;
+  let pending = 0;
+  let flagged = 0;
+  const pendingNow: AdherenceRecord[] = [];
+  const flaggedRecords: AdherenceRecord[] = [];
+
+  for (const record of records) {
+    if (record.recipientId !== recipientId) continue;
+    total++;
+    if (record.status === "confirmed") confirmed++;
+    if (record.status === "skipped") skipped++;
+    if (record.status === "pending") {
+      pending++;
+      if (new Date(record.dueDate) <= now) pendingNow.push(record);
+    }
+    if (record.status === "flagged") {
+      flagged++;
+      flaggedRecords.push(record);
+    }
+  }
+
   return {
     total,
     confirmed,
@@ -105,8 +125,13 @@ export function getAdherenceSummary(recipientId: string) {
     pending,
     flagged,
     pendingNow,
+    flaggedRecords,
     adherenceRate: total > 0 ? Math.round((confirmed / total) * 100) : 100,
   };
+}
+
+export function getAdherenceSummary(recipientId: string) {
+  return summarizeAdherenceRecords(readAdherenceRecords(), recipientId);
 }
 
 function rewriteAdherenceFile(records: AdherenceRecord[]) {

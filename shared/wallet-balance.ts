@@ -48,6 +48,86 @@ const DEFAULT_USDC_ISSUER =
 // Resolve at module load time to get configured Horizon URL
 const STELLAR_CONFIG = resolveStellarNetwork();
 const DEFAULT_HORIZON = STELLAR_CONFIG.horizonUrl;
+const DEFAULT_BALANCE_CACHE_TTL_MS = 5_000;
+
+export interface BalanceCacheStats {
+  hits: number;
+  misses: number;
+  coalesced: number;
+}
+
+type BalanceCacheEntry = {
+  snapshot?: BalanceSnapshot;
+  expiresAt: number;
+  inFlight?: Promise<BalanceSnapshot>;
+};
+
+/** Small TTL + single-flight cache for Horizon account reads shared by all callers. */
+export class WalletBalanceCache {
+  private static readonly MAX_ENTRIES = 256;
+  private readonly entries = new Map<string, BalanceCacheEntry>();
+  private readonly counters: BalanceCacheStats = { hits: 0, misses: 0, coalesced: 0 };
+
+  async get(
+    key: string,
+    loader: () => Promise<BalanceSnapshot>,
+    ttlMs: number,
+    now: () => number = Date.now,
+  ): Promise<BalanceSnapshot> {
+    const current = this.entries.get(key);
+    if (current?.snapshot && current.expiresAt > now()) {
+      this.counters.hits++;
+      return current.snapshot;
+    }
+    if (current?.inFlight) {
+      this.counters.coalesced++;
+      return current.inFlight;
+    }
+
+    this.counters.misses++;
+    if (this.entries.size >= WalletBalanceCache.MAX_ENTRIES) {
+      for (const [cachedKey, entry] of this.entries) {
+        if (!entry.inFlight && entry.expiresAt <= now()) this.entries.delete(cachedKey);
+      }
+      if (this.entries.size >= WalletBalanceCache.MAX_ENTRIES) {
+        const oldestKey = this.entries.keys().next().value;
+        if (oldestKey !== undefined) this.entries.delete(oldestKey);
+      }
+    }
+    const inFlight = loader()
+      .then((snapshot) => {
+        this.entries.set(key, { snapshot, expiresAt: now() + Math.max(0, ttlMs) });
+        return snapshot;
+      })
+      .catch((error) => {
+        this.entries.delete(key);
+        throw error;
+      });
+    this.entries.set(key, { expiresAt: 0, inFlight });
+    return inFlight;
+  }
+
+  clear(): void {
+    this.entries.clear();
+    this.counters.hits = 0;
+    this.counters.misses = 0;
+    this.counters.coalesced = 0;
+  }
+
+  stats(): BalanceCacheStats {
+    return { ...this.counters };
+  }
+}
+
+const sharedBalanceCache = new WalletBalanceCache();
+
+export function clearWalletBalanceCache(): void {
+  sharedBalanceCache.clear();
+}
+
+export function getWalletBalanceCacheStats(): BalanceCacheStats {
+  return sharedBalanceCache.stats();
+}
 
 export function getThresholds(opts?: WalletCheckOptions): { usdc: number; xlm: number } {
   const usdc = opts?.usdcThreshold ?? parseFloat(process.env.WALLET_LOW_USDC_THRESHOLD || "1");
@@ -59,18 +139,27 @@ export function getThresholds(opts?: WalletCheckOptions): { usdc: number; xlm: n
 }
 
 export async function fetchWalletBalances(address: string, horizonUrl: string, usdcIssuer: string): Promise<BalanceSnapshot> {
-  const server = new Horizon.Server(horizonUrl);
-  const account = await server.loadAccount(address);
-  const usdcEntry = account.balances.find(
-    (b: any) => b.asset_code === "USDC" && b.asset_issuer === usdcIssuer,
-  );
-  const xlmEntry = account.balances.find((b: any) => b.asset_type === "native");
-  return {
-    address,
-    usdc: usdcEntry ? parseFloat((usdcEntry as any).balance) : 0,
-    xlm: xlmEntry ? parseFloat((xlmEntry as any).balance) : 0,
-    hasUsdcTrustline: Boolean(usdcEntry),
-  };
+  const configuredTtl = Number(process.env.WALLET_BALANCE_CACHE_TTL_MS);
+  const ttlMs = Number.isFinite(configuredTtl) && configuredTtl >= 0
+    ? configuredTtl
+    : process.env.NODE_ENV === "test"
+      ? 0
+      : DEFAULT_BALANCE_CACHE_TTL_MS;
+  const key = `${horizonUrl}\u0000${address}\u0000${usdcIssuer}`;
+  return sharedBalanceCache.get(key, async () => {
+    const server = new Horizon.Server(horizonUrl);
+    const account = await server.loadAccount(address);
+    const usdcEntry = account.balances.find(
+      (b: any) => b.asset_code === "USDC" && b.asset_issuer === usdcIssuer,
+    );
+    const xlmEntry = account.balances.find((b: any) => b.asset_type === "native");
+    return {
+      address,
+      usdc: usdcEntry ? parseFloat((usdcEntry as any).balance) : 0,
+      xlm: xlmEntry ? parseFloat((xlmEntry as any).balance) : 0,
+      hasUsdcTrustline: Boolean(usdcEntry),
+    };
+  }, ttlMs);
 }
 
 

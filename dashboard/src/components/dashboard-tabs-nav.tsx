@@ -8,10 +8,13 @@ import { getTranslations, type Locale } from "../i18n";
 export interface DashboardTabsNavProps {
   activeTab: Tab;
   pathname: string;
+  // Issue #1259: pending-approvals count from the same polling data
+  // ApprovalsTab consumes; rendered as a badge on the Approvals tab.
+  approvalsCount?: number;
   locale?: Locale;
 }
 
-export function DashboardTabsNav({ activeTab, pathname, locale = "en" }: DashboardTabsNavProps) {
+export function DashboardTabsNav({ activeTab, pathname, approvalsCount, locale = "en" }: DashboardTabsNavProps) {
   const [focusedTab, setFocusedTab] = useState<Tab>(activeTab);
   const t = getTranslations(locale);
 
@@ -79,6 +82,17 @@ export function DashboardTabsNav({ activeTab, pathname, locale = "en" }: Dashboa
             className={`px-4 py-2 rounded-md text-sm font-medium transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${isActive ? "bg-sky-500 text-white" : "text-slate-600 hover:bg-slate-100 active:bg-slate-200"}`}
           >
             {t.tabs[tab]}
+            {tab === "approvals" &&
+              typeof approvalsCount === "number" &&
+              approvalsCount > 0 && (
+                <span
+                  data-testid="approvals-badge"
+                  aria-label={`${approvalsCount} pending approvals`}
+                  className="ml-1.5 inline-flex items-center justify-center rounded-full bg-amber-500 px-1.5 min-w-[1.25rem] text-[10px] font-semibold leading-4 text-white align-middle"
+                >
+                  {approvalsCount}
+                </span>
+              )}
           </Link>
         );
       })}

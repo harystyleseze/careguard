@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { RecipientProfile } from "../lib/types";
 import type { AgentInfo } from "./types";
 import { EXPLORER_ACCOUNT_URL } from "../lib/stellar-network";
+import { Skeleton } from "./ui/skeleton";
 import { getTranslations, type Locale } from "../i18n";
 
 export interface RecipientOption {
@@ -48,7 +49,21 @@ export function DashboardHeader({
   locale = "en",
 }: DashboardHeaderProps) {
   const [tooltipVisible, setTooltipVisible] = useState(false);
+  // Issue #1257: brief loading feedback while the parent refetches data for a
+  // newly selected recipient. The switch completes when the parent applies the
+  // selection (selectedRecipientId/recipient props update).
+  const [switching, setSwitching] = useState(false);
   const t = getTranslations(locale);
+
+  const handleSelectRecipient = (id: string) => {
+    if (!onSelectRecipient || switching || id === (selectedRecipientId ?? "")) return;
+    setSwitching(true);
+    onSelectRecipient(id);
+  };
+
+  useEffect(() => {
+    setSwitching(false);
+  }, [selectedRecipientId, recipient]);
 
   const sourceErrors: { source: string; error: string }[] = [
     ...(agentInfoError ? [{ source: 'Agent', error: agentInfoError }] : []),
@@ -123,34 +138,53 @@ export function DashboardHeader({
           )}
         </div>
         <div className="flex items-center gap-4">
-          {walletBalance && agentInfo?.agentWallet && (
+          {/* Issue #1258: always reserve the wallet block's space — render a
+              skeleton placeholder while the balance loads or is unavailable
+              instead of removing the block (which caused layout shift). */}
+          {walletBalance && agentInfo?.agentWallet ? (
             <a
               href={`${EXPLORER_ACCOUNT_URL}/${agentInfo.agentWallet}`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-right group"
+              data-testid="wallet-balance-link"
             >
               <div className="text-xs text-slate-500">{t.wallet.agentWallet}</div>
               <div className="font-semibold text-sm group-hover:text-sky-600">
                 ${walletBalance}
               </div>
             </a>
+          ) : (
+            <div className="text-right" data-testid="wallet-balance-placeholder">
+              <div className="text-xs text-slate-500">{t.wallet.agentWallet}</div>
+              <Skeleton className="h-5 w-12 ml-auto" />
+            </div>
           )}
           <div className="h-6 w-px bg-slate-200" />
           <div className="flex items-center gap-2">
             <div className="text-right text-xs">
               <div className="text-slate-500">{t.wallet.careRecipient}</div>
               {recipients && recipients.length > 1 && onSelectRecipient ? (
-                <select
-                  className="font-medium bg-transparent border-none outline-none cursor-pointer text-xs"
-                  value={selectedRecipientId ?? ''}
-                  onChange={(e) => onSelectRecipient(e.target.value)}
-                  aria-label={t.wallet.careRecipient}
-                >
-                  {recipients.map((r) => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-end gap-1.5" aria-busy={switching}>
+                  <select
+                    className={`font-medium bg-transparent border-none outline-none cursor-pointer text-xs ${switching ? "opacity-60" : ""}`}
+                    value={selectedRecipientId ?? ''}
+                    onChange={(e) => handleSelectRecipient(e.target.value)}
+                    disabled={switching}
+                    aria-label={t.wallet.careRecipient}
+                  >
+                    {recipients.map((r) => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                  {switching && (
+                    <span
+                      aria-hidden="true"
+                      data-testid="recipient-switch-spinner"
+                      className="inline-block w-3 h-3 border-2 border-sky-600 border-t-transparent rounded-full animate-spin"
+                    />
+                  )}
+                </div>
               ) : (
                 <div className="font-medium">
                   {recipient.name}
@@ -158,6 +192,11 @@ export function DashboardHeader({
                 </div>
               )}
             </div>
+            {recipients && recipients.length > 1 && onSelectRecipient && (
+              <span role="status" className="sr-only">
+                {switching ? t.common.loading : recipient.name}
+              </span>
+            )}
             <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-sm font-medium">
               {recipientInitials}
             </div>

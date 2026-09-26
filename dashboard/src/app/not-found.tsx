@@ -9,7 +9,9 @@ export default function NotFound() {
         </div>
         <h2 className="text-lg font-semibold text-slate-900 mb-2">Page Not Found</h2>
         <p className="text-sm text-slate-600 mb-6">
-          The page you&apos;re looking for doesn&apos;t exist or has been moved.
+          We couldn't find that page — no harm done. Your care
+          recipient's dashboard is safe and unchanged. Head back to pick up
+          right where you left off.
         </p>
         <Link
           href="/"
@@ -17,6 +19,15 @@ export default function NotFound() {
         >
           Go to Dashboard
         </Link>
+        <p className="mt-3 text-xs text-slate-500">
+          Looking for something recent?{" "}
+          <Link
+            href="/?tab=activity"
+            className="text-sky-600 hover:text-sky-700 hover:underline active:text-sky-800 cursor-pointer"
+          >
+            Open the Activity log
+          </Link>
+        </p>
       </div>
     </div>
   );

@@ -75,13 +75,27 @@ export const INTERACTIONS: Interaction[] = [
   },
 ];
 
-export const NORMALIZED_INTERACTIONS = INTERACTIONS.map((interaction) => ({
-  ...interaction,
-  drugs: [
-    interaction.drugs[0].toLowerCase(),
-    interaction.drugs[1].toLowerCase(),
-  ] as [string, string],
-}));
+function interactionKey(first: string, second: string): string {
+  return first < second ? `${first}\u0000${second}` : `${second}\u0000${first}`;
+}
+
+/** Build once when a dataset is loaded; lookups are O(1) per medication pair. */
+export function buildInteractionIndex(
+  interactions: readonly Interaction[],
+): ReadonlyMap<string, Interaction> {
+  const index = new Map<string, Interaction>();
+  for (const interaction of interactions) {
+    const first = interaction.drugs[0].toLowerCase().trim();
+    const second = interaction.drugs[1].toLowerCase().trim();
+    index.set(interactionKey(first, second), {
+      ...interaction,
+      drugs: [first, second],
+    });
+  }
+  return index;
+}
+
+export const INTERACTION_INDEX = buildInteractionIndex(INTERACTIONS);
 
 export const DrugInteractionsQuerySchema = z
   .object({
@@ -120,7 +134,10 @@ function toTitleCase(s: string): string {
   return s.trim().charAt(0).toUpperCase() + s.trim().slice(1).toLowerCase();
 }
 
-export function checkInteractions(medications: string[]) {
+export function checkInteractions(
+  medications: string[],
+  interactionIndex: ReadonlyMap<string, Interaction> = INTERACTION_INDEX,
+) {
   const normalizedMedications = medications.map((medication) =>
     medication.toLowerCase().trim(),
   );
@@ -134,22 +151,17 @@ export function checkInteractions(medications: string[]) {
 
   for (let left = 0; left < normalizedMedications.length; left++) {
     for (let right = left + 1; right < normalizedMedications.length; right++) {
-      for (const interaction of NORMALIZED_INTERACTIONS) {
-        const [first, second] = interaction.drugs;
-        if (
-          (normalizedMedications[left] === first &&
-            normalizedMedications[right] === second) ||
-          (normalizedMedications[left] === second &&
-            normalizedMedications[right] === first)
-        ) {
-          found.push({
-            drug1: toTitleCase(medications[left]),
-            drug2: toTitleCase(medications[right]),
-            severity: interaction.severity,
-            description: interaction.description,
-            recommendation: interaction.recommendation,
-          });
-        }
+      const interaction = interactionIndex.get(
+        interactionKey(normalizedMedications[left], normalizedMedications[right]),
+      );
+      if (interaction) {
+        found.push({
+          drug1: toTitleCase(medications[left]),
+          drug2: toTitleCase(medications[right]),
+          severity: interaction.severity,
+          description: interaction.description,
+          recommendation: interaction.recommendation,
+        });
       }
     }
   }

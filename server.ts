@@ -1088,16 +1088,20 @@ app.post(
       "agent task received",
     );
     try {
-      const result = await agentQueue.enqueue(() =>
-        runAgent({
-          task,
-          profile: _profileData,
-          llm,
-          model: LLM_MODEL,
-          maxIterations: MAX_AGENT_ITERATIONS,
-          maxToolCallsPerRun: MAX_TOOL_CALLS_PER_RUN,
-          piiScrub: _piiScrub,
-        }),
+      const result = await agentQueue.enqueue(
+        () =>
+          runAgent({
+            task,
+            profile: _profileData,
+            llm,
+            model: LLM_MODEL,
+            maxIterations: MAX_AGENT_ITERATIONS,
+            maxToolCallsPerRun: MAX_TOOL_CALLS_PER_RUN,
+            piiScrub: _piiScrub,
+          }),
+        (queueWaitMs) => {
+          res.setHeader("Server-Timing", `agent-queue;dur=${queueWaitMs.toFixed(2)}`);
+        },
       );
       agentRunsTotal.inc({ status: "success" });
       logger.info(

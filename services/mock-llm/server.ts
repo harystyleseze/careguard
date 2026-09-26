@@ -15,6 +15,10 @@
 import http from "node:http";
 
 const PORT = parseInt(process.env.MOCK_LLM_PORT || "3005", 10);
+const RESPONSE_DELAY_MS = Math.max(
+  0,
+  Number(process.env.MOCK_LLM_DELAY_MS || 0),
+);
 
 const MOCK_TOOLS: Record<string, { tool: string; args: Record<string, unknown>; result: string }> = {
   "price|medication|aspirin|compare": {
@@ -90,6 +94,7 @@ const server = http.createServer((req, res) => {
     let body = "";
     req.on("data", (chunk) => { body += chunk; });
     req.on("end", () => {
+      const respond = () => {
       try {
         const parsed = JSON.parse(body);
         const messages = parsed.messages || [];
@@ -157,6 +162,12 @@ const server = http.createServer((req, res) => {
       } catch (err) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: { message: "Invalid request body" } }));
+      }
+      };
+      if (RESPONSE_DELAY_MS > 0) {
+        setTimeout(respond, RESPONSE_DELAY_MS);
+      } else {
+        respond();
       }
     });
     return;

@@ -70,6 +70,12 @@ export interface RunAgentOptions {
   model: string;
   maxIterations?: number;
   maxToolCallsPerRun?: number;
+  /**
+   * Optional progress sink (#1253): invoked with the tool name right before
+   * each tool executes, so a caller (the server's SSE stream) can surface
+   * which step of a multi-tool-call task is in progress.
+   */
+  onProgress?: (progress: { tool: string; iteration: number }) => void;
   llmToolTemperature?: number;
   llmSummaryTemperature?: number;
   llmMaxTokensToolResult?: number;
@@ -295,6 +301,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
     llmMaxTokensSummary = 4096,
     llmContextWindow = 32768,
     piiScrub = true,
+    onProgress,
   } = opts;
 
   const systemPrompt = buildSystemPrompt(profile, profile.caregiver.name);
@@ -424,6 +431,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
       }
 
       logger.info({ tool: fnName, args: JSON.stringify(fnArgs).slice(0, 100) }, "tool call");
+
+      onProgress?.({ tool: fnName, iteration });
 
       let result: ToolResult;
       try {

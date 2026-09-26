@@ -238,6 +238,8 @@ describe("PolicyTab — policySaved prop drives button appearance (Issue #47)", 
     const btn = screen.getByRole("button", { name: /Update Policy/i });
     expect(btn).toBeTruthy();
     expect(btn.className).toContain("bg-sky-500");
+    expect(btn.className).toContain("transition-colors");
+    expect(btn.className).toContain("duration-700");
   });
 });
 
