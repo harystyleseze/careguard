@@ -377,24 +377,30 @@ app.post("/agent/run", async (req, res) => {
 
   const activeRecipient = recipientProfiles.rosa ?? Object.values(recipientProfiles)[0];
   try {
-    const result = await agentQueue.enqueue(() => runAgent({
-      task,
-      profile: {
-        recipient: activeRecipient,
-        caregiver: caregiverProfile,
+    const result = await agentQueue.enqueue(
+      () =>
+        runAgent({
+          task,
+          profile: {
+            recipient: activeRecipient,
+            caregiver: caregiverProfile,
+          },
+          llm,
+          model: LLM_MODEL,
+          maxIterations: MAX_ITERATIONS,
+          maxToolCallsPerRun: MAX_TOOL_CALLS_PER_RUN,
+          llmToolTemperature: LLM_TOOL_TEMPERATURE,
+          llmSummaryTemperature: LLM_SUMMARY_TEMPERATURE,
+          llmMaxTokensToolResult: LLM_MAX_TOKENS_TOOL_RESULT,
+          llmMaxTokensSimple: LLM_MAX_TOKENS_SIMPLE,
+          llmMaxTokensSummary: LLM_MAX_TOKENS_SUMMARY,
+          llmContextWindow: parseInt(process.env.LLM_CONTEXT_WINDOW || "32768", 10),
+          piiScrub: _piiScrub,
+        }),
+      (queueWaitMs) => {
+        res.setHeader("Server-Timing", `agent-queue;dur=${queueWaitMs.toFixed(2)}`);
       },
-      llm,
-      model: LLM_MODEL,
-      maxIterations: MAX_ITERATIONS,
-      maxToolCallsPerRun: MAX_TOOL_CALLS_PER_RUN,
-      llmToolTemperature: LLM_TOOL_TEMPERATURE,
-      llmSummaryTemperature: LLM_SUMMARY_TEMPERATURE,
-      llmMaxTokensToolResult: LLM_MAX_TOKENS_TOOL_RESULT,
-      llmMaxTokensSimple: LLM_MAX_TOKENS_SIMPLE,
-      llmMaxTokensSummary: LLM_MAX_TOKENS_SUMMARY,
-      llmContextWindow: parseInt(process.env.LLM_CONTEXT_WINDOW || "32768", 10),
-      piiScrub: _piiScrub,
-    }));
+    );
     agentRunsTotal.inc({ status: "success" });
     logger.info({ toolCalls: result.toolCalls.length, truncated: result.truncated, promptTokens: result.llmUsage.promptTokens, completionTokens: result.llmUsage.completionTokens }, "agent task complete");
     broadcastSSE("spending", getSpendingSummary());
