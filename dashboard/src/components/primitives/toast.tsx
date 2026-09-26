@@ -26,14 +26,19 @@ export function Toast({ message, fallbackText, durationMs = 5000, onDismiss }: T
     >
       <div className="text-sm text-slate-700">{message}</div>
       {fallbackText && (
-        <input
+        <>
+          <p className="mt-2 text-xs text-slate-600">
+            Select the text below and copy it manually.
+          </p>
+          <input
           aria-label="Text that could not be copied"
           readOnly
           autoFocus
           onFocus={(e) => e.currentTarget.select()}
           value={fallbackText}
-          className="mt-2 w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-xs"
+          className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-xs"
         />
+        </>
       )}
       <button
         type="button"
