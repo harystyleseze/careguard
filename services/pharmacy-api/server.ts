@@ -268,11 +268,19 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
         }),
       );
     } catch (error) {
-      pharmacyUnknownDrugTotal.inc({ drug });
-      res.status(404).json({
-        error: `No pricing records found for drug: ${drug}`,
-        code: "NOT_FOUND_DRUG",
-      });
+      if (error instanceof Error && error.message.includes("No pricing records found")) {
+        pharmacyUnknownDrugTotal.inc({ drug });
+        res.status(404).json({
+          error: `No pricing records found for drug: ${drug}`,
+          code: "NO_PRICES_FOUND",
+        });
+      } else {
+        logger.error({ err: error, drug, requestId: (req as any).requestId }, "pharmacy compare handler error");
+        res.status(500).json({
+          error: "Internal server error",
+          code: "INTERNAL_ERROR",
+        });
+      }
     }
   });
 

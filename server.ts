@@ -770,6 +770,9 @@ app.post(
         auditBill(sanitizedLineItems, {
           network: NETWORK,
           payTo: process.env.BILL_PROVIDER_PUBLIC_KEY,
+          overchargeMultiplier: env.data.BILL_AUDIT_OVERCHARGE_MULTIPLIER,
+          suggestedMultiplier: env.data.BILL_AUDIT_SUGGESTED_MULTIPLIER,
+          upcodedMultiplier: env.data.BILL_AUDIT_UPCODED_MULTIPLIER,
         }),
       );
     } catch (error) {
@@ -908,7 +911,7 @@ const mppx = Mppx.create({
   ],
 });
 
-app.get("/pharmacy/orders", (_req, res) => {
+app.get("/pharmacy/orders", requireApiKey, (_req, res) => {
   res.json({ orders: loadOrders() });
 });
 

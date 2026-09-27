@@ -194,6 +194,8 @@ export function auditBill(lineItems: any[], options: AuditBillOptions = {}) {
     dataFreshness: { ratesAsOf, validUntil: ratesValidUntil, isStale },
     recommendation: errorCount === 0
       ? "No errors detected. This bill appears correct."
-      : `Found ${errorCount} errors totaling $${totalOvercharge} in overcharges (${savingsPercent}% of total bill). Strongly recommend filing a formal dispute.`,
+      : totalCharged > 0
+        ? `Found ${errorCount} errors totaling $${totalOvercharge} in overcharges (${savingsPercent}% of total bill). Strongly recommend filing a formal dispute.`
+        : `Found ${errorCount} errors totaling $${totalOvercharge} in overcharges. Strongly recommend filing a formal dispute.`,
   };
 }
