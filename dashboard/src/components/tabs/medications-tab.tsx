@@ -97,11 +97,11 @@ export function MedicationsTab({ agentResult, recipient, locale = "en" }: Medica
               >
                 <div>
                   <div className="font-medium text-sm">{drug}</div>
-                  <div className="text-xs text-slate-500">
-                    {r
-                      ? `${t.best}: ${r.cheapest.pharmacyName} at $${r.cheapest.price}`
-                      : t.notYetCompared}
-                  </div>
+<div className={r ? "text-xs text-slate-500" : "text-xs text-slate-400 italic">
+                  {r
+                    ? `${t.best}: ${r.cheapest.pharmacyName} at $${r.cheapest.price}`
+                    : t.notYetCompared}
+                </div>
                 </div>
                 {r && (
                   <div className="text-right">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, useRef, useEffect, type FormEvent } from "react";
 import type { RecipientProfile } from "../../lib/types";
 import {
   validatePolicy,
@@ -137,6 +137,8 @@ export function PolicyTab({
   const [confirmRows, setConfirmRows] = useState<PolicyChangeRow[] | null>(null);
   const [requiresTyped, setRequiresTyped] = useState(false);
   const [typedValue, setTypedValue] = useState("");
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const [debounceTimeout, setDebounceTimeout] = useState<NodeJS.Timeout | null>(null);
 
   const baseline = spending?.policy;
 
@@ -235,7 +237,10 @@ export function PolicyTab({
                   setPolicyDirty(true);
                   const raw = e.target.value;
                   const parsed = raw === "" ? Number.NaN : Number(raw);
-                  setPolicyForm((p) => ({ ...p, [key]: parsed }));
+                  if (debounceRef.current) clearTimeout(debounceRef.current);
+                  debounceRef.current = setTimeout(() => {
+                    setPolicyForm((p) => ({ ...p, [key]: parsed }));
+                  }, 300);
                 }}
                 className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 ${errMsg
                     ? "border-red-400 focus:ring-red-500"
