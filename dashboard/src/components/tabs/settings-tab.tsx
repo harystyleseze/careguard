@@ -56,6 +56,7 @@ export function SettingsTab({
   const [saving, setSaving] = useState(false);
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState(false);
+  const [postSaveChangedFields, setPostSaveChangedFields] = useState<string[] | null>(null);
   const [form, setForm] = useState({
     recipientName: "",
     recipientAge: "",
@@ -81,6 +82,10 @@ export function SettingsTab({
   };
 
   const hasUnsavedChanges = editing && JSON.stringify(form) !== JSON.stringify(initialForm);
+
+  const changedFields = Object.keys(initialForm).filter(
+    (key) => form[key] !== initialForm[key]
+  );
 
   const startEditing = () => {
     setForm(initialForm);
@@ -139,6 +144,10 @@ export function SettingsTab({
 
   const handleSave = async () => {
     setSaving(true);
+    // Capture which fields changed before saving
+    const changedBeforeSave = Object.keys(initialForm).filter(
+      (key) => form[key] !== initialForm[key]
+    );
     // Trim, de-duplicate, and filter empty medication entries
     const medicationList = [...new Set(
       form.medications
@@ -163,6 +172,7 @@ export function SettingsTab({
     });
     setSaving(false);
     setEditing(false);
+    setPostSaveChangedFields(changedBeforeSave);
   };
 
   const handleCopy = async (text: string, id: string) => {
@@ -398,6 +408,19 @@ export function SettingsTab({
             >
               {saving ? "Saving…" : "Save"}
             </button>
+          </div>
+        )}
+        {postSaveChangedFields && postSaveChangedFields.length > 0 && (
+          <div className="mt-3 p-3 bg-slate-50 rounded-border text-xs text-slate-700">
+            <p className="font-medium mb-1">Updated fields:</p>
+            <ul className="space-y-1">
+              {postSaveChangedFields.map((field) => (
+                <li key={field} className="flex items-center">
+                  <span className="text-slate-500 mr-2">{field}:</span>
+                  <span className="font-mono">{initialForm[field] || ""} → {form[field] || ""}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </div>
