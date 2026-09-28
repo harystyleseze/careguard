@@ -242,6 +242,9 @@ export function WalletTab({
         <h2 className="text-sm font-semibold text-slate-700 mb-3">
           {t.wallet.howPayments}
         </h2>
+        <p className="text-sm text-slate-600 mb-4">
+          Payments are made securely using digital dollars on a public ledger, ensuring transparency and traceability for all healthcare transactions.
+        </p>
         <div className="space-y-3 text-xs text-slate-600">
           <div className="flex gap-3 items-start">
             <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded font-medium shrink-0">
