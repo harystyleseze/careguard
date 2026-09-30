@@ -158,8 +158,7 @@ export function OverviewTab({
         />
         <Card
           label={t.overview.agentApiCosts}
-          value={formatCurrency(spending?.spending.serviceFees ?? 0, locale, 4)}
-          sub={`${spending?.transactionCount || 0} ${t.overview.queries}`}
+          value={formatCurrency(spending?.spending.serviceFees ?? 0, locale, 2)}
           sub={`${spending?.transactionCount ? formatNumber(spending.transactionCount, locale) : 0} ${t.overview.queries}`}
           color="slate"
         />
