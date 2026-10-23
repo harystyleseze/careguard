@@ -468,6 +468,23 @@ export function MedicationsTab({
                   )}
                 </div>
 
+                {/* Insurance network check (#1234): explain, don't just badge. */}
+                {r?.network?.configured && r.network.outOfNetworkCount > 0 && (
+                  <div
+                    role="note"
+                    data-testid={`network-note-${drug}`}
+                    className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"
+                  >
+                    <p className="font-semibold">
+                      {r.cheapest?.networkStatus === "out_of_network"
+                        ? "Cheapest pharmacy is out-of-network"
+                        : `${r.network.outOfNetworkCount} out-of-network pharmac${r.network.outOfNetworkCount === 1 ? "y" : "ies"}`}
+                    </p>
+                    <p className="mt-1">{r.network.explanation}</p>
+                    {r.cheapest?.networkNote && <p className="mt-1 text-amber-800">{r.cheapest.networkNote}</p>}
+                  </div>
+                )}
+
                 <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
                   <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                     Side effect journal

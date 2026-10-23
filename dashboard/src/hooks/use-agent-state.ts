@@ -608,6 +608,8 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
   const updatePolicy = useCallback(async (): Promise<{
     ok: boolean;
     error?: string;
+    /** Set when limit increases were held for owner approval (#1233). */
+    pendingApproval?: { id: string; summary: string };
   }> => {
     try {
       clearPolicySavedTimer();
@@ -625,6 +627,11 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         return { ok: false, error: errText || "Failed to update policy" };
       }
       if (res.ok) {
+        const body = await res.json().catch(() => null);
+        const pendingApproval =
+          body?.pendingApproval && typeof body.pendingApproval.summary === 'string'
+            ? { id: String(body.pendingApproval.id), summary: body.pendingApproval.summary }
+            : undefined;
         setPolicySaved(true);
         const spendingRes = await agentFetch(`${AGENT_URL}/agent/spending`);
         if (spendingRes.ok) {
@@ -636,9 +643,18 @@ export function useAgentState({ activeTab }: UseAgentStateOptions) {
         addLogEntry(
           `[${new Date().toLocaleTimeString()}] Policy updated: daily=$${policyForm.dailyLimit}, monthly=$${policyForm.monthlyLimit}, meds=$${policyForm.medicationMonthlyBudget}, bills=$${policyForm.billMonthlyBudget}, approval=$${policyForm.approvalThreshold}`,
         );
-        setLiveMessage("Policy updated");
-        setTimeout(() => setPolicySaved(false), 3000);
-        return { ok: true };
+        if (pendingApproval) {
+          addLogEntry(
+            `[${new Date().toLocaleTimeString()}] Sent for owner approval: ${pendingApproval.summary}`,
+          );
+        }
+        setLiveMessage(pendingApproval ? 'Policy limit increase sent for owner approval' : 'Policy updated');
+        clearPolicySavedTimer();
+        policySavedTimerRef.current = setTimeout(() => {
+          setPolicySaved(false);
+          policySavedTimerRef.current = null;
+        }, 3000);
+        return pendingApproval ? { ok: true, pendingApproval } : { ok: true };
       }
       return { ok: false, error: "Unknown error" };
     } catch (err: any) {

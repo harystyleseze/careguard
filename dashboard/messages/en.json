@@ -156,7 +156,17 @@
     "rangeAll": "All time",
     "breakdownTotal": "Total",
     "noSpendingInRange": "No completed payments in this period.",
-    "rangeUnavailable": "This agent only reports all-time totals, so the time range can't be changed."
+    "rangeUnavailable": "This agent only reports all-time totals, so the time range can't be changed.",
+    "networkFees": "Stellar Network Fees",
+    "networkFeesDesc": "XLM paid to the Stellar network to submit payments. Tracked separately from medication and bill spending.",
+    "networkFeesTotal": "Total network fees",
+    "networkFeesCount": "{count} transactions · avg {avg} stroops",
+    "networkFeesNone": "No network fees recorded in this period. Fees are recorded for payments the agent submits to Stellar itself (bill payments).",
+    "networkFeesTrend": "Daily network fees",
+    "networkFeesSpike": "Fee spike",
+    "networkFeesSpikeNote": "{days} day(s) had fees at least {multiplier}× the typical {typical} stroops per transaction, usually caused by network congestion.",
+    "networkFeesNoSpikes": "No fee spikes in this period.",
+    "networkFeesUnavailable": "This agent doesn't report network fees yet."
   },
   "settings": {
     "recipient": "Care Recipient",

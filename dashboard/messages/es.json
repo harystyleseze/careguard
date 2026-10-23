@@ -156,7 +156,17 @@
     "rangeAll": "Todo",
     "breakdownTotal": "Total",
     "noSpendingInRange": "No hay pagos completados en este período.",
-    "rangeUnavailable": "Este agente solo informa totales históricos, así que el período no se puede cambiar."
+    "rangeUnavailable": "Este agente solo informa totales históricos, así que el período no se puede cambiar.",
+    "networkFees": "Tarifas de la Red Stellar",
+    "networkFeesDesc": "XLM pagado a la red Stellar para enviar pagos. Se registra aparte de los gastos en medicamentos y facturas.",
+    "networkFeesTotal": "Total de tarifas de red",
+    "networkFeesCount": "{count} transacciones · promedio {avg} stroops",
+    "networkFeesNone": "No hay tarifas de red registradas en este período. Se registran para los pagos que el agente envía directamente a Stellar (pagos de facturas).",
+    "networkFeesTrend": "Tarifas de red por día",
+    "networkFeesSpike": "Pico de tarifas",
+    "networkFeesSpikeNote": "{days} día(s) tuvieron tarifas de al menos {multiplier}× los {typical} stroops típicos por transacción, normalmente por congestión de la red.",
+    "networkFeesNoSpikes": "No hubo picos de tarifas en este período.",
+    "networkFeesUnavailable": "Este agente todavía no informa las tarifas de red."
   },
   "settings": {
     "recipient": "Paciente",

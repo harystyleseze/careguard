@@ -12,6 +12,8 @@ import { appendAuditEntry } from "../shared/audit-log.ts";
 import { buildScrubSession, scrubText } from "../shared/prompt-scrub.ts";
 import { setAgentRunId, getRequestId } from "../shared/request-context.ts";
 import { redactPII } from "../shared/redact.ts";
+import { buildActionReasonings } from "../shared/action-reasoning.ts";
+import { recordActionReasoning } from "../shared/agent-state.ts";
 import {
   agentToolCallsTotal,
   agentToolCallCapExceededTotal,
@@ -613,6 +615,15 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
     truncated,
     events,
   };
+
+  // #1235: keep a plain-language trace of why each significant action happened.
+  try {
+    recordActionReasoning(
+      buildActionReasonings({ runId, toolCalls, policy: result.spending?.policy }),
+    );
+  } catch (err: any) {
+    logger.warn({ err: err?.message || err }, "failed to record action reasoning");
+  }
 
   if (llmError) {
     result.error = llmError;

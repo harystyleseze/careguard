@@ -15,6 +15,21 @@
 
 import { z } from "zod";
 
+// ── Dosage History (Issue #1227) ─────────────────────────────────────────────
+
+export const DosageHistoryEntrySchema = z.object({
+  id: z.string().min(1),
+  previousDosage: z.string().min(1),
+  previousFrequency: z.string().min(1),
+  newDosage: z.string().min(1),
+  newFrequency: z.string().min(1),
+  changedAt: z.string().min(1),
+  reason: z.string().optional(),
+  prescriber: z.string().optional(),
+});
+
+export type DosageHistoryEntry = z.infer<typeof DosageHistoryEntrySchema>;
+
 // ── Medication ────────────────────────────────────────────────────────────────
 
 export const MedicationSchema = z.object({
@@ -82,46 +97,6 @@ export const BillAuditResultSchema = z.object({
 
 export type BillAuditResult = z.infer<typeof BillAuditResultSchema>;
 
-// ── SpendingPolicy ────────────────────────────────────────────────────────────
-
-export const SpendingPolicySchema = z.object({
-  dailyLimit: z.number().positive(),
-  monthlyLimit: z.number().positive(),
-  medicationMonthlyBudget: z.number().nonnegative(),
-  billMonthlyBudget: z.number().nonnegative(),
-  approvalThreshold: z.number().nonnegative(),
-  holdTimeSeconds: z.number().int().nonnegative(),
-  /**
-   * IANA timezone string for the caregiver's local day (Issue #207).
-   * Example: "America/Phoenix", "America/New_York", "Europe/London".
-   * When set, daily-limit checks use this timezone to determine "today"
-   * rather than UTC or the global SPENDING_TIMEZONE env var.
-   * Defaults to the SPENDING_TIMEZONE env var if omitted.
-   */
-  timezone: z.string().optional(),
-  toolFees: z.record(z.string(), z.number()).optional(),
-  notifications: z
-    .object({
-      email: z.boolean(),
-      sms: z.boolean(),
-      emailAddress: z.string().optional(),
-      phoneNumber: z.string().optional(),
-    })
-    .optional(),
-  /**
-   * Soft-warning threshold as a percentage (0–99) of each budget.
-   * When spending crosses this fraction of a budget limit the agent fires a
-   * warning notification but does NOT block the transaction.
-   * Distinct from `approvalThreshold` (hard dollar gate) and from the hard
-   * block limits (dailyLimit, monthlyLimit, category budgets).
-   * Example: 80 → warn when spend reaches 80% of a budget.
-   * Defaults to DEFAULT_WARNING_THRESHOLD_PCT (80) when not set by the caregiver.
-   */
-  warningThresholdPct: z.number().int().min(1).max(99).optional(),
-});
-
-export type SpendingPolicy = z.infer<typeof SpendingPolicySchema>;
-
 // ── Allergies & Adverse Reactions (Issue #1230) ────────────────────────────────
 
 export const AllergySeveritySchema = z.enum([
@@ -153,104 +128,6 @@ export interface SideEffectEntry {
   severity: 'mild' | 'moderate' | 'severe';
   timestamp: string;
 }
-
-export const SpendingPolicySchema = z
-  .object({
-    dailyLimit: z
-      .number()
-      .gt(0, "dailyLimit must be greater than 0")
-      .max(10_000, "dailyLimit cannot exceed $10,000"),
-    monthlyLimit: z
-      .number()
-      .gt(0, "monthlyLimit must be greater than 0")
-      .max(50_000, "monthlyLimit cannot exceed $50,000"),
-    medicationMonthlyBudget: z
-      .number()
-      .gt(0, "medicationMonthlyBudget must be greater than 0")
-      .max(50_000, "medicationMonthlyBudget cannot exceed $50,000"),
-    billMonthlyBudget: z
-      .number()
-      .gt(0, "billMonthlyBudget must be greater than 0")
-      .max(50_000, "billMonthlyBudget cannot exceed $50,000"),
-    approvalThreshold: z
-      .number()
-      .gt(0, "approvalThreshold must be greater than 0")
-      .max(10_000, "approvalThreshold cannot exceed $10,000"),
-    holdTimeSeconds: z.number().int("holdTimeSeconds must be an integer").min(0).max(86_400).default(0),
-    severityThreshold: z.enum(['any', 'major', 'moderate', 'mild']).optional(),
-    timezone: z.string().optional(),
-    toolFees: z.record(z.string(), z.number().min(0)).optional(),
-    notifications: z
-      .object({
-        email: z.boolean(),
-        sms: z.boolean(),
-        emailAddress: z.string().optional(),
-        phoneNumber: z.string().optional(),
-      })
-      .optional(),
-    priceWatch: z
-      .object({
-        enabled: z.boolean().default(true),
-        optOutMeds: z.array(z.string()).default([]),
-        minSavingsThreshold: z.number().nonnegative().default(5.00),
-        minSavingsPercent: z.number().nonnegative().default(15),
-      })
-      .optional(),
-  })
-  .refine((p) => p.dailyLimit <= p.monthlyLimit, {
-    message: "dailyLimit cannot exceed monthlyLimit",
-    path: ["dailyLimit"],
-  })
-  .refine((p) => p.approvalThreshold <= p.dailyLimit, {
-    message: "approvalThreshold cannot exceed dailyLimit",
-    path: ["approvalThreshold"],
-  })
-  .refine(
-    (p) => p.medicationMonthlyBudget + p.billMonthlyBudget <= p.monthlyLimit,
-    {
-      message:
-        "medicationMonthlyBudget + billMonthlyBudget cannot exceed monthlyLimit",
-      path: ["medicationMonthlyBudget"],
-    },
-  );
-
-export type SpendingPolicy = z.infer<typeof SpendingPolicySchema>;
-
-// ── Allergies & Adverse Reactions (Issue #1230) ────────────────────────────────
-
-export const AllergySeveritySchema = z.enum([
-  'mild',
-  'moderate',
-  'severe',
-  'life_threatening',
-]);
-
-export type AllergySeverity = z.infer<typeof AllergySeveritySchema>;
-
-export const RecipientAllergySchema = z.object({
-  id: z.string().min(1),
-  substance: z.string().min(1),
-  severity: AllergySeveritySchema,
-  reaction: z.string().optional(),
-  notes: z.string().optional(),
-  createdAt: z.string().min(1),
-  updatedAt: z.string().optional(),
-});
-
-export type RecipientAllergy = z.infer<typeof RecipientAllergySchema>;
-
-// ── Co-Caregiver Presence (Issue #1231) ───────────────────────────────────────
-
-export const ItemPresenceEntrySchema = z.object({
-  caregiverId: z.string().min(1),
-  caregiverName: z.string().min(1),
-  avatar: z.string().optional(),
-  lastViewedAt: z.string().min(1),
-});
-
-export type ItemPresenceEntry = z.infer<typeof ItemPresenceEntrySchema>;
-
-export type ItemPresenceMap = Record<string, ItemPresenceEntry[]>;
 
 // A confirmed Stellar transaction hash is always 64 lowercase/uppercase hex chars.
 export const STELLAR_TX_HASH_RE = /^[0-9a-f]{64}$/i;
@@ -318,6 +195,10 @@ export const TransactionSchema = z.object({
   // from the auto-generated description. Validated to the Stellar MEMO_TEXT
   // limit (28 bytes) so it can safely be used as an on-chain memo if needed.
   memo: z.string().max(28).optional(),
+  // Stellar network fee charged for this transaction, in stroops (#1232).
+  // Only set when the agent submitted the transaction itself and Horizon
+  // accepted it; payments settled by a third party (x402/MPP) leave it unset.
+  networkFeeStroops: z.number().int().nonnegative().optional(),
   // Medication order fulfilment lifecycle (Feature: order tracking).
   // Only present on medication-type transactions.
   order_status: z.enum(["submitted", "ready", "picked_up"]).optional(),
@@ -463,6 +344,98 @@ export const MultisigRequestSchema = z.object({
 export type MultisigPendingRequest = z.infer<typeof MultisigRequestSchema>;
 
 // ── Recipient Data Export (Issue #1225) ───────────────────────────────────────
+
+// ── Co-Caregiver Presence (Issue #1231) ───────────────────────────────────────
+
+export const ItemPresenceEntrySchema = z.object({
+  caregiverId: z.string().min(1),
+  caregiverName: z.string().min(1),
+  avatar: z.string().optional(),
+  lastViewedAt: z.string().min(1),
+});
+
+export type ItemPresenceEntry = z.infer<typeof ItemPresenceEntrySchema>;
+
+export type ItemPresenceMap = Record<string, ItemPresenceEntry[]>;
+
+export const SpendingPolicySchema = z
+  .object({
+    dailyLimit: z
+      .number()
+      .gt(0, "dailyLimit must be greater than 0")
+      .max(10_000, "dailyLimit cannot exceed $10,000"),
+    monthlyLimit: z
+      .number()
+      .gt(0, "monthlyLimit must be greater than 0")
+      .max(100_000, "monthlyLimit cannot exceed $100,000"),
+    medicationMonthlyBudget: z
+      .number()
+      .gt(0, "medicationMonthlyBudget must be greater than 0")
+      .max(50_000, "medicationMonthlyBudget cannot exceed $50,000"),
+    billMonthlyBudget: z
+      .number()
+      .gt(0, "billMonthlyBudget must be greater than 0")
+      .max(50_000, "billMonthlyBudget cannot exceed $50,000"),
+    approvalThreshold: z
+      .number()
+      .gt(0, "approvalThreshold must be greater than 0")
+      .max(10_000, "approvalThreshold cannot exceed $10,000"),
+    holdTimeSeconds: z.number().int("holdTimeSeconds must be an integer").min(0).max(86_400).default(0),
+    severityThreshold: z.enum(['any', 'major', 'moderate', 'mild']).optional(),
+    /**
+     * IANA timezone string for the caregiver's local day (Issue #207).
+     * Example: "America/Phoenix", "America/New_York", "Europe/London".
+     * When set, daily-limit checks use this timezone to determine "today"
+     * rather than UTC or the global SPENDING_TIMEZONE env var.
+     * Defaults to the SPENDING_TIMEZONE env var if omitted.
+     */
+    timezone: z.string().optional(),
+    toolFees: z.record(z.string(), z.number().min(0)).optional(),
+    notifications: z
+      .object({
+        email: z.boolean(),
+        sms: z.boolean(),
+        emailAddress: z.string().optional(),
+        phoneNumber: z.string().optional(),
+      })
+      .optional(),
+    priceWatch: z
+      .object({
+        enabled: z.boolean().default(true),
+        optOutMeds: z.array(z.string()).default([]),
+        minSavingsThreshold: z.number().nonnegative().default(5.00),
+        minSavingsPercent: z.number().nonnegative().default(15),
+      })
+      .optional(),
+    /**
+     * Soft-warning threshold as a percentage (1–99) of each budget.
+     * When spending crosses this fraction of a budget limit the agent fires a
+     * warning notification but does NOT block the transaction.
+     * Distinct from `approvalThreshold` (hard dollar gate) and from the hard
+     * block limits (dailyLimit, monthlyLimit, category budgets).
+     * Example: 80 → warn when spend reaches 80% of a budget.
+     * Defaults to DEFAULT_WARNING_THRESHOLD_PCT (80) when not set by the caregiver.
+     */
+    warningThresholdPct: z.number().int().min(1).max(99).optional(),
+  })
+  .refine((p) => p.dailyLimit <= p.monthlyLimit, {
+    message: "dailyLimit cannot exceed monthlyLimit",
+    path: ["dailyLimit"],
+  })
+  .refine((p) => p.approvalThreshold <= p.dailyLimit, {
+    message: "approvalThreshold cannot exceed dailyLimit",
+    path: ["approvalThreshold"],
+  })
+  .refine(
+    (p) => p.medicationMonthlyBudget + p.billMonthlyBudget <= p.monthlyLimit,
+    {
+      message:
+        "medicationMonthlyBudget + billMonthlyBudget cannot exceed monthlyLimit",
+      path: ["medicationMonthlyBudget"],
+    },
+  );
+
+export type SpendingPolicy = z.infer<typeof SpendingPolicySchema>;
 
 export const RecipientExportBundleSchema = z.object({
   exportMetadata: z.object({

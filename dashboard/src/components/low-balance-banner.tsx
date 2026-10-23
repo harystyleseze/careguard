@@ -15,7 +15,8 @@ interface LowBalanceBannerProps {
   walletXlm: string | null;
   onResume: () => void;
   autoTopupRule?: AutoTopupRule;
-  onConfigureAutoTopup?: (rule: AutoTopupRule) => void;
+  /** May resolve to a status message shown under the save button (e.g. "sent for approval"). */
+  onConfigureAutoTopup?: (rule: AutoTopupRule) => void | Promise<string | void>;
 }
 
 const REASON_COPY: Record<string, { kind: string; suffix: string }> = {
@@ -39,6 +40,7 @@ export function LowBalanceBanner({
 }: LowBalanceBannerProps) {
   const copy = pausedReason ? REASON_COPY[pausedReason] : undefined;
   const [rule, setRule] = useState<AutoTopupRule>(autoTopupRule);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     setRule(autoTopupRule);
@@ -122,10 +124,18 @@ export function LowBalanceBanner({
             </label>
           </div>
 
-          <div className="mt-3 flex justify-end">
+          <div className="mt-3 flex items-center justify-end gap-3">
+            {notice && (
+              <p role="status" className="text-xs text-slate-600">
+                {notice}
+              </p>
+            )}
             <button
               type="button"
-              onClick={() => onConfigureAutoTopup(rule)}
+              onClick={async () => {
+                const message = await onConfigureAutoTopup(rule);
+                setNotice(typeof message === "string" ? message : null);
+              }}
               className="rounded-md bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-900"
             >
               Save auto-topup

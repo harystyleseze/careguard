@@ -99,7 +99,13 @@ import {
   stellarFeeBumpsTotal,
   stellarTxBadSeqRetriesTotal,
 } from "../shared/metrics.ts";
-import { getTargetFee } from "../shared/stellar-fee.ts";
+import { computeNetworkFeeBreakdown, getTargetFee } from "../shared/stellar-fee.ts";
+import {
+  addProviderNetworkFinding,
+  annotatePharmacyNetwork,
+  emptyInsuranceNetwork,
+  type InsuranceNetwork,
+} from "../shared/insurance-network.ts";
 import {
   assertMockNetworkAllowed,
   createMockReceipt,
@@ -214,6 +220,13 @@ const horizonServer = new Horizon.Server(HORIZON_URL);
 // Helper: calculate recommended fee based on network conditions (p90 from Horizon fee_stats)
 async function getRecommendedFee(): Promise<string> {
   return getTargetFee(horizonServer);
+}
+
+// The fee submitTransactionWithFeeBump settled on, as an integer stroop count
+// for Transaction.networkFeeStroops (#1232). Undefined when it isn't numeric.
+function parseFeeStroops(fee: string): number | undefined {
+  const stroops = parseInt(fee, 10);
+  return Number.isFinite(stroops) && stroops >= 0 ? stroops : undefined;
 }
 
 export const TX_HASH_EXTRACTION_FAILED = "extraction_failed" as const;
@@ -1497,6 +1510,18 @@ export function resetSpendingTracker(recipientId?: string) {
   });
 }
 
+// #1234: the caregiver-maintained in-network lists for the current recipient.
+// A lookup failure degrades to "network status unknown" rather than failing
+// the price comparison or audit the caregiver asked for.
+function loadInsuranceNetwork(): InsuranceNetwork {
+  try {
+    return getCareRecipientsStore().getInsuranceNetwork(currentRecipientId);
+  } catch (err: any) {
+    logger.warn({ err: err?.message || err }, "[insurance-network] lookup failed");
+    return emptyInsuranceNetwork();
+  }
+}
+
 // --- Tool: Compare pharmacy prices (pays via x402) ---
 export async function comparePharmacyPrices(
   drugName: string,
@@ -1566,7 +1591,7 @@ export async function comparePharmacyPrices(
       "mock-pharmacy-price-api",
       receipt.stellarTxHash,
     );
-    return data;
+    return annotatePharmacyNetwork(data, loadInsuranceNetwork());
   }
 
   let response: Response;
@@ -1618,7 +1643,7 @@ export async function comparePharmacyPrices(
     txHashStatus,
   );
 
-  return data;
+  return annotatePharmacyNetwork(data, loadInsuranceNetwork());
 }
 
 // --- Tool: Fetch Rosa's hospital bill (free endpoint, no x402 payment) ---
@@ -1670,12 +1695,30 @@ export async function fetchAndAuditBill(recipientId?: string) {
   // Step 1: Fetch the bill (free)
   const bill = await fetchRosaBill(rid);
 
-  // Step 2: Audit it (pays via x402)
-  return await auditBill(bill.lineItems);
+  // Step 2: Audit it (pays via x402), then check the billing facility
+  // against the in-network provider list (#1234).
+  const audit = await runBillAudit(bill.lineItems);
+  return addProviderNetworkFinding(audit, loadInsuranceNetwork(), {
+    id: bill.providerId,
+    name: bill.facilityName,
+  });
 }
 
 // --- Tool: Audit a medical bill (pays via x402) ---
+// Flags an out-of-network provider as its own finding type (#1234) on top of
+// the line-item audit.
 export async function auditBill(
+  lineItemsInput: unknown,
+  options?: { providerId?: string; providerName?: string; recipientId?: string },
+) {
+  const audit = await runBillAudit(lineItemsInput, options);
+  return addProviderNetworkFinding(audit, loadInsuranceNetwork(), {
+    id: options?.providerId,
+    name: options?.providerName,
+  });
+}
+
+async function runBillAudit(
   lineItemsInput: unknown,
   options?: { providerId?: string; providerName?: string; recipientId?: string },
 ) {
@@ -2275,6 +2318,7 @@ async function executeBillPayment(
   );
 
   let stellarTxHash: string | undefined;
+  let networkFeeStroops: number | undefined;
   try {
     const account = await horizonServer.loadAccount(agentKeypair.publicKey());
     const usdcAsset = new Asset("USDC", USDC_ISSUER);
@@ -2293,6 +2337,7 @@ async function executeBillPayment(
     );
 
     stellarTxHash = result.hash;
+    networkFeeStroops = parseFeeStroops(result.fee);
     logger.info(
       { txHash: stellarTxHash, fee: result.fee },
       "[Stellar] TX confirmed",
@@ -2310,7 +2355,7 @@ async function executeBillPayment(
   stellarTxSubmittedTotal.inc({ result: "success" });
   paymentsUsdcTotal.inc({ type: "bill" });
 
-  return { success: true, stellarTxHash };
+  return { success: true, stellarTxHash, networkFeeStroops };
 }
 
 async function getPendingTransaction(txId: string) {
@@ -2374,6 +2419,9 @@ export async function approvePendingTransaction(txId: string): Promise<any> {
   tx.status = "completed";
   tx.stellarTxHash = result.stellarTxHash;
   if (result.mppOrderId) tx.mppOrderId = result.mppOrderId;
+  if (typeof result.networkFeeStroops === "number") {
+    tx.networkFeeStroops = result.networkFeeStroops;
+  }
 
   rotateMonthIfNeeded(spendingTracker);
   if (tx.category === TRANSACTION_CATEGORY.MEDICATIONS) {
@@ -3006,6 +3054,7 @@ export async function payBill(
   );
 
   let stellarTxHash: string | undefined;
+  let networkFeeStroops: number | undefined;
 
   const releaseSubmission = await getSubmissionMutex(
     agentKeypair.publicKey(),
@@ -3028,6 +3077,7 @@ export async function payBill(
     );
 
     stellarTxHash = result.hash;
+    networkFeeStroops = parseFeeStroops(result.fee);
     logger.info(
       { txHash: stellarTxHash, fee: result.fee },
       "[Stellar] TX confirmed",
@@ -3059,6 +3109,8 @@ export async function payBill(
     status: "completed" as const,
     category: TRANSACTION_CATEGORY.BILLS,
     ...(memo ? { memo } : {}),
+    // #1232: the Stellar network fee actually charged, for fee tracking.
+    ...(networkFeeStroops !== undefined ? { networkFeeStroops } : {}),
   };
 
   // bills was already incremented during the reservation step above.
@@ -3132,6 +3184,9 @@ export function getSpendingSummary() {
     // Additive (#1185): per-category totals for 7d / 30d / all-time, from
     // completed transactions. Older clients ignore it.
     categoryBreakdown: computeCategoryBreakdown(spendingTracker.transactions),
+    // Additive (#1232): Stellar network fees per range, kept apart from the
+    // medication/bill/service-fee totals above.
+    networkFees: computeNetworkFeeBreakdown(spendingTracker.transactions),
   };
 }
 
@@ -3408,6 +3463,8 @@ const TOOL_INPUT_SCHEMAS = {
   audit_medical_bill: z
     .object({
       line_items_json: z.string().min(1),
+      provider_id: z.string().min(1).optional(),
+      provider_name: z.string().min(1).optional(),
       recipient_id: recipientIdSchema,
     })
     .strict(),
@@ -3530,7 +3587,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "compare_pharmacy_prices",
     description:
-      'Compare medication prices across multiple pharmacies. Pays $0.002 USDC per query via x402 on Stellar. Pass the medication dosage exactly as known; the returned dosage field is reliable and echoed from the request for safety. Returns prices sorted cheapest to most expensive, with potential savings. If the medication is unknown or no prices are found, the tool returns { ok: false, reason: "NO_PRICES_FOUND" } which you should handle gracefully (e.g. notify the caregiver). Each pharmacy has an inStock field that is always true: it means the pharmacy lists the medication in its price catalog, not that real-time inventory was checked.',
+      'Compare medication prices across multiple pharmacies. Pays $0.002 USDC per query via x402 on Stellar. Pass the medication dosage exactly as known; the returned dosage field is reliable and echoed from the request for safety. Returns prices sorted cheapest to most expensive, with potential savings. If the medication is unknown or no prices are found, the tool returns { ok: false, reason: "NO_PRICES_FOUND" } which you should handle gracefully (e.g. notify the caregiver). Each pharmacy has an inStock field that is always true: it means the pharmacy lists the medication in its price catalog, not that real-time inventory was checked. Each pharmacy also has a networkStatus (in_network, out_of_network, or unknown when no in-network list is configured) checked against the recipient\'s insurance network; when recommending an out_of_network pharmacy, relay its networkNote and the network.explanation so the caregiver understands the coverage risk.',
     input_schema: strictInputSchema({
       type: "object" as const,
       properties: {
@@ -3558,7 +3615,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "audit_medical_bill",
     description:
-      "Audit a medical bill for errors (duplicates, upcoding, overcharges). 80% of medical bills contain errors. Pays $0.01 USDC per audit via x402 on Stellar. Pass line_items_json as a JSON string array of line items. Each line item must include description, cptCode, quantity, and chargedAmount. cptCode must match /^(?:\\d{5}|J\\d{4})$/, quantity must be > 0, and chargedAmount must be > 0. Optionally pass provider_id/provider_name to cross-reference against historical charges from that provider.",
+      "Audit a medical bill for errors (duplicates, upcoding, overcharges). 80% of medical bills contain errors. Pays $0.01 USDC per audit via x402 on Stellar. Pass line_items_json as a JSON string array of line items. Each line item must include description, cptCode, quantity, and chargedAmount. cptCode must match /^(?:\\d{5}|J\\d{4})$/, quantity must be > 0, and chargedAmount must be > 0. Optionally pass provider_id/provider_name to cross-reference against historical charges from that provider and to check whether the provider is in the recipient's insurance network; an out-of-network provider is reported as a separate finding (type out_of_network_provider) with an explanation you should relay to the caregiver.",
     input_schema: strictInputSchema({
       type: "object" as const,
       properties: {

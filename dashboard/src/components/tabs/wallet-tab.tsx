@@ -6,6 +6,7 @@ import { truncateAddress } from "../../lib/utils";
 import { Toast } from "../primitives/toast";
 import type { AgentInfo, SpendingData } from "../types";
 import { SpendingCategoryChart } from "../spending-category-chart";
+import { NetworkFeesCard } from "../network-fees-card";
 import type { CaregiverProfile, ConsentSettings } from "../../lib/types";
 import { CostSplitSection } from "../cost-split-section";
 import { EXPLORER_ACCOUNT_URL, NETWORK_LABEL } from "../../lib/stellar-network";
@@ -730,6 +731,7 @@ export function WalletTab({
         </div>
       </div>
       {spending && <SpendingCategoryChart spending={spending} locale={locale} />}
+      {spending && <NetworkFeesCard spending={spending} locale={locale} />}
 
       <div className="bg-white rounded-xl border border-slate-200 p-6">
         <h2 className="text-sm font-semibold text-slate-700 mb-3">

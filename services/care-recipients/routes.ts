@@ -2,7 +2,6 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { existsSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import type { CareRecipientsStore, CareRecipientEntity } from "./db.ts";
 import { registerKnownNames } from "../../shared/redact.ts";
 import { createRateLimiter } from "../../shared/rate-limit.ts";
 import { appendAuditEntry } from "../../shared/audit-log.ts";
@@ -30,6 +29,7 @@ import {
 import { sanitizeFreeText, sanitizeUserString } from "../../shared/sanitize.ts";
 import { optionalFreeTextSchema } from "../../shared/free-text.ts";
 import { notify } from "../../shared/notifications.ts";
+import { decideProfileChange, requestProfileChange, type ProfileChangeAppliers } from "./profile-changes.ts";
 
 export const RoleConsentSchema = z.object({
   medications: z.boolean().default(true),
@@ -193,6 +193,14 @@ const HandoffNotesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+/** Who made a request, for the audit log: the linked caregiver, or the operator. */
+function actorOf(principal: CaregiverPrincipal): string {
+  if (principal.kind === "caregiver") {
+    return principal.link.email ?? principal.link.caregiver_user_id;
+  }
+  return "owner";
+}
+
 /** Display name for a note author: the caller's identity, never client input. */
 function authorOf(principal: CaregiverPrincipal, requestedAuthor: string | undefined): string {
   if (principal.kind === "caregiver") {
@@ -211,12 +219,17 @@ function authorOf(principal: CaregiverPrincipal, requestedAuthor: string | undef
  * Extended with role-based caregiver access (#1179) and shift handoff
  * notes (#1180).
  */
-export function createCareRecipientsRouter(store: CareRecipientsStore, caregiverToken: string): Router {
+export function createCareRecipientsRouter(
+  store: CareRecipientsStore,
+  caregiverToken: string,
+  appliers: ProfileChangeAppliers = {},
+): Router {
   const router = Router();
   const auth = authenticateCaregiver(store, caregiverToken);
   const canView = requirePermission(store, "view");
   const canAct = requirePermission(store, "act");
   const canManage = requirePermission(store, "manage");
+  // GDPR data export (Issue #1225) is expensive, so it is rate limited.
   const exportRateLimiter = createRateLimiter(
     "recipient-export",
     10,
@@ -579,17 +592,61 @@ export function createCareRecipientsRouter(store: CareRecipientsStore, caregiver
     }
   });
 
+  // Removing a caregiver is a sensitive change (#1233): it files a request
+  // that an owner approves before the link is removed. Problems that would
+  // make the removal fail anyway (unknown caregiver, last owner) are still
+  // reported straight away.
   router.delete("/recipients/:id/caregivers/:caregiverUserId", auth, canManage, (req, res) => {
-    try {
-      if (!store.removeCaregiver(req.params.id, req.params.caregiverUserId)) {
-        res.status(404).json({ error: "Caregiver not found" });
+    const link = store.getCaregiver(req.params.id, req.params.caregiverUserId);
+    if (!link) {
+      res.status(404).json({ error: "Caregiver not found" });
+      return;
+    }
+    if (link.role === "owner" && link.status === "active") {
+      const owners = store.listCaregivers(req.params.id).filter((c) => c.role === "owner" && c.status === "active");
+      if (owners.length <= 1) {
+        sendAccessError(new CaregiverAccessError("last_owner", "Cannot remove the last owner of a care recipient"), res);
         return;
       }
-      res.status(204).end();
-    } catch (err) {
-      sendAccessError(err, res);
     }
+    const name = link.display_name ?? link.email ?? link.caregiver_user_id;
+    const pendingApproval = requestProfileChange(store, {
+      recipientId: req.params.id,
+      kind: "caregiver_removal",
+      summary: `Remove ${name} (${link.role}) from this care recipient`,
+      changes: [{ field: "caregiver", label: "Caregiver", before: name, after: null }],
+      payload: { caregiverUserId: link.caregiver_user_id },
+      requestedBy: actorOf(principalOf(res)),
+    });
+    res.status(202).json({ pendingApproval });
   });
+
+  // ── Sensitive profile change approvals (#1233) ─────────────────────────────
+
+  router.get("/recipients/:id/profile-changes", auth, canView, (req, res) => {
+    const status = req.query.status;
+    const filter = status === "pending" || status === "approved" || status === "rejected" ? status : undefined;
+    res.json({ requests: store.listProfileChangeRequests(req.params.id, filter) });
+  });
+
+  // Only owners hold the manage permission, so only they can decide.
+  for (const [path, decision] of [["approve", "approved"], ["reject", "rejected"]] as const) {
+    router.post(`/recipients/:id/profile-changes/:changeId/${path}`, auth, canManage, (req, res) => {
+      const note = sanitizeUserString(req.body?.note) || undefined;
+      const result = decideProfileChange(store, appliers, {
+        id: req.params.changeId,
+        recipientId: req.params.id,
+        decision,
+        actor: actorOf(principalOf(res)),
+        note,
+      });
+      if (!result.ok) {
+        res.status(result.status).json({ error: result.error });
+        return;
+      }
+      res.json({ request: result.request });
+    });
+  }
 
   // ── Shift handoff notes (#1180) ────────────────────────────────────────────
 

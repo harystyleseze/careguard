@@ -87,6 +87,7 @@ import {
   pauseAgent,
   resumeAgent,
   isPaused,
+  listActionReasoning,
   type PauseReason,
 } from "./shared/agent-state.ts";
 import { checkWalletBalance, formatResult, fetchWalletBalances } from "./shared/wallet-balance.ts";
@@ -118,6 +119,7 @@ import {
   previewSpendingPolicy,
   getAdherenceStatus,
   confirmAdherenceReminder,
+  setCurrentRecipient,
 } from "./agent/tools.ts";
 import { getPendingAdherences } from "./shared/adherence.ts";
 import { executeTool, runAgent } from "./agent/runner.ts";
@@ -132,6 +134,12 @@ import {
 } from "./shared/pharmacy-pricing.ts";
 import { getCareRecipientsStore } from "./services/care-recipients/db.ts";
 import { createCareRecipientsRouter } from "./services/care-recipients/routes.ts";
+import { createInsuranceNetworkRouter } from "./services/care-recipients/insurance-network.ts";
+import {
+  createProfileChangesRouter,
+  submitPolicyUpdate,
+  type PolicyAccess,
+} from "./services/care-recipients/profile-changes.ts";
 import { createVitalsStore } from "./services/vitals/db.ts";
 import { createVitalsRouter } from "./services/vitals/routes.ts";
 import { getInteractionCheckStore } from "./services/interaction-checks/db.ts";
@@ -1199,7 +1207,36 @@ app.post(
 // CARE RECIPIENTS API
 // ============================================================
 
-app.use(createCareRecipientsRouter(recipientsStore, CAREGIVER_TOKEN));
+// #1233: how an approved policy-limit increase is applied.
+const policyAccess: PolicyAccess = {
+  get(recipientId) {
+    setCurrentRecipient(recipientId);
+    return getSpendingSummary().policy;
+  },
+  set(recipientId, policy) {
+    const parsed = SpendingPolicySchema.safeParse(policy);
+    if (!parsed.success) return parsed.error.issues.map((issue) => issue.message).join("; ");
+    setCurrentRecipient(recipientId);
+    setSpendingPolicy(parsed.data);
+    return null;
+  },
+};
+app.use(createCareRecipientsRouter(recipientsStore, CAREGIVER_TOKEN, { policy: policyAccess }));
+// #1234: caregiver-maintained in-network pharmacy/provider lists.
+app.use("/agent", createInsuranceNetworkRouter(recipientsStore));
+// #1233: owner approval for sensitive profile changes (and auto-topup rules).
+app.use("/agent", createProfileChangesRouter(recipientsStore, { policy: policyAccess }));
+// #1235: plain-language "why did this happen?" traces for recent agent actions.
+app.get("/agent/reasoning", (req, res) => {
+  const limit = Number.parseInt(String(req.query.limit ?? "50"), 10);
+  res.json({
+    reasoning: listActionReasoning({
+      limit: Number.isFinite(limit) ? limit : 50,
+      transactionId: typeof req.query.transaction_id === "string" ? req.query.transaction_id : undefined,
+      toolCallId: typeof req.query.tool_call_id === "string" ? req.query.tool_call_id : undefined,
+    }),
+  });
+});
 
 // ============================================================
 // AI AGENT
@@ -1253,17 +1290,31 @@ app.post("/agent/policy", async (req, res) => {
       .status(400)
       .json({ error: "Invalid policy", issues: result.error.issues });
   }
-  setSpendingPolicy(result.data);
+  const recipientId = (req.query.recipient_id as string) || "rosa";
+  // #1233: limit increases wait for owner approval; the rest applies now.
+  const outcome = submitPolicyUpdate(recipientsStore, policyAccess, {
+    recipientId,
+    proposed: result.data,
+    requestedBy: typeof req.body?.caregiver_id === "string" ? req.body.caregiver_id : "api",
+  });
+  if (!outcome.ok) {
+    return res.status(400).json({ error: "Invalid policy", message: outcome.error });
+  }
   await appendAuditEntry({
     event: "agent.policy_updated",
     actor: "api",
     details: {
       ip: req.ip,
       userAgent: req.headers["user-agent"],
-      policy: result.data,
+      policy: outcome.applied,
+      ...(outcome.pendingApproval ? { pendingApprovalId: outcome.pendingApproval.id } : {}),
     },
   });
-  res.json({ success: true, policy: result.data });
+  res.status(outcome.pendingApproval ? 202 : 200).json({
+    success: true,
+    policy: outcome.applied,
+    pendingApproval: outcome.pendingApproval,
+  });
 });
 // --- Adherence endpoints (#264) — mirrors agent/server.ts ---
 app.get("/agent/adherence", (req, res) => {

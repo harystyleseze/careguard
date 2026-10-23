@@ -65,6 +65,13 @@ import { getInteractionCheckStore } from "../services/interaction-checks/db.ts";
 import { createInteractionChecksRouter } from "../services/interaction-checks/routes.ts";
 import { createCareRecipientsStore } from "../services/care-recipients/db.ts";
 import { authorizeApprovalActor, createDelegationsRouter } from "../services/care-recipients/delegation.ts";
+import { createInsuranceNetworkRouter } from "../services/care-recipients/insurance-network.ts";
+import {
+  createProfileChangesRouter,
+  submitPolicyUpdate,
+  type PolicyAccess,
+} from "../services/care-recipients/profile-changes.ts";
+import { listActionReasoning } from "../shared/agent-state.ts";
 import { notify } from "../shared/notifications.ts";
 import {
   resolveStellarNetwork,
@@ -340,6 +347,37 @@ app.get("/agent/pending-approvals", (req, res) => {
 const delegationStore = createCareRecipientsStore();
 app.use("/agent", createDelegationsRouter(delegationStore));
 
+// #1233: how an approved policy-limit increase is applied.
+const policyAccess: PolicyAccess = {
+  get(recipientId) {
+    setCurrentRecipient(recipientId);
+    return getSpendingSummary().policy;
+  },
+  set(recipientId, policy) {
+    const parsed = SpendingPolicySchema.safeParse(policy);
+    if (!parsed.success) return parsed.error.issues.map((issue) => issue.message).join("; ");
+    setCurrentRecipient(recipientId);
+    setSpendingPolicy(parsed.data);
+    broadcastSSE("spending", getSpendingSummary());
+    return null;
+  },
+};
+// #1234: caregiver-maintained in-network pharmacy/provider lists.
+app.use("/agent", createInsuranceNetworkRouter(delegationStore));
+// #1233: owner approval for sensitive profile changes (and auto-topup rules).
+app.use("/agent", createProfileChangesRouter(delegationStore, { policy: policyAccess }));
+// #1235: plain-language "why did this happen?" traces for recent agent actions.
+app.get("/agent/reasoning", (req, res) => {
+  const limit = Number.parseInt(String(req.query.limit ?? "50"), 10);
+  res.json({
+    reasoning: listActionReasoning({
+      limit: Number.isFinite(limit) ? limit : 50,
+      transactionId: typeof req.query.transaction_id === "string" ? req.query.transaction_id : undefined,
+      toolCallId: typeof req.query.tool_call_id === "string" ? req.query.tool_call_id : undefined,
+    }),
+  });
+});
+
 // Approve or reject a pending transaction.
 // Optional body: caregiver_id (who is acting) and on_behalf_of (whose authority
 // they're using). Acting on_behalf_of someone requires an active delegation.
@@ -564,19 +602,33 @@ app.post("/agent/policy", async (req, res) => {
   }
   const recipientId = (req.query.recipient_id as string) || "rosa";
   setCurrentRecipient(recipientId);
-  setSpendingPolicy(result.data);
+  // #1233: limit increases wait for owner approval; the rest applies now.
+  const outcome = submitPolicyUpdate(delegationStore, policyAccess, {
+    recipientId,
+    proposed: result.data,
+    requestedBy: typeof req.body?.caregiver_id === "string" ? req.body.caregiver_id : "api",
+  });
+  if (!outcome.ok) {
+    return res.status(400).json({ error: "Invalid policy", message: outcome.error });
+  }
   await appendAuditEntry({
     event: "agent.policy_updated",
     actor: "api",
     details: {
       ip: req.ip,
       userAgent: req.headers["user-agent"],
-      policy: result.data,
+      policy: outcome.applied,
       recipientId,
+      ...(outcome.pendingApproval ? { pendingApprovalId: outcome.pendingApproval.id } : {}),
     },
   });
   broadcastSSE("spending", getSpendingSummary());
-  res.json({ success: true, policy: result.data, recipientId });
+  res.status(outcome.pendingApproval ? 202 : 200).json({
+    success: true,
+    policy: outcome.applied,
+    recipientId,
+    pendingApproval: outcome.pendingApproval,
+  });
 });
 // #1238: replay recent payments through check_spending_policy's rules under
 // the proposed policy so the dashboard can preview a change before saving it.

@@ -12,6 +12,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { fileURLToPath } from "url";
+import type { ActionReasoning } from "./action-reasoning.ts";
 
 export type PauseReason =
   | "manual"
@@ -94,4 +95,62 @@ export function resumeAgent(): AgentState {
 
 export function isPaused(): boolean {
   return paused;
+}
+
+// ---------------------------------------------------------------------------
+// Action reasoning traces (#1235)
+// ---------------------------------------------------------------------------
+//
+// A plain-language "why did this happen?" summary per significant agent
+// action (see shared/action-reasoning.ts), persisted to
+// DATA_DIR/action-reasoning.json so the dashboard can show it for past
+// actions too. Entries are redacted before they get here.
+
+/** History kept on disk; older entries are dropped first. */
+export const MAX_ACTION_REASONING_ENTRIES = 500;
+
+function getReasoningFile(): string {
+  return getStateFile().replace(/agent-state\.json$/, "action-reasoning.json");
+}
+
+function loadReasoning(): ActionReasoning[] {
+  try {
+    const file = getReasoningFile();
+    if (!existsSync(file)) return [];
+    const parsed = JSON.parse(readFileSync(file, "utf-8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Appends entries (oldest first on disk) and trims to the newest MAX_ACTION_REASONING_ENTRIES. */
+export function recordActionReasoning(entries: readonly ActionReasoning[]): void {
+  if (entries.length === 0) return;
+  const all = [...loadReasoning(), ...entries].slice(-MAX_ACTION_REASONING_ENTRIES);
+  try {
+    const file = getReasoningFile();
+    const tmp = `${file}.tmp-${Date.now()}`;
+    writeFileSync(tmp, JSON.stringify(all), "utf-8");
+    renameSync(tmp, file);
+  } catch {
+    // Non-fatal: the action itself already happened; only its explanation is lost.
+  }
+}
+
+/** Newest first, optionally only the trace for one transaction or tool call. */
+export function listActionReasoning(options: {
+  limit?: number;
+  transactionId?: string;
+  toolCallId?: string;
+} = {}): ActionReasoning[] {
+  const limit = Math.min(Math.max(1, options.limit ?? 50), MAX_ACTION_REASONING_ENTRIES);
+  return loadReasoning()
+    .reverse()
+    .filter(
+      (entry) =>
+        (!options.transactionId || entry.transactionId === options.transactionId) &&
+        (!options.toolCallId || entry.toolCallId === options.toolCallId),
+    )
+    .slice(0, limit);
 }

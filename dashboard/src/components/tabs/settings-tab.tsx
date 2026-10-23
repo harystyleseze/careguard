@@ -11,6 +11,7 @@ import type { AgentInfo } from "../types";
 import { NETWORK_LABEL } from "../../lib/stellar-network";
 import { getTranslations, type Locale } from "../../i18n";
 import { AGENT_URL } from "../../lib/agent-url";
+import { InsuranceNetworkEditor } from "../insurance-network-editor";
 import { agentFetch } from "../../lib/agent-fetch";
 import { LinkedCaregiversSection } from "../linked-caregivers-section";
 import {
@@ -486,6 +487,12 @@ export function SettingsTab({
       </div>
 
       {/* Recipient Allergies & Adverse Reactions (Issue #1230) */}
+      <InsuranceNetworkEditor
+        recipientId={selectedRecipientId || "rosa"}
+        caregiverName={caregiver.name}
+        defaultPlan={recipient.insurance}
+      />
+
       <div className="bg-white rounded-xl border border-slate-200 p-6">
         <div className="flex items-center justify-between mb-4">
           <div>

@@ -72,6 +72,8 @@ export const TransactionSchema = z.object({
   category: z.string(),
   // Optional caregiver-authored memo for record-keeping (Feature: payment memo).
   memo: z.string().optional(),
+  // Stellar network fee charged, in stroops (#1232).
+  networkFeeStroops: z.number().optional(),
   // Medication order fulfilment lifecycle (Feature: order tracking).
   order_status: z.enum(["submitted", "ready", "picked_up"]).optional(),
   order_status_history: z
@@ -118,6 +120,26 @@ export const CategoryTotalsSchema = z.object({
   count: z.number(),
 });
 
+// #1232: cumulative Stellar network fees for one range (shared/stellar-fee.ts).
+export const NetworkFeeSummarySchema = z.object({
+  totalStroops: z.number(),
+  totalXlm: z.number(),
+  count: z.number(),
+  averageStroops: z.number(),
+  maxStroops: z.number(),
+  typicalStroops: z.number(),
+  trend: z.array(
+    z.object({
+      date: z.string(),
+      stroops: z.number(),
+      count: z.number(),
+      averageStroops: z.number(),
+      spike: z.boolean(),
+    }),
+  ),
+  spikeDays: z.number(),
+});
+
 export const SpendingDataSchema = z.object({
   policy: z.object({
     dailyLimit: z.number(),
@@ -148,10 +170,19 @@ export const SpendingDataSchema = z.object({
       all: CategoryTotalsSchema,
     })
     .optional(),
+  // #1232: network fees per range, separate from medication/bill spend.
+  networkFees: z
+    .object({
+      "7d": NetworkFeeSummarySchema,
+      "30d": NetworkFeeSummarySchema,
+      all: NetworkFeeSummarySchema,
+    })
+    .optional(),
 });
 
 export type SpendingData = z.infer<typeof SpendingDataSchema>;
 export type CategoryTotals = z.infer<typeof CategoryTotalsSchema>;
+export type NetworkFeeSummary = z.infer<typeof NetworkFeeSummarySchema>;
 
 export type RecipientProfile = {
   name: string;
