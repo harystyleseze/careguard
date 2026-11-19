@@ -81,12 +81,10 @@ export { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds };
 import { appendAuditEntry } from "../shared/audit-log.ts";
 import { notify } from "../shared/notifications.ts";
 import { createOrderRecord } from "../shared/order-status.ts";
-import {
-  getAdherenceSummary,
-  getPendingAdherences,
-  getFlaggedAdherences,
-  confirmAdherence,
-} from "../shared/adherence.ts";
+export {
+  getAdherenceStatus,
+  confirmAdherenceReminder,
+} from "./adherence-tools.ts";
 import {
   x402SettlementsTotal,
   paymentsUsdcTotal,
@@ -3375,22 +3373,6 @@ export function generateDisputeLetter(
   saveDisputeRecord(record, recipientId);
 
   return { pdf, emailBody, template: templateKey, disputeRecord: record };
-}
-
-// --- Tool: Adherence status (Issue #264) ---
-export async function getAdherenceStatus(recipientId: string = "rosa") {
-  const summary = await getAdherenceSummary(recipientId);
-  const pending = await getPendingAdherences(recipientId);
-  const flagged = await getFlaggedAdherences(recipientId);
-  return {
-    ...summary,
-    pendingReminders: summary.pendingNow.length,
-    flaggedReminders: summary.flaggedRecords,
-  };
-}
-
-export async function confirmAdherenceReminder(recordId: string) {
-  return { success: await confirmAdherence(recordId) };
 }
 
 const recipientIdSchema = z.string().min(1).optional();
