@@ -39,6 +39,7 @@ import {
   promises as fsPromises,
 } from "fs";
 import { z } from "zod";
+import { strictInputSchema } from "./tool-schemas.ts";
 import { logger } from "../shared/logger.ts";
 import {
   resolveStellarNetwork,
@@ -1032,6 +1033,98 @@ export function loadSpending(recipientId?: string): SpendingTracker {
   const data = readSpendingFromDisk(resolvedRecipientId);
   spendingCache.set(resolvedRecipientId, { data, loadedAt: now });
   return data;
+}
+
+/**
+ * Non-blocking spending loader for request and scheduled-job paths.
+ *
+ * The synchronous loader remains available for startup and backwards
+ * compatibility while callers are migrated. Cache hits do not touch disk;
+ * cache misses use fs/promises for every snapshot, log, and legacy read.
+ */
+export async function loadSpendingAsync(recipientId?: string): Promise<SpendingTracker> {
+  const resolvedRecipientId = recipientId || currentRecipientId;
+  const cached = spendingCache.get(resolvedRecipientId);
+  const now = Date.now();
+
+  if (cached && now - cached.loadedAt < SPENDING_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  const snapshotFile = getSnapshotFile(resolvedRecipientId);
+  const logFile = getTransactionLogFile(resolvedRecipientId);
+  const legacyFile = getSpendingFile(resolvedRecipientId);
+
+  if (existsSync(snapshotFile)) {
+    try {
+      const parsed = JSON.parse(await fsPromises.readFile(snapshotFile, "utf-8"));
+      const validated = SpendingTrackerSchema.safeParse(parsed);
+      if (!validated.success) {
+        throw new Error("Snapshot schema validation failed");
+      }
+
+      const snapshot = validated.data as unknown as SpendingTracker;
+      const snapshotTxCount = parsed._snapshotTxCount ?? snapshot.transactions.length;
+      const tailTxs: Transaction[] = [];
+      if (existsSync(logFile)) {
+        const lines = (await fsPromises.readFile(logFile, "utf-8"))
+          .split("\n")
+          .filter((line) => line.trim().length > 0);
+        for (let i = snapshotTxCount; i < lines.length; i++) {
+          try {
+            tailTxs.push(JSON.parse(lines[i]!) as Transaction);
+          } catch {
+            logger.warn({ line: i }, "[Persistence] Skipping malformed JSONL line");
+          }
+        }
+      }
+
+      const normalized = normalizeTransactionCategories(
+        {
+          medications: snapshot.medications,
+          bills: snapshot.bills,
+          serviceFees: snapshot.serviceFees,
+          transactions: [...snapshot.transactions, ...tailTxs],
+        },
+        resolvedRecipientId,
+      );
+      spendingCache.set(resolvedRecipientId, { data: normalized.data, loadedAt: now });
+      return normalized.data;
+    } catch (err: any) {
+      logger.warn(
+        { file: snapshotFile, error: err.message },
+        "[Persistence] Async snapshot load failed; falling back to legacy file",
+      );
+    }
+  }
+
+  if (!existsSync(legacyFile)) {
+    const empty = createEmptySpendingTracker();
+    spendingCache.set(resolvedRecipientId, { data: empty, loadedAt: now });
+    return empty;
+  }
+
+  try {
+    const parsed = JSON.parse(await fsPromises.readFile(legacyFile, "utf-8"));
+    const validated = SpendingTrackerSchema.safeParse(parsed);
+    if (!validated.success) {
+      throw new Error("Legacy spending schema validation failed");
+    }
+    const normalized = normalizeTransactionCategories(
+      validated.data as unknown as SpendingTracker,
+      resolvedRecipientId,
+    );
+    spendingCache.set(resolvedRecipientId, { data: normalized.data, loadedAt: now });
+    return normalized.data;
+  } catch (err: any) {
+    logger.error(
+      { file: legacyFile, error: err.message },
+      "[Persistence] Async spending load failed; starting fresh",
+    );
+    const empty = createEmptySpendingTracker();
+    spendingCache.set(resolvedRecipientId, { data: empty, loadedAt: now });
+    return empty;
+  }
 }
 
 /**
@@ -3513,16 +3606,6 @@ export function validateToolInput(
     .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
     .join("; ");
   throw new Error(`Invalid tool input for ${name}: ${details}`);
-}
-
-function strictInputSchema<
-  T extends {
-    type: "object";
-    properties: Record<string, unknown>;
-    required: string[];
-  },
->(schema: T): T & { additionalProperties: false } {
-  return { ...schema, additionalProperties: false };
 }
 
 // Claude API tool definitions

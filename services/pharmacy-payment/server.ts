@@ -48,7 +48,8 @@ if (!RECIPIENT) throw new Error("PHARMACY_1_PUBLIC_KEY required in .env");
 if (!MPP_SECRET_KEY) throw new Error("MPP_SECRET_KEY required in .env");
 
 // Order storage (persisted to file)
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, accessSync, constants as fsConstants } from "fs";
+import { existsSync, mkdirSync, accessSync, constants as fsConstants } from "fs";
+import { readFile, writeFile, rename, unlink } from "fs/promises";
 import lock from "proper-lockfile";
 
 const DATA_DIR = process.env.DATA_DIR || new URL("../../data", import.meta.url).pathname;
@@ -64,10 +65,10 @@ function createMppStore(filePath: string) {
   return storeFactory.fileSystem?.(filePath) ?? Store.memory();
 }
 
-function loadOrders(): any[] {
+async function loadOrders(): Promise<any[]> {
   if (!existsSync(ORDERS_FILE)) return [];
   try {
-    return JSON.parse(readFileSync(ORDERS_FILE, "utf-8"));
+    return JSON.parse(await readFile(ORDERS_FILE, "utf-8"));
   } catch (err: any) {
     logger.warn({ err: err.message }, 'Failed to parse orders file, starting with empty array');
     return [];
@@ -89,14 +90,14 @@ async function saveOrder(order: any) {
     release = await lock.lock(ORDERS_FILE, { retries: 10, stale: 5000 });
 
     // Safe read-modify-write within lock, using atomic writes
-    const orders = loadOrders();
+    const orders = await loadOrders();
     orders.push(order);
     const tempFile = `${ORDERS_FILE}.tmp-${Date.now()}`;
     try {
-      writeFileSync(tempFile, JSON.stringify(orders, null, 2), 'utf-8');
-      renameSync(tempFile, ORDERS_FILE);
+      await writeFile(tempFile, JSON.stringify(orders, null, 2), 'utf-8');
+      await rename(tempFile, ORDERS_FILE);
     } catch (err) {
-      try { writeFileSync(ORDERS_FILE, '', 'utf-8'); } catch {}
+      try { await unlink(tempFile); } catch {}
       throw err;
     }
 
@@ -133,8 +134,12 @@ app.get("/", (_req, res) => {
   });
 });
 
-app.get("/pharmacy/orders", (_req, res) => {
-  res.json({ orders: loadOrders() });
+app.get("/pharmacy/orders", async (_req, res, next) => {
+  try {
+    res.json({ orders: await loadOrders() });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // GET /metrics endpoint for Prometheus instrumentation (Issue #1015)

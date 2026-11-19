@@ -45,8 +45,8 @@ import {
   runPriceWatch,
   getHandoffNotes,
   TOOL_DEFINITIONS,
-  validateToolInput,
 } from "./tools.ts";
+import { validateToolInput } from "./tool-schemas.ts";
 import {
   fetchToolResult,
   serializeToolResultForPrompt,
