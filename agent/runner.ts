@@ -38,14 +38,13 @@ import {
   resetSpendingTracker,
   saveSpending,
   generateDisputeLetter,
-  getAdherenceStatus,
-  confirmAdherenceReminder,
   setCurrentRecipient,
   checkRecipientAllergies,
   runPriceWatch,
   getHandoffNotes,
   TOOL_DEFINITIONS,
 } from "./tools.ts";
+import { getAdherenceStatus, confirmAdherenceReminder } from "./adherence-tools.ts";
 import { validateToolInput } from "./tool-schemas.ts";
 import {
   fetchToolResult,
