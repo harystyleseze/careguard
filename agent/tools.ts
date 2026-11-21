@@ -27,8 +27,9 @@
  */
 
 import "dotenv/config";
-import { fileURLToPath } from "url";
 import { dirname } from "path";
+import { AsyncMutex } from "../shared/async-mutex.ts";
+import { getDataDir as resolveDataDir, getRecipientDir as resolveRecipientDir, getRecipientFile } from "./recipient-paths.ts";
 import {
   readFileSync,
   writeFileSync,
@@ -586,10 +587,8 @@ export function getMppClient(): MppClientInstance {
 }
 
 // --- Per-recipient data directories (Issue #261) ---
-const DATA_DIR =
-  process.env.DATA_DIR || fileURLToPath(new URL("../data", import.meta.url));
 export function getDataDir(): string {
-  return process.env.DATA_DIR || new URL("../data", import.meta.url).pathname;
+  return resolveDataDir();
 }
 
 let currentRecipientId = "rosa";
@@ -638,27 +637,27 @@ export function getCurrentRecipient() {
 }
 
 function getRecipientDir(recipientId: string): string {
-  return `${getDataDir()}/recipients/${recipientId}`;
+  return resolveRecipientDir(recipientId);
 }
 function getSpendingFile(recipientId?: string): string {
-  return `${getRecipientDir(recipientId || currentRecipientId)}/spending.json`;
+  return getRecipientFile(recipientId || currentRecipientId, "spending.json");
 }
 /** Append-only JSONL log — one line per transaction (Issue #205). */
 function getTransactionLogFile(recipientId?: string): string {
-  return `${getRecipientDir(recipientId || currentRecipientId)}/transactions.jsonl`;
+  return getRecipientFile(recipientId || currentRecipientId, "transactions.jsonl");
 }
 /** Periodic compaction snapshot written every SNAPSHOT_INTERVAL transactions (Issue #205). */
 function getSnapshotFile(recipientId?: string): string {
-  return `${getRecipientDir(recipientId || currentRecipientId)}/spending.snapshot.json`;
+  return getRecipientFile(recipientId || currentRecipientId, "spending.snapshot.json");
 }
 function getPolicyFile(recipientId?: string): string {
-  return `${getRecipientDir(recipientId || currentRecipientId)}/policy.json`;
+  return getRecipientFile(recipientId || currentRecipientId, "policy.json");
 }
 function getOrdersFile(recipientId?: string): string {
-  return `${getRecipientDir(recipientId || currentRecipientId)}/orders.json`;
+  return getRecipientFile(recipientId || currentRecipientId, "orders.json");
 }
 function getDisputesFile(recipientId?: string): string {
-  return `${getRecipientDir(recipientId || currentRecipientId)}/disputes.json`;
+  return getRecipientFile(recipientId || currentRecipientId, "disputes.json");
 }
 
 // Migrate legacy flat files to per-recipient structure (one-time)
@@ -1207,27 +1206,6 @@ let spendingTracker = loadSpending();
 // Cross-process: if you run multiple server replicas sharing the same data
 //   directory, wrap the spending file read-modify-write with proper-lockfile
 //   (already a dependency) instead of this in-memory mutex.
-class AsyncMutex {
-  private _locked = false;
-  private _queue: Array<() => void> = [];
-
-  acquire(): Promise<() => void> {
-    return new Promise((resolve) => {
-      const release = () => {
-        const next = this._queue.shift();
-        if (next) next();
-        else this._locked = false;
-      };
-      if (this._locked) {
-        this._queue.push(() => resolve(release));
-      } else {
-        this._locked = true;
-        resolve(release);
-      }
-    });
-  }
-}
-
 const _budgetMutexes = new Map<string, AsyncMutex>();
 function getBudgetMutex(recipientId: string): AsyncMutex {
   let m = _budgetMutexes.get(recipientId);
