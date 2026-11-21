@@ -27,8 +27,9 @@
  */
 
 import "dotenv/config";
-import { fileURLToPath } from "url";
 import { dirname } from "path";
+import { AsyncMutex } from "../shared/async-mutex.ts";
+import { getDataDir as resolveDataDir, getRecipientDir as resolveRecipientDir, getRecipientFile } from "./recipient-paths.ts";
 import {
   readFileSync,
   writeFileSync,
@@ -39,6 +40,7 @@ import {
   promises as fsPromises,
 } from "fs";
 import { z } from "zod";
+import { strictInputSchema } from "./tool-schemas.ts";
 import { logger } from "../shared/logger.ts";
 import {
   resolveStellarNetwork,
@@ -583,10 +585,8 @@ export function getMppClient(): MppClientInstance {
 }
 
 // --- Per-recipient data directories (Issue #261) ---
-const DATA_DIR =
-  process.env.DATA_DIR || fileURLToPath(new URL("../data", import.meta.url));
 export function getDataDir(): string {
-  return process.env.DATA_DIR || new URL("../data", import.meta.url).pathname;
+  return resolveDataDir();
 }
 
 let currentRecipientId = "rosa";
@@ -635,27 +635,27 @@ export function getCurrentRecipient() {
 }
 
 function getRecipientDir(recipientId: string): string {
-  return `${getDataDir()}/recipients/${recipientId}`;
+  return resolveRecipientDir(recipientId);
 }
 function getSpendingFile(recipientId?: string): string {
-  return `${getRecipientDir(recipientId || currentRecipientId)}/spending.json`;
+  return getRecipientFile(recipientId || currentRecipientId, "spending.json");
 }
 /** Append-only JSONL log — one line per transaction (Issue #205). */
 function getTransactionLogFile(recipientId?: string): string {
-  return `${getRecipientDir(recipientId || currentRecipientId)}/transactions.jsonl`;
+  return getRecipientFile(recipientId || currentRecipientId, "transactions.jsonl");
 }
 /** Periodic compaction snapshot written every SNAPSHOT_INTERVAL transactions (Issue #205). */
 function getSnapshotFile(recipientId?: string): string {
-  return `${getRecipientDir(recipientId || currentRecipientId)}/spending.snapshot.json`;
+  return getRecipientFile(recipientId || currentRecipientId, "spending.snapshot.json");
 }
 function getPolicyFile(recipientId?: string): string {
-  return `${getRecipientDir(recipientId || currentRecipientId)}/policy.json`;
+  return getRecipientFile(recipientId || currentRecipientId, "policy.json");
 }
 function getOrdersFile(recipientId?: string): string {
-  return `${getRecipientDir(recipientId || currentRecipientId)}/orders.json`;
+  return getRecipientFile(recipientId || currentRecipientId, "orders.json");
 }
 function getDisputesFile(recipientId?: string): string {
-  return `${getRecipientDir(recipientId || currentRecipientId)}/disputes.json`;
+  return getRecipientFile(recipientId || currentRecipientId, "disputes.json");
 }
 
 // Migrate legacy flat files to per-recipient structure (one-time)
@@ -1033,6 +1033,98 @@ export function loadSpending(recipientId?: string): SpendingTracker {
 }
 
 /**
+ * Non-blocking spending loader for request and scheduled-job paths.
+ *
+ * The synchronous loader remains available for startup and backwards
+ * compatibility while callers are migrated. Cache hits do not touch disk;
+ * cache misses use fs/promises for every snapshot, log, and legacy read.
+ */
+export async function loadSpendingAsync(recipientId?: string): Promise<SpendingTracker> {
+  const resolvedRecipientId = recipientId || currentRecipientId;
+  const cached = spendingCache.get(resolvedRecipientId);
+  const now = Date.now();
+
+  if (cached && now - cached.loadedAt < SPENDING_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  const snapshotFile = getSnapshotFile(resolvedRecipientId);
+  const logFile = getTransactionLogFile(resolvedRecipientId);
+  const legacyFile = getSpendingFile(resolvedRecipientId);
+
+  if (existsSync(snapshotFile)) {
+    try {
+      const parsed = JSON.parse(await fsPromises.readFile(snapshotFile, "utf-8"));
+      const validated = SpendingTrackerSchema.safeParse(parsed);
+      if (!validated.success) {
+        throw new Error("Snapshot schema validation failed");
+      }
+
+      const snapshot = validated.data as unknown as SpendingTracker;
+      const snapshotTxCount = parsed._snapshotTxCount ?? snapshot.transactions.length;
+      const tailTxs: Transaction[] = [];
+      if (existsSync(logFile)) {
+        const lines = (await fsPromises.readFile(logFile, "utf-8"))
+          .split("\n")
+          .filter((line) => line.trim().length > 0);
+        for (let i = snapshotTxCount; i < lines.length; i++) {
+          try {
+            tailTxs.push(JSON.parse(lines[i]!) as Transaction);
+          } catch {
+            logger.warn({ line: i }, "[Persistence] Skipping malformed JSONL line");
+          }
+        }
+      }
+
+      const normalized = normalizeTransactionCategories(
+        {
+          medications: snapshot.medications,
+          bills: snapshot.bills,
+          serviceFees: snapshot.serviceFees,
+          transactions: [...snapshot.transactions, ...tailTxs],
+        },
+        resolvedRecipientId,
+      );
+      spendingCache.set(resolvedRecipientId, { data: normalized.data, loadedAt: now });
+      return normalized.data;
+    } catch (err: any) {
+      logger.warn(
+        { file: snapshotFile, error: err.message },
+        "[Persistence] Async snapshot load failed; falling back to legacy file",
+      );
+    }
+  }
+
+  if (!existsSync(legacyFile)) {
+    const empty = createEmptySpendingTracker();
+    spendingCache.set(resolvedRecipientId, { data: empty, loadedAt: now });
+    return empty;
+  }
+
+  try {
+    const parsed = JSON.parse(await fsPromises.readFile(legacyFile, "utf-8"));
+    const validated = SpendingTrackerSchema.safeParse(parsed);
+    if (!validated.success) {
+      throw new Error("Legacy spending schema validation failed");
+    }
+    const normalized = normalizeTransactionCategories(
+      validated.data as unknown as SpendingTracker,
+      resolvedRecipientId,
+    );
+    spendingCache.set(resolvedRecipientId, { data: normalized.data, loadedAt: now });
+    return normalized.data;
+  } catch (err: any) {
+    logger.error(
+      { file: legacyFile, error: err.message },
+      "[Persistence] Async spending load failed; starting fresh",
+    );
+    const empty = createEmptySpendingTracker();
+    spendingCache.set(resolvedRecipientId, { data: empty, loadedAt: now });
+    return empty;
+  }
+}
+
+/**
  * Append a single transaction as one JSON line to transactions.jsonl (Issue #205).
  * This is O(1) per call — no full-file rewrite.
  * Also triggers compaction every SNAPSHOT_INTERVAL transactions.
@@ -1112,27 +1204,6 @@ let spendingTracker = loadSpending();
 // Cross-process: if you run multiple server replicas sharing the same data
 //   directory, wrap the spending file read-modify-write with proper-lockfile
 //   (already a dependency) instead of this in-memory mutex.
-class AsyncMutex {
-  private _locked = false;
-  private _queue: Array<() => void> = [];
-
-  acquire(): Promise<() => void> {
-    return new Promise((resolve) => {
-      const release = () => {
-        const next = this._queue.shift();
-        if (next) next();
-        else this._locked = false;
-      };
-      if (this._locked) {
-        this._queue.push(() => resolve(release));
-      } else {
-        this._locked = true;
-        resolve(release);
-      }
-    });
-  }
-}
-
 const _budgetMutexes = new Map<string, AsyncMutex>();
 function getBudgetMutex(recipientId: string): AsyncMutex {
   let m = _budgetMutexes.get(recipientId);
@@ -3495,16 +3566,6 @@ export function validateToolInput(
     .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
     .join("; ");
   throw new Error(`Invalid tool input for ${name}: ${details}`);
-}
-
-function strictInputSchema<
-  T extends {
-    type: "object";
-    properties: Record<string, unknown>;
-    required: string[];
-  },
->(schema: T): T & { additionalProperties: false } {
-  return { ...schema, additionalProperties: false };
 }
 
 // Claude API tool definitions

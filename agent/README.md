@@ -14,6 +14,14 @@ Every entry in `TOOL_DEFINITIONS` must use an object schema with `additionalProp
 
 Use empty `properties: {}` for no-argument tools. Do not add dummy fields such as `_unused`.
 
+## Modular Subsystems
+
+To maintain clarity and testability, core agent capabilities are organized into focused modules:
+- `agent/dispute-letter.ts`: Dispute letter formatting, templating, and audit record generation.
+- `agent/payment-execution.ts`: Payment execution, pending approvals, and cancellation control flows.
+- `agent/external-tools.ts`: Remote x402-metered tool wrappers (pharmacy pricing, bill audits, interactions).
+- `agent/spending-persistence.ts`: Atomic disk persistence, JSONL append logs, and snapshot rotation.
+
 ## Mock Network
 
 Set `MOCK_NETWORK=1` in tests to replace x402 and MPP payment calls with deterministic fake receipts. Mock network mode is for development and CI only; startup fails when `MOCK_NETWORK=1` and `NODE_ENV=production`.

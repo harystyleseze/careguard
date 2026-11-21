@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { comparePharmacyPrices, loadSpending } from "./tools.ts";
+import { comparePharmacyPrices, loadSpendingAsync } from "./tools.ts";
 import { notify } from "../shared/notifications.ts";
 import { logger } from "../shared/logger.ts";
 
@@ -77,7 +77,7 @@ export async function runPriceWatchForRecipient(
   zipCode?: string,
 ): Promise<PriceWatchResult> {
   logger.info({ recipientId }, "[price-watch] checking recurring medications for price drops");
-  const spending = loadSpending(recipientId);
+  const spending = await loadSpendingAsync(recipientId);
   const policy = spending.policy as any;
   const priceWatchConfig = policy?.priceWatch ?? {
     enabled: true,
