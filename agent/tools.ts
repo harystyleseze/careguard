@@ -61,6 +61,17 @@ import {
   Account,
 } from "@stellar/stellar-sdk";
 import {
+  type DisputeReasonTemplate,
+  inferDisputeTemplate,
+  formatDisputeLetter,
+} from "../shared/dispute-templates.ts";
+import {
+  getMedicationHistory,
+  recordDosageChange,
+  getActiveDosageAtTime,
+} from "../shared/medication-history.ts";
+import { getProviderBillHistoryStore } from "../services/bill-audit-api/history.ts";
+import {
   wrapFetchWithPayment,
   x402Client,
   decodePaymentResponseHeader,
@@ -72,7 +83,6 @@ import {
   TRANSACTION_CATEGORY,
   isTransactionCategory,
   normalizeTransactionCategory,
-  SpendingPolicySchema,
   type SpendingPolicy,
   type Transaction,
   STELLAR_MEMO_TEXT_MAX_BYTES,
@@ -105,6 +115,45 @@ import {
   createMockReceipt,
   isMockNetwork,
 } from "../shared/network-mode.ts";
+import { FETCH_TOOL_RESULT_MAX_LIMIT } from "./tool-result.ts";
+import {
+  isMultisigRequired,
+  createMultisigRequest,
+  loadMultisigConfig,
+  saveMultisigConfig,
+  loadMultisigRequests,
+  signAndSubmitMultisigRequest,
+  rejectMultisigRequest,
+} from "../shared/multisig.ts";
+import {
+  type MultisigConfig,
+  type MultisigPendingRequest,
+  type RecipientAllergy,
+} from "../shared/types.ts";
+import {
+  checkMedicationAllergies,
+  loadRecipientAllergies,
+  addRecipientAllergy,
+  removeRecipientAllergy,
+  type AllergyCheckResult,
+} from "../shared/allergies.ts";
+import {
+  runPriceWatchForRecipient,
+  type PriceWatchResult,
+} from "./price-watch.ts";
+import {
+  extractLineItemsFromBillImage,
+  type OcrExtractionResult,
+} from "../shared/bill-ocr.ts";
+import { redactPII } from "../shared/redact.ts";
+import {
+  DEFAULT_RECIPIENT_ID,
+  getCareRecipientsStore,
+} from "../services/care-recipients/db.ts";
+import {
+  HANDOFF_NOTES_TOOL_DEFAULT,
+  HANDOFF_NOTES_TOOL_MAX,
+} from "./tool-input-validation.ts";
 
 assertMockNetworkAllowed();
 
@@ -722,7 +771,7 @@ const SpendingTrackerSchema = z.object({
   // Accept both the legacy Transaction shape (timestamp/type/recipient/status)
   // and the upstream shape (createdAt/metadata). normalizeTransactionCategories
   // casts entries to Transaction after loading, so loose validation is intentional.
-  transactions: z.array(z.record(z.unknown())),
+  transactions: z.array(z.record(z.string(), z.unknown())),
   monthTotals: z
     .object({
       yearMonth: z.string(),
@@ -762,7 +811,7 @@ export const SpendingPolicySchema = z
       .max(10_000, "approvalThreshold cannot exceed $10,000"),
     holdTimeSeconds: z.number().min(0).max(86_400).default(0),
     timezone: z.string().optional(),
-    toolFees: z.record(z.number().min(0)).optional(),
+    toolFees: z.record(z.string(), z.number().min(0)).optional(),
     notifications: z
       .object({
         email: z.boolean(),
@@ -798,7 +847,7 @@ export const SpendingPolicySchema = z
 /** Default soft-warning threshold: warn at 80% of any budget. */
 export const DEFAULT_WARNING_THRESHOLD_PCT = 80;
 
-type SpendingPolicyInput = z.infer<typeof SpendingPolicySchema>;
+export type SpendingPolicyInput = z.input<typeof SpendingPolicySchema>;
 
 const SPENDING_CACHE_TTL_MS = 5000;
 /** Compact the JSONL log into a snapshot every this many transactions (Issue #205). */
@@ -917,7 +966,7 @@ function readSpendingFromDisk(recipientId?: string): SpendingTracker {
       const validated = SpendingTrackerSchema.safeParse(parsed);
       if (!validated.success) {
         logger.warn(
-          { file: snapshotFile, errors: validated.error.errors },
+          { file: snapshotFile, errors: validated.error.issues },
           "[Persistence] Snapshot schema invalid",
         );
         rotateCorruptedFile(snapshotFile);
@@ -990,7 +1039,7 @@ function readSpendingFromDisk(recipientId?: string): SpendingTracker {
     const validated = SpendingTrackerSchema.safeParse(parsed);
     if (!validated.success) {
       logger.error(
-        { file: legacyFile, errors: validated.error.errors },
+        { file: legacyFile, errors: validated.error.issues },
         "[Persistence] spending.json schema invalid",
       );
       const rotated = rotateCorruptedFile(legacyFile);
@@ -1261,6 +1310,23 @@ interface UpstreamService {
   envVar: string;
   baseUrl: string;
 }
+
+// x402 upstreams named in connection-error diagnostics (Issue #1062).
+const PHARMACY_UPSTREAM: UpstreamService = {
+  label: "Pharmacy API",
+  envVar: "PHARMACY_API_URL",
+  baseUrl: PHARMACY_API,
+};
+const BILL_AUDIT_UPSTREAM: UpstreamService = {
+  label: "Bill Audit API",
+  envVar: "BILL_AUDIT_API_URL",
+  baseUrl: BILL_AUDIT_API,
+};
+const DRUG_INTERACTION_UPSTREAM: UpstreamService = {
+  label: "Drug Interaction API",
+  envVar: "DRUG_INTERACTION_API_URL",
+  baseUrl: DRUG_INTERACTION_API,
+};
 
 /**
  * Translate a network-level fetch failure into an actionable error that names
@@ -1545,7 +1611,8 @@ export function getSpendingTracker(): any {
   // module-level `currentPolicy` so multi-instance deployments observe
   // updates made via the caregiver HTTP API.
   const policy = loadPolicy();
-  return { ...spendingTracker, policy };
+  (spendingTracker as any).policy = policy;
+  return spendingTracker;
 }
 export function resetSpendingTracker(recipientId?: string) {
   if (recipientId) {
@@ -1652,7 +1719,12 @@ export async function comparePharmacyPrices(
     );
   }
 
-  const data = await response.json();
+  let data: any;
+  try {
+    data = await response.json();
+  } catch (err) {
+    return { ok: false, reason: "MALFORMED_RESPONSE" };
+  }
   if (genericAlternatives.length > 0 && !data.genericAlternatives) {
     data.genericAlternatives = genericAlternatives;
     data.substitutionNote = 'Informational only: a generic equivalent may be available. This is not a medical recommendation.';
@@ -1794,16 +1866,16 @@ export async function auditBill(
           comparisonBasis = {
             priorBillsCount: hist.priorBillsCount,
             dateRange: hist.dateRange,
-            providerName: hist.providerName,
+            providerName: options.providerName || hist.providerId,
           };
           if (hist.isMaterialIncrease) {
             status = "flagged";
-            suggestedAmount = +hist.averageCharged.toFixed(2);
+            suggestedAmount = +hist.historicalAverage.toFixed(2);
             errorDescription = `Billed amount $${item.chargedAmount.toFixed(
               2,
-            )} is ${hist.percentIncrease.toFixed(
+            )} is ${hist.increasePercent.toFixed(
               1,
-            )}% higher than provider historical average of $${hist.averageCharged.toFixed(
+            )}% higher than provider historical average of $${hist.historicalAverage.toFixed(
               2,
             )} across ${hist.priorBillsCount} prior bills`;
           }
@@ -2035,9 +2107,10 @@ export async function checkDrugInteractions(
     severity: resolveInteractionSeverity(interaction.severity),
   }));
 
+  const severityWeights: Record<string, number> = { severe: 3, moderate: 2, mild: 1 };
   const highest = effectiveInteractions.reduce((max: string | null, current: any) => {
     if (!max) return current.severity;
-    return { severe: 3, moderate: 2, mild: 1 }[current.severity] > { severe: 3, moderate: 2, mild: 1 }[max] ? current.severity : max;
+    return (severityWeights[current.severity] || 0) > (severityWeights[max] || 0) ? current.severity : max;
   }, null as string | null);
 
   const decision = effectiveInteractions.length === 0 ? 'none' : shouldBlockInteraction(highest || 'mild', threshold) ? 'block' : 'warn';
@@ -2062,109 +2135,32 @@ export function checkSpendingPolicy(amount: number, category: PaymentCategory) {
   // Always load the latest policy from disk so multi-instance deployments
   // pick up caregiver updates performed via POST /agent/policy.
   const policy = loadPolicy();
+  const result = evaluateSpendingPolicy(policy, spendingTracker, amount, category);
+  if (!result.allowed) {
+    let reasonText = "Policy-blocked payment exceeds current budget limits.";
+    if (result.reason?.includes("monthly budget")) {
+      reasonText = `${category} payment exceeds the current monthly budget.`;
+    } else if (result.reason?.includes("daily limit")) {
+      reasonText = "Payment exceeds the current daily limit but is clinically time-sensitive.";
+    }
+    return {
+      ...result,
+      exceptionRequestable: true,
+      exceptionRequest: {
+        amount,
+        category,
+        reason: reasonText,
+      },
+    };
+  }
+
   const budget =
     category === TRANSACTION_CATEGORY.MEDICATIONS
       ? policy.medicationMonthlyBudget
       : policy.billMonthlyBudget;
-  const currentSpending =
-    category === TRANSACTION_CATEGORY.MEDICATIONS
-      ? spendingTracker.medications
-      : spendingTracker.bills;
-  const remaining = roundBudget(budget - currentSpending);
-  const totalMonthlySpending =
-    spendingTracker.medications +
-    spendingTracker.bills +
-    spendingTracker.serviceFees;
-  const globalRemaining = roundBudget(
-    policy.monthlyLimit - totalMonthlySpending,
-  );
-
-  // Compute today's spend in this category up-front so every return path can
-  // report the remaining daily budget to the caller (Issue #160). Use the
-  // policy's per-recipient timezone if set; fall back to the global
-  // SPENDING_TIMEZONE env var so caregivers in non-UTC locales see the correct
-  // "today" boundary for their wall clock (Issue #207).
-  const effectiveTz = policy.timezone ?? SPENDING_TIMEZONE;
-  const { dayStart, dayEnd } = getLocalDayBounds(effectiveTz);
-  const dayStartMs = dayStart.getTime();
-  const dayEndMs = dayEnd.getTime();
-  const totalToday = spendingTracker.transactions
-    .filter((t) => {
-      const txTimestamp = new Date(t.timestamp).getTime();
-      return (
-        Number.isFinite(txTimestamp) &&
-        txTimestamp >= dayStartMs &&
-        txTimestamp < dayEndMs &&
-        t.category === category
-      );
-    })
-    .reduce((sum, t) => sum + t.amount, 0);
-  const dailyRemaining = roundBudget(policy.dailyLimit - totalToday);
-  // monthlyRemaining is the budget still available for this category this month.
-  const monthlyRemaining = remaining;
-
-  if (amount > globalRemaining) {
-    return {
-      allowed: false,
-      reason: `Payment of $${amount.toFixed(2)} would exceed overall monthly limit. Monthly limit: $${policy.monthlyLimit}, spent: $${totalMonthlySpending.toFixed(2)}, remaining: $${globalRemaining.toFixed(2)}`,
-      requiresApproval: false,
-      currentSpending,
-      budgetRemaining: remaining,
-      globalBudgetRemaining: globalRemaining,
-      dailyRemaining,
-      monthlyRemaining,
-      exceptionRequestable: true,
-      exceptionRequest: {
-        amount,
-        category,
-        reason: "Policy-blocked payment exceeds current budget limits.",
-      },
-    };
-  }
-
-  if (amount > remaining) {
-    return {
-      allowed: false,
-      reason: `Payment of $${amount.toFixed(2)} exceeds ${category} monthly budget. Budget: $${budget}, spent: $${currentSpending.toFixed(2)}, remaining: $${remaining.toFixed(2)}`,
-      requiresApproval: false,
-      currentSpending,
-      budgetRemaining: remaining,
-      dailyRemaining,
-      monthlyRemaining,
-      exceptionRequestable: true,
-      exceptionRequest: {
-        amount,
-        category,
-        reason: `${category} payment exceeds the current monthly budget.`,
-      },
-    };
-  }
-
-  if (totalToday + amount > policy.dailyLimit) {
-    return {
-      allowed: false,
-      reason: `Payment of $${amount.toFixed(2)} would exceed daily limit of $${policy.dailyLimit}. Already spent today: $${totalToday.toFixed(2)}`,
-      requiresApproval: false,
-      currentSpending,
-      budgetRemaining: remaining,
-      dailyRemaining,
-      monthlyRemaining,
-      exceptionRequestable: true,
-      exceptionRequest: {
-        amount,
-        category,
-        reason: "Payment exceeds the current daily limit but is clinically time-sensitive.",
-      },
-    };
-  }
-
-  // Soft-warning threshold check: fires a notification when spending will cross
-  // warningThresholdPct of the category budget after this payment, but does NOT
-  // block the transaction. Logged distinctly from a policy block via the
-  // 'policy.budget_warning' audit event so caregivers can filter for soft vs hard.
   const thresholdPct =
     policy.warningThresholdPct ?? DEFAULT_WARNING_THRESHOLD_PCT;
-  const projectedSpend = currentSpending + amount;
+  const projectedSpend = result.currentSpending + amount;
   const projectedPct = budget > 0 ? (projectedSpend / budget) * 100 : 0;
   if (projectedPct >= thresholdPct) {
     const warningMsg = `Spending on ${category} will reach ${projectedPct.toFixed(0)}% of the $${budget} budget after this payment ($${projectedSpend.toFixed(2)} of $${budget}).`;
@@ -2174,7 +2170,7 @@ export function checkSpendingPolicy(amount: number, category: PaymentCategory) {
       details: {
         category,
         amount,
-        currentSpending,
+        currentSpending: result.currentSpending,
         projectedSpend: +projectedSpend.toFixed(2),
         budget,
         thresholdPct,
@@ -2199,12 +2195,7 @@ export function checkSpendingPolicy(amount: number, category: PaymentCategory) {
   }
 
   return {
-    allowed: true,
-    requiresApproval: amount >= policy.approvalThreshold,
-    currentSpending,
-    budgetRemaining: roundBudget(remaining - amount),
-    dailyRemaining,
-    monthlyRemaining,
+    ...result,
     ...(projectedPct >= thresholdPct
       ? {
           budgetWarning: true,
@@ -2213,6 +2204,253 @@ export function checkSpendingPolicy(amount: number, category: PaymentCategory) {
         }
       : {}),
   };
+}
+
+/** Month-to-date spend a policy decision is evaluated against. */
+export interface SpendingPolicyState {
+  medications: number;
+  bills: number;
+  serviceFees: number;
+  transactions: ReadonlyArray<Pick<Transaction, "timestamp" | "amount" | "category">>;
+}
+
+/**
+ * Pure policy decision behind check_spending_policy. Split out so the
+ * dashboard's policy-change preview (#1238) can replay historical
+ * transactions through the exact same rules instead of duplicating them.
+ * `now` picks the "today" window used for the daily limit.
+ */
+export function evaluateSpendingPolicy(
+  policy: SpendingPolicy,
+  state: SpendingPolicyState,
+  amount: number,
+  category: PaymentCategory,
+  now: Date = new Date(),
+) {
+  const budget =
+    category === TRANSACTION_CATEGORY.MEDICATIONS
+      ? policy.medicationMonthlyBudget
+      : policy.billMonthlyBudget;
+  const currentSpending =
+    category === TRANSACTION_CATEGORY.MEDICATIONS
+      ? state.medications
+      : state.bills;
+  const remaining = roundBudget(budget - currentSpending);
+  const totalMonthlySpending =
+    state.medications +
+    state.bills +
+    state.serviceFees;
+  const globalRemaining = roundBudget(
+    policy.monthlyLimit - totalMonthlySpending,
+  );
+
+  const effectiveTz = policy.timezone ?? SPENDING_TIMEZONE;
+  const { dayStart, dayEnd } = getLocalDayBounds(effectiveTz, now);
+  const dayStartMs = dayStart.getTime();
+  const dayEndMs = dayEnd.getTime();
+  const totalToday = state.transactions
+    .filter((t) => {
+      const txTimestamp = new Date(t.timestamp).getTime();
+      return (
+        Number.isFinite(txTimestamp) &&
+        txTimestamp >= dayStartMs &&
+        txTimestamp < dayEndMs &&
+        t.category === category
+      );
+    })
+    .reduce((sum, t) => sum + t.amount, 0);
+  const dailyRemaining = roundBudget(policy.dailyLimit - totalToday);
+  const monthlyRemaining = remaining;
+
+  if (amount > globalRemaining) {
+    return {
+      allowed: false,
+      reason: `Payment of $${amount.toFixed(2)} would exceed overall monthly limit. Monthly limit: $${policy.monthlyLimit}, spent: $${totalMonthlySpending.toFixed(2)}, remaining: $${globalRemaining.toFixed(2)}`,
+      requiresApproval: false,
+      currentSpending,
+      budgetRemaining: remaining,
+      globalBudgetRemaining: globalRemaining,
+      dailyRemaining,
+      monthlyRemaining,
+    };
+  }
+
+  if (amount > remaining) {
+    return {
+      allowed: false,
+      reason: `Payment of $${amount.toFixed(2)} exceeds ${category} monthly budget. Budget: $${budget}, spent: $${currentSpending.toFixed(2)}, remaining: $${remaining.toFixed(2)}`,
+      requiresApproval: false,
+      currentSpending,
+      budgetRemaining: remaining,
+      dailyRemaining,
+      monthlyRemaining,
+    };
+  }
+
+  if (totalToday + amount > policy.dailyLimit) {
+    return {
+      allowed: false,
+      reason: `Payment of $${amount.toFixed(2)} would exceed daily limit of $${policy.dailyLimit}. Already spent today: $${totalToday.toFixed(2)}`,
+      requiresApproval: false,
+      currentSpending,
+      budgetRemaining: remaining,
+      dailyRemaining,
+      monthlyRemaining,
+    };
+  }
+
+  return {
+    allowed: true,
+    requiresApproval: amount >= policy.approvalThreshold,
+    currentSpending,
+    budgetRemaining: roundBudget(remaining - amount),
+    dailyRemaining,
+    monthlyRemaining,
+  };
+}
+
+export type PolicyOutcome = "allowed" | "requires_approval" | "blocked";
+
+export interface PolicyImpactEntry {
+  id: string;
+  timestamp: string;
+  description: string;
+  amount: number;
+  category: PaymentCategory;
+  before: PolicyOutcome;
+  after: PolicyOutcome;
+  changed: boolean;
+}
+
+export interface PolicyImpact {
+  /** How many recent payments were replayed. */
+  evaluated: number;
+  /** Payments the current policy allowed that the proposed one would block. */
+  newlyBlocked: number;
+  /** Payments the current policy blocked that the proposed one would allow. */
+  newlyAllowed: number;
+  /** Payments whose approval requirement flips either way. */
+  approvalChanged: number;
+  entries: PolicyImpactEntry[];
+}
+
+function policyOutcome(
+  result: ReturnType<typeof evaluateSpendingPolicy>,
+): PolicyOutcome {
+  if (!result.allowed) return "blocked";
+  return result.requiresApproval ? "requires_approval" : "allowed";
+}
+
+function yearMonthOf(date: Date, tz: string): string {
+  return getLocalDateStr(tz, date).slice(0, 7);
+}
+
+/**
+ * Estimates how a proposed policy would have treated the recipient's most
+ * recent medication/bill payments (#1238). Each payment is re-evaluated with
+ * evaluateSpendingPolicy() against the month-to-date and same-day spend that
+ * preceded it, once under the current policy and once under the proposed one.
+ * Prior spend is taken as it actually happened, so the estimate answers "would
+ * this payment have gone through?" rather than modelling cascading effects.
+ */
+export function simulatePolicyImpact(
+  currentPolicy: SpendingPolicy,
+  proposedPolicy: SpendingPolicy,
+  transactions: ReadonlyArray<Transaction>,
+  limit = 10,
+): PolicyImpact {
+  const tz = currentPolicy.timezone ?? SPENDING_TIMEZONE;
+  const spent = transactions
+    .filter((t) => {
+      const ts = new Date(t.timestamp).getTime();
+      return (
+        Number.isFinite(ts) &&
+        (t.status === "completed" || t.status === "approved") &&
+        Number.isFinite(t.amount)
+      );
+    })
+    .sort(
+      (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+    );
+
+  const payments = spent
+    .filter(
+      (t) =>
+        t.category === TRANSACTION_CATEGORY.MEDICATIONS ||
+        t.category === TRANSACTION_CATEGORY.BILLS,
+    )
+    .slice(-limit);
+
+  const entries = payments.map((tx): PolicyImpactEntry => {
+    const at = new Date(tx.timestamp);
+    const atMs = at.getTime();
+    const month = yearMonthOf(at, tz);
+    const prior = spent.filter((t) => {
+      const ts = new Date(t.timestamp).getTime();
+      return t !== tx && ts <= atMs && yearMonthOf(new Date(ts), tz) === month;
+    });
+    const sum = (category: string) =>
+      prior
+        .filter((t) => t.category === category)
+        .reduce((s, t) => s + t.amount, 0);
+    const state: SpendingPolicyState = {
+      medications: sum(TRANSACTION_CATEGORY.MEDICATIONS),
+      bills: sum(TRANSACTION_CATEGORY.BILLS),
+      serviceFees: sum(TRANSACTION_CATEGORY.SERVICE_FEES),
+      transactions: prior,
+    };
+    const category = tx.category as PaymentCategory;
+    const before = policyOutcome(
+      evaluateSpendingPolicy(currentPolicy, state, tx.amount, category, at),
+    );
+    const after = policyOutcome(
+      evaluateSpendingPolicy(proposedPolicy, state, tx.amount, category, at),
+    );
+    return {
+      id: tx.id,
+      timestamp: tx.timestamp,
+      description: tx.description,
+      amount: tx.amount,
+      category,
+      before,
+      after,
+      changed: before !== after,
+    };
+  });
+
+  return {
+    evaluated: entries.length,
+    newlyBlocked: entries.filter(
+      (e) => e.before !== "blocked" && e.after === "blocked",
+    ).length,
+    newlyAllowed: entries.filter(
+      (e) => e.before === "blocked" && e.after !== "blocked",
+    ).length,
+    approvalChanged: entries.filter(
+      (e) =>
+        e.before !== "blocked" &&
+        e.after !== "blocked" &&
+        e.before !== e.after,
+    ).length,
+    entries: entries.reverse(),
+  };
+}
+
+/** Preview of a proposed policy against the current recipient's history. */
+export function previewSpendingPolicy(
+  proposed: SpendingPolicyInput,
+  limit?: number,
+): PolicyImpact {
+  const current = loadPolicy();
+  const normalized: SpendingPolicy = { ...current, ...proposed } as SpendingPolicy;
+  assertValidSpendingPolicy(normalized);
+  return simulatePolicyImpact(
+    current,
+    normalized,
+    spendingTracker.transactions,
+    limit,
+  );
 }
 
 async function executeMedicationPayment(
@@ -2654,15 +2892,39 @@ export async function payForMedication(
       return {
         success: false,
         error: `REQUIRES CAREGIVER APPROVAL: ${amount.toFixed(2)} exceeds the ${currentPolicy.approvalThreshold} approval threshold.`,
-        transaction: tx,
+        transaction,
       };
     }
 
-    // Reserve the budget before releasing the mutex so no other concurrent call
-    // can observe the pre-payment balance and pass a check it should fail.
-    spendingTracker.medications += amount;
-  } finally {
-    release();
+    const reason = policyCheck.reason!.includes("daily")
+      ? "daily_limit"
+      : policyCheck.reason!.includes("overall monthly limit")
+        ? "monthly_limit"
+        : "budget";
+    policyBlocksTotal.inc({ reason });
+    paymentRejectedTotal.inc({ reason });
+
+    // Surface the full budget context so the LLM can decide whether to ask
+    // the caregiver for an override or pick a cheaper option (Issue #160).
+    const dailyRemaining = policyCheck.dailyRemaining ?? 0;
+    const monthlyRemaining = policyCheck.monthlyRemaining ?? 0;
+    const budgetContext = {
+      reason,
+      attempted: amount,
+      dailyRemaining,
+      monthlyRemaining,
+      suggestion:
+        `Relay this to the caregiver: the $${amount.toFixed(2)} payment was blocked by the spending policy. ` +
+        `Remaining budget is $${dailyRemaining.toFixed(2)} today and $${monthlyRemaining.toFixed(2)} this month for ${TRANSACTION_CATEGORY.MEDICATIONS}. ` +
+        `Ask them to approve a one-time override, or choose a cheaper option that fits the remaining budget.`,
+    };
+
+    return {
+      success: false,
+      error: `BLOCKED BY SPENDING POLICY: ${policyCheck.reason}`,
+      transaction,
+      budgetContext,
+    };
   }
 
   // Execute real MPP charge payment to pharmacy (outside the mutex — can be slow)
@@ -2762,40 +3024,6 @@ export async function payForMedication(
   }
 
   return { success: true, transaction: tx, ...(createdSplit ? { costSplit: createdSplit } : {}) };
-}
-
-// Helper: build, sign, and submit a single USDC payment so payBill can retry on tx_bad_seq
-async function buildAndSubmitUsdcPayment(
-  account: any,
-  recipientKey: string,
-  amount: number,
-): Promise<string> {
-  const usdcAsset = new Asset("USDC", USDC_ISSUER);
-  const stellarTx = new TransactionBuilder(account, {
-    fee: "100",
-    networkPassphrase: Networks.TESTNET,
-  })
-    .addOperation(
-      Operation.payment({
-        destination: recipientKey,
-        asset: usdcAsset,
-        amount: amount.toFixed(7),
-      }),
-    )
-    .setTimeout(30)
-    .build();
-  stellarTx.sign(agentKeypair);
-  const sigHint = stellarTx.signatures[0]?.hint();
-  if (!sigHint || !sigHint.equals(agentKeypair.signatureHint())) {
-    throw new Error(
-      `Signer mismatch: expected ${agentKeypair.publicKey()} — refusing to submit`,
-    );
-  }
-  console.log(
-    `  [Stellar] Signer verified: ${agentKeypair.publicKey().slice(0, 8)}...`,
-  );
-  const result = await horizonServer.submitTransaction(stellarTx);
-  return (result as any).hash;
 }
 
 // Helper: build, sign, and submit a single USDC payment so payBill can retry on tx_bad_seq
@@ -3402,23 +3630,9 @@ export function generateDisputeLetter(
         description: item.description,
       })),
     );
-    if (item.suggestedAmount !== undefined) {
-      letterLines.push(
-        `    Fair market rate: $${item.suggestedAmount.toFixed(2)}`,
-      );
-    }
-    if (item.errorDescription) {
-      letterLines.push(`    Issue: ${item.errorDescription}`);
-    }
-    if (item.annotation) {
-      letterLines.push(`    Caregiver note: ${item.annotation}`);
-    }
-    letterLines.push("");
-  }
 
-  const emailBody = formatDisputeLetter({
+  const emailBody = formatDisputeLetter(templateKey, {
     billId,
-    templateKey,
     recipientInfo,
     disputedItems: errorItems,
     totalOvercharge: auditResult.totalOvercharge,
@@ -3555,7 +3769,7 @@ export function validateToolInput(
 
   const unknownKeys = result.error.issues
     .filter((issue) => issue.code === "unrecognized_keys")
-    .flatMap((issue) => (issue as z.ZodUnrecognizedKeysIssue).keys);
+    .flatMap((issue) => ((issue as any).keys as string[]) || []);
   if (unknownKeys.length > 0) {
     throw new Error(
       `Invalid tool input for ${name}: unknown field(s) not allowed: ${unknownKeys.join(", ")}`,
@@ -3878,6 +4092,27 @@ export const TOOL_DEFINITIONS = [
       required: ["record_id"],
     }),
   },
+  {
+    name: "get_handoff_notes",
+    description:
+      "Read the latest shift handoff notes co-caregivers left for a care recipient, newest first. Call this before answering questions about the recipient's recent care, doses, or symptoms.",
+    input_schema: strictInputSchema({
+      type: "object" as const,
+      properties: {
+        recipient_id: {
+          type: "string",
+          description: `Care recipient registry ID (default: ${DEFAULT_RECIPIENT_ID})`,
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: HANDOFF_NOTES_TOOL_MAX,
+          description: `Number of most recent notes to return (default: ${HANDOFF_NOTES_TOOL_DEFAULT})`,
+        },
+      },
+      required: [] as string[],
+    }),
+  },
 ];
 
 // Start scanner (runs in-process). Interval is conservative (5s).
@@ -3958,3 +4193,55 @@ export {
   recordDosageChange,
   getActiveDosageAtTime,
 };
+
+// ── Exported Allergy, Price-Watch & OCR Tools ─────────────────────────────────
+
+export {
+  loadRecipientAllergies,
+  addRecipientAllergy,
+  removeRecipientAllergy,
+  checkMedicationAllergies,
+};
+
+export function checkRecipientAllergies(
+  medications: string[],
+  recipientId?: string,
+): AllergyCheckResult {
+  return checkMedicationAllergies(medications, recipientId);
+}
+
+export async function runPriceWatch(
+  recipientId?: string,
+  medications?: string[],
+  zipCode?: string,
+): Promise<PriceWatchResult> {
+  return await runPriceWatchForRecipient(recipientId, medications, zipCode);
+}
+
+export async function extractBillLineItemsFromImage(
+  imageBase64: string,
+): Promise<OcrExtractionResult> {
+  return await extractLineItemsFromBillImage(imageBase64);
+}
+
+// ── Shift Handoff Notes (#1180) ───────────────────────────────────────────────
+
+/**
+ * Latest handoff notes for a recipient. Notes are caregiver free text, so
+ * names and drug-plus-dose mentions are redacted with redactPII before they
+ * reach the LLM, unless PHI scrubbing is disabled (LLM_PII_SCRUB=false).
+ */
+export function getHandoffNotes(
+  recipientId: string = DEFAULT_RECIPIENT_ID,
+  limit: number = HANDOFF_NOTES_TOOL_DEFAULT,
+) {
+  const scrub = process.env.LLM_PII_SCRUB !== "false";
+  const notes = getCareRecipientsStore()
+    .listHandoffNotes(recipientId, limit)
+    .map((note) => ({
+      author: scrub ? redactPII(note.author) : note.author,
+      text: scrub ? redactPII(note.text) : note.text,
+      createdAt: note.created_at,
+    }));
+  return { recipientId, count: notes.length, notes };
+}

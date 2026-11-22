@@ -5,7 +5,7 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: [
-      "agent/**/__tests__/**/*.test.{ts,tsx}",
+      "agent/**/*.test.{ts,tsx}",
       "agent/**/evals/**/*.spec.{ts,tsx}",
       "services/**/__tests__/**/*.test.{ts,tsx}",
       "shared/**/__tests__/**/*.test.{ts,tsx}",

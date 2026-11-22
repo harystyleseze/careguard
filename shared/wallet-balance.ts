@@ -146,7 +146,7 @@ export function getThresholds(opts?: WalletCheckOptions): {
   };
 }
 
-async function defaultLoadBalances(
+export async function fetchWalletBalances(
   address: string,
   horizonUrl: string,
   usdcIssuer: string,
@@ -163,6 +163,8 @@ async function defaultLoadBalances(
     xlm: xlmEntry ? parseFloat((xlmEntry as any).balance) : 0,
   };
 }
+
+const defaultLoadBalances = fetchWalletBalances;
 
 export async function checkWalletBalance(
   opts: WalletCheckOptions = {},

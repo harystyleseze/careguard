@@ -15,6 +15,21 @@
 
 import { z } from "zod";
 
+// ── Dosage History (Issue #1227) ─────────────────────────────────────────────
+
+export const DosageHistoryEntrySchema = z.object({
+  id: z.string().min(1),
+  previousDosage: z.string().min(1),
+  previousFrequency: z.string().min(1),
+  newDosage: z.string().min(1),
+  newFrequency: z.string().min(1),
+  changedAt: z.string().min(1),
+  reason: z.string().optional(),
+  prescriber: z.string().optional(),
+});
+
+export type DosageHistoryEntry = z.infer<typeof DosageHistoryEntrySchema>;
+
 // ── Medication ────────────────────────────────────────────────────────────────
 
 export const MedicationSchema = z.object({
@@ -84,76 +99,6 @@ export type BillAuditResult = z.infer<typeof BillAuditResultSchema>;
 
 // ── SpendingPolicy ────────────────────────────────────────────────────────────
 
-export const SpendingPolicySchema = z.object({
-  dailyLimit: z.number().positive(),
-  monthlyLimit: z.number().positive(),
-  medicationMonthlyBudget: z.number().nonnegative(),
-  billMonthlyBudget: z.number().nonnegative(),
-  approvalThreshold: z.number().nonnegative(),
-  holdTimeSeconds: z.number().int().nonnegative(),
-  /**
-   * IANA timezone string for the caregiver's local day (Issue #207).
-   * Example: "America/Phoenix", "America/New_York", "Europe/London".
-   * When set, daily-limit checks use this timezone to determine "today"
-   * rather than UTC or the global SPENDING_TIMEZONE env var.
-   * Defaults to the SPENDING_TIMEZONE env var if omitted.
-   */
-  timezone: z.string().optional(),
-  toolFees: z.record(z.string(), z.number()).optional(),
-  notifications: z
-    .object({
-      email: z.boolean(),
-      sms: z.boolean(),
-      emailAddress: z.string().optional(),
-      phoneNumber: z.string().optional(),
-    })
-    .optional(),
-  /**
-   * Soft-warning threshold as a percentage (0–99) of each budget.
-   * When spending crosses this fraction of a budget limit the agent fires a
-   * warning notification but does NOT block the transaction.
-   * Distinct from `approvalThreshold` (hard dollar gate) and from the hard
-   * block limits (dailyLimit, monthlyLimit, category budgets).
-   * Example: 80 → warn when spend reaches 80% of a budget.
-   * Defaults to DEFAULT_WARNING_THRESHOLD_PCT (80) when not set by the caregiver.
-   */
-  warningThresholdPct: z.number().int().min(1).max(99).optional(),
-});
-
-export type SpendingPolicy = z.infer<typeof SpendingPolicySchema>;
-
-// ── Allergies & Adverse Reactions (Issue #1230) ────────────────────────────────
-
-export const AllergySeveritySchema = z.enum([
-  'mild',
-  'moderate',
-  'severe',
-  'life_threatening',
-]);
-
-export type AllergySeverity = z.infer<typeof AllergySeveritySchema>;
-
-export const RecipientAllergySchema = z.object({
-  id: z.string().min(1),
-  substance: z.string().min(1),
-  severity: AllergySeveritySchema,
-  reaction: z.string().optional(),
-  notes: z.string().optional(),
-  createdAt: z.string().min(1),
-  updatedAt: z.string().optional(),
-});
-
-export type RecipientAllergy = z.infer<typeof RecipientAllergySchema>;
-
-export interface SideEffectEntry {
-  id: string;
-  recipientId: string;
-  medicationId: string;
-  description: string;
-  severity: 'mild' | 'moderate' | 'severe';
-  timestamp: string;
-}
-
 export const SpendingPolicySchema = z
   .object({
     dailyLimit: z
@@ -166,18 +111,23 @@ export const SpendingPolicySchema = z
       .max(50_000, "monthlyLimit cannot exceed $50,000"),
     medicationMonthlyBudget: z
       .number()
-      .gt(0, "medicationMonthlyBudget must be greater than 0")
+      .nonnegative("medicationMonthlyBudget must be at least 0")
       .max(50_000, "medicationMonthlyBudget cannot exceed $50,000"),
     billMonthlyBudget: z
       .number()
-      .gt(0, "billMonthlyBudget must be greater than 0")
+      .nonnegative("billMonthlyBudget must be at least 0")
       .max(50_000, "billMonthlyBudget cannot exceed $50,000"),
     approvalThreshold: z
       .number()
-      .gt(0, "approvalThreshold must be greater than 0")
+      .nonnegative("approvalThreshold must be at least 0")
       .max(10_000, "approvalThreshold cannot exceed $10,000"),
-    holdTimeSeconds: z.number().int("holdTimeSeconds must be an integer").min(0).max(86_400).default(0),
-    severityThreshold: z.enum(['any', 'major', 'moderate', 'mild']).optional(),
+    holdTimeSeconds: z
+      .number()
+      .int("holdTimeSeconds must be an integer")
+      .min(0)
+      .max(86_400)
+      .default(0),
+    severityThreshold: z.enum(["any", "major", "moderate", "mild"]).optional(),
     timezone: z.string().optional(),
     toolFees: z.record(z.string(), z.number().min(0)).optional(),
     notifications: z
@@ -192,10 +142,11 @@ export const SpendingPolicySchema = z
       .object({
         enabled: z.boolean().default(true),
         optOutMeds: z.array(z.string()).default([]),
-        minSavingsThreshold: z.number().nonnegative().default(5.00),
+        minSavingsThreshold: z.number().nonnegative().default(5.0),
         minSavingsPercent: z.number().nonnegative().default(15),
       })
       .optional(),
+    warningThresholdPct: z.number().int().min(1).max(99).optional(),
   })
   .refine((p) => p.dailyLimit <= p.monthlyLimit, {
     message: "dailyLimit cannot exceed monthlyLimit",
@@ -219,10 +170,10 @@ export type SpendingPolicy = z.infer<typeof SpendingPolicySchema>;
 // ── Allergies & Adverse Reactions (Issue #1230) ────────────────────────────────
 
 export const AllergySeveritySchema = z.enum([
-  'mild',
-  'moderate',
-  'severe',
-  'life_threatening',
+  "mild",
+  "moderate",
+  "severe",
+  "life_threatening",
 ]);
 
 export type AllergySeverity = z.infer<typeof AllergySeveritySchema>;
@@ -238,6 +189,15 @@ export const RecipientAllergySchema = z.object({
 });
 
 export type RecipientAllergy = z.infer<typeof RecipientAllergySchema>;
+
+export interface SideEffectEntry {
+  id: string;
+  recipientId: string;
+  medicationId: string;
+  description: string;
+  severity: "mild" | "moderate" | "severe";
+  timestamp: string;
+}
 
 // ── Co-Caregiver Presence (Issue #1231) ───────────────────────────────────────
 
