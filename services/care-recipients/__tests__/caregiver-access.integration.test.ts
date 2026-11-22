@@ -130,8 +130,14 @@ describe("role-based authorization (#1179)", () => {
     const owner = await linkCaregiver("maria@example.com", "owner");
     const david = await linkCaregiver("david@example.com", "co-caregiver");
 
+    // Removal is a sensitive change (#1233): it waits for an owner's approval.
     const removed = await request(app).delete(`/recipients/${ROSA}/caregivers/david@example.com`).set(owner);
-    expect(removed.status).toBe(204);
+    expect(removed.status).toBe(202);
+    expect((await request(app).get("/recipients").set(david)).status).toBe(200);
+    const approved = await request(app)
+      .post(`/recipients/${ROSA}/profile-changes/${removed.body.pendingApproval.id}/approve`)
+      .set(owner);
+    expect(approved.status).toBe(200);
     expect((await request(app).get("/recipients").set(david)).status).toBe(403);
 
     const lastOwner = await request(app).delete(`/recipients/${ROSA}/caregivers/maria@example.com`).set(owner);

@@ -436,7 +436,21 @@ export function downloadTransactionPDF(
     y += 5;
     doc.setFontSize(11);
     doc.text(`Total: $${spending.spending.total.toFixed(2)}`, 14, y);
-    y += 8;
+    y += 6;
+    // #1232: network fees are paid in XLM, not USDC, so they get their own
+    // line rather than being folded into the USD total above.
+    const fees = spending.networkFees?.all;
+    if (fees) {
+      doc.setFontSize(10);
+      doc.text(
+        `Stellar Network Fees (XLM): ${fees.totalXlm.toFixed(7)} across ${fees.count} transaction${fees.count === 1 ? "" : "s"}` +
+          (fees.spikeDays > 0 ? ` (${fees.spikeDays} fee-spike day${fees.spikeDays === 1 ? "" : "s"})` : ""),
+        14,
+        y,
+      );
+      y += 6;
+    }
+    y += 2;
   }
 
   // Transactions table

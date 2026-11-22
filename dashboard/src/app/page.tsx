@@ -27,6 +27,14 @@ import type { RecipientListItem } from "../lib/useRecipients";
 import { ConfigErrorPage } from "../components/config-error-page";
 import { AGENT_URL } from "../lib/agent-url";
 
+
+import { DEFAULT_LOCALE } from "../i18n";
+import { caregiverFetch } from "../lib/caregiver-fetch";
+import { agentFetch } from "../lib/agent-fetch";
+import type { AutoTopupRule } from "../components/low-balance-banner";
+import { DEFAULT_CONSENT_SETTINGS, type ConsentSettings } from "../lib/types";
+
+
 export default function Dashboard() {
   // In production, AGENT_URL is null when NEXT_PUBLIC_API_URL is unset.
   // Show a configuration error page rather than a confusing connection failure
@@ -95,6 +103,23 @@ export default function Dashboard() {
     };
   }, [state.agentLog]);
 
+  // #1233: auto-topup changes move money unattended, so the agent files them
+  // for owner approval instead of applying them.
+  async function saveAutoTopupRule(rule: AutoTopupRule): Promise<string> {
+    try {
+      const res = await agentFetch(`/agent/wallet/auto-topup?recipient_id=rosa`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rule }),
+      });
+      if (res.status === 202) return "Sent for owner approval — see the Approvals tab.";
+      if (res.ok) return "No changes to save.";
+      return "Couldn't save the auto-topup rule.";
+    } catch {
+      return "Couldn't reach the agent.";
+    }
+  }
+
   return (
     <div className="min-h-screen">
       <LiveRegion message={state.liveMessage} />
@@ -103,6 +128,7 @@ export default function Dashboard() {
         walletBalance={state.walletBalance}
         walletXlm={state.walletXlm}
         onResume={state.togglePause}
+        onConfigureAutoTopup={saveAutoTopupRule}
       />
       {state.agentResult?.truncated && (
         <div role="alert" className="mx-auto max-w-7xl px-4 pt-4">

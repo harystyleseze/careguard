@@ -145,6 +145,7 @@ export function formatDisputeLetter(params: {
     chargedAmount: number;
     suggestedAmount?: number;
     errorDescription?: string | null;
+    annotation?: string | null;
   }>;
   totalOvercharge: number;
 }): string {
@@ -183,6 +184,9 @@ export function formatDisputeLetter(params: {
     if (item.errorDescription) {
       lines.push(`    Audit Finding: ${item.errorDescription}`);
     }
+    if (item.annotation) {
+      lines.push(`    Caregiver Note: ${item.annotation}`);
+    }
     lines.push('');
   }
 
@@ -217,6 +221,7 @@ export function formatDisputeHtml(params: {
     chargedAmount: number;
     suggestedAmount?: number;
     errorDescription?: string | null;
+    annotation?: string | null;
   }>;
   totalOvercharge: number;
 }): string {
@@ -230,6 +235,7 @@ export function formatDisputeHtml(params: {
         <strong>${item.description}</strong>${item.cptCode ? ` (CPT: ${item.cptCode})` : ''}: Billed $${item.chargedAmount.toFixed(2)}
         ${item.suggestedAmount !== undefined ? `<br/><span style="color: #047857;">Fair Rate: $${item.suggestedAmount.toFixed(2)}</span>` : ''}
         ${item.errorDescription ? `<br/><em style="color: #b91c1c;">Finding: ${item.errorDescription}</em>` : ''}
+        ${item.annotation ? `<br/><span style="color: #0369a1;">Caregiver Note: ${item.annotation}</span>` : ''}
       </li>`,
     )
     .join('');

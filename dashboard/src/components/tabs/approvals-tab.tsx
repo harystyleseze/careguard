@@ -6,6 +6,7 @@ import { formatDateTime, type Locale, getTranslations } from "../../i18n";
 import { AGENT_URL } from "../../lib/agent-url";
 import { agentFetch } from "../../lib/agent-fetch";
 import type { ItemPresenceMap, CaregiverProfile } from "../../lib/types";
+import { ProfileChangeApprovals } from "../profile-change-approvals";
 
 /** Who is deciding, and whose authority they use when delegated (#1195). */
 export interface ApprovalActor {
@@ -299,6 +300,15 @@ export function ApprovalsTab({
         )}
       </div>
 
+      <ProfileChangeApprovals
+        agentConnected={agentConnected}
+        caregiverId={caregiverId}
+        // Profiles without a role predate multi-caregiver access: the single
+        // caregiver is the owner. The agent re-checks this on every decision.
+        isOwner={((currentCaregiver as { role?: string }).role ?? "owner") === "owner"}
+        locale={locale}
+      />
+
       <div className="bg-white rounded-xl border border-slate-200 p-6">
         <h2 className="text-sm font-semibold text-slate-700 mb-3">
           How Approvals Work
@@ -313,6 +323,11 @@ export function ApprovalsTab({
           <p>
             You can review and approve or cancel each pending transaction here.
             Approving will execute the payment; canceling will stop it.
+          </p>
+          <p>
+            Sensitive profile changes — raising a spending limit, removing a
+            co-caregiver, or changing wallet auto-topup — also wait here until a
+            caregiver with the owner role approves them.
           </p>
         </div>
       </div>

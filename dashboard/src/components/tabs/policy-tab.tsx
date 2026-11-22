@@ -184,7 +184,11 @@ export interface PolicyTabProps {
   setPolicyDirty: (dirty: boolean) => void;
   spending: SpendingData | null;
   policySaved: boolean;
-  onUpdatePolicy: () => Promise<{ ok: boolean; error?: string }>;
+  onUpdatePolicy: () => Promise<{
+    ok: boolean;
+    error?: string;
+    pendingApproval?: { id: string; summary: string };
+  }>;
   onForceSync: () => void;
   locale?: Locale;
 }
@@ -219,6 +223,7 @@ export function PolicyTab({
   const [requiresTyped, setRequiresTyped] = useState(false);
   const [typedValue, setTypedValue] = useState("");
   const [impactState, setImpactState] = useState<ImpactState | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<string | null>(null);
   const previewSeq = useRef(0);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const [debounceTimeout, setDebounceTimeout] = useState<NodeJS.Timeout | null>(null);
@@ -230,7 +235,10 @@ export function PolicyTab({
     if (!result.ok) {
       setToastFallback(result.error || "Failed to update policy");
       setToastMsg("Policy update failed");
+      return;
     }
+    // #1233: raised limits don't apply until an owner approves them.
+    setPendingApproval(result.pendingApproval?.summary ?? null);
   }
 
   function handleSubmit(e: FormEvent) {
@@ -318,6 +326,19 @@ export function PolicyTab({
         These limits are enforced server-side by the CareGuard agent before
         every payment.
       </p>
+      {pendingApproval && (
+        <div
+          role="status"
+          data-testid="policy-pending-approval"
+          className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+        >
+          <p className="font-semibold">Waiting for owner approval</p>
+          <p className="mt-1">
+            {pendingApproval}. Raising a spending limit is a sensitive change, so it won&apos;t take effect until a
+            caregiver with the owner role approves it in the Approvals tab. Any other changes you made were saved.
+          </p>
+        </div>
+      )}
       <form noValidate onSubmit={handleSubmit} className="space-y-4">
         {FIELDS.map((key) => {
           const label = t.policy[FIELD_T_KEY[key] as keyof typeof t.policy];

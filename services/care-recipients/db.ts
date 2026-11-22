@@ -10,6 +10,11 @@ import {
   calculateContributorBalances,
   type ContributorBalanceSummary,
 } from '../../shared/cost-split.ts';
+import {
+  emptyInsuranceNetwork,
+  type InsuranceNetwork,
+  type NetworkEntry,
+} from '../../shared/insurance-network.ts';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
@@ -83,7 +88,30 @@ export interface SideEffectEntry {
   timestamp: string;
 }
 
+/** A non-payment caregiving task for one recipient (Issue #1200). */
+export interface CareTaskEntity {
+  id: string;
+  recipient_id: string;
+  title: string;
+  /** Name of the linked caregiver it's assigned to, or null if unassigned. */
+  assignee: string | null;
+  /** Due date as YYYY-MM-DD, or null. */
+  due_date: string | null;
+  done: boolean;
+  completed_at: string | null;
+  created_at: string;
+}
+
+interface CareTaskRow extends Omit<CareTaskEntity, 'done'> {
+  done: number;
+}
+
+function rowToTask(row: CareTaskRow): CareTaskEntity {
+  return { ...row, done: row.done === 1 };
+}
+/** Backward-compatibility alias for CareRecipientRecord (Issue #1067) */
 export type CareRecipientEntity = CareRecipientRecord;
+
 export type CareRecipientInput = Omit<CareRecipientEntity, 'id'>;
 
 interface CareRecipientRow {
@@ -342,6 +370,46 @@ export class CareRecipientsStore {
         ON cost_splits (transaction_id);
     `);
 
+    // In-network pharmacy/provider lists, maintained by the caregiver (#1234).
+    // Keyed by the agent's recipient id with no foreign key, like vitals, so
+    // the agent's ids ("rosa") work without a care_recipients row.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS insurance_networks (
+        recipient_id TEXT PRIMARY KEY,
+        plan TEXT,
+        pharmacies TEXT NOT NULL DEFAULT '[]',
+        providers TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL,
+        updated_by TEXT
+      );
+
+      -- Sensitive profile changes awaiting owner approval (#1233).
+      CREATE TABLE IF NOT EXISTS profile_change_requests (
+        id TEXT PRIMARY KEY,
+        recipient_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        changes TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),
+        requested_by TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        decided_by TEXT,
+        decided_at TEXT,
+        decision_note TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_profile_change_requests_lookup
+        ON profile_change_requests (recipient_id, status, requested_at);
+
+      -- Wallet auto-topup rule (#1233); changes only land via an approved request.
+      CREATE TABLE IF NOT EXISTS wallet_auto_topup (
+        recipient_id TEXT PRIMARY KEY,
+        rule TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        updated_by TEXT
+      );
+    `);
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS side_effect_entries (
         id TEXT PRIMARY KEY,
@@ -352,6 +420,34 @@ export class CareRecipientsStore {
         timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
+    this.migrateLegacyCaregiverColumn();
+  }
+
+  /**
+   * Migration path (#1179): databases created before the join table stored a
+   * single care_recipients.caregiver_user_id. Each non-empty value becomes an
+   * active 'owner' link, then the column is dropped. Runs at most once (the
+   * column no longer exists afterwards) and is atomic.
+   */
+  private migrateLegacyCaregiverColumn(): void {
+    const columns = this.db.prepare('PRAGMA table_info(care_recipients)').all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'caregiver_user_id')) return;
+
+    const migratedAt = new Date().toISOString();
+    this.transaction(() => {
+      const result = this.db.prepare(`
+        INSERT OR IGNORE INTO care_recipient_caregivers
+          (recipient_id, caregiver_user_id, role, status, created_at, accepted_at)
+        SELECT id, caregiver_user_id, 'owner', 'active', ?, ?
+        FROM care_recipients
+        WHERE caregiver_user_id IS NOT NULL AND caregiver_user_id <> ''
+      `).run(migratedAt, migratedAt);
+      this.db.exec('ALTER TABLE care_recipients DROP COLUMN caregiver_user_id');
+      logger.info(
+        { migratedOwners: Number(result.changes) },
+        '[care-recipients] migrated caregiver_user_id into care_recipient_caregivers',
+      );
+    });
   }
 
   private seedIfEmpty(): void {
@@ -406,6 +502,43 @@ export class CareRecipientsStore {
       input.insurance ?? null,
     );
     return this.getById(id)!;
+  }
+
+  /** Open tasks first (soonest due, undated last), then completed ones newest first. */
+  listTasks(recipientId: string): CareTaskEntity[] {
+    const rows = this.db
+      .prepare(`
+        SELECT * FROM care_tasks WHERE recipient_id = ?
+        ORDER BY done ASC,
+                 CASE WHEN done = 0 THEN due_date IS NULL END ASC,
+                 CASE WHEN done = 0 THEN due_date END ASC,
+                 completed_at DESC,
+                 created_at ASC
+      `)
+      .all(recipientId) as CareTaskRow[];
+    return rows.map(rowToTask);
+  }
+
+  createTask(recipientId: string, input: NewCareTask): CareTaskEntity {
+    const id = `task_${Date.now()}_${randomUUID().slice(0, 8)}`;
+    this.db.prepare(`
+      INSERT INTO care_tasks (id, recipient_id, title, assignee, due_date, done, created_at)
+      VALUES (?, ?, ?, ?, ?, 0, ?)
+    `).run(id, recipientId, input.title, input.assignee ?? null, input.due_date ?? null, new Date().toISOString());
+    return this.getTask(id)!;
+  }
+
+  /** Marks a task done (kept for history) or reopens it. */
+  setTaskDone(recipientId: string, taskId: string, done: boolean): CareTaskEntity | undefined {
+    const result = this.db
+      .prepare('UPDATE care_tasks SET done = ?, completed_at = ? WHERE id = ? AND recipient_id = ?')
+      .run(done ? 1 : 0, done ? new Date().toISOString() : null, taskId, recipientId);
+    return Number(result.changes) === 0 ? undefined : this.getTask(taskId);
+  }
+
+  private getTask(id: string): CareTaskEntity | undefined {
+    const row = this.db.prepare('SELECT * FROM care_tasks WHERE id = ?').get(id) as CareTaskRow | undefined;
+    return row ? rowToTask(row) : undefined;
   }
 
   // ── Caregiver links (#1179) ─────────────────────────────────────────────────
@@ -905,6 +1038,204 @@ export class CareRecipientsStore {
     const splits = this.listCostSplits(recipientId);
     return calculateContributorBalances(splits);
   }
+
+  // ── Insurance network lists (#1234) ─────────────────────────────────────────
+
+  /**
+   * The caregiver-maintained in-network lists for a recipient. Without a
+   * saved list the plan name falls back to the recipient's `insurance` field
+   * and both lists are empty (network status "unknown").
+   */
+  getInsuranceNetwork(recipientId: string): InsuranceNetwork {
+    const row = this.db
+      .prepare('SELECT plan, pharmacies, providers, updated_at, updated_by FROM insurance_networks WHERE recipient_id = ?')
+      .get(recipientId) as
+      | { plan: string | null; pharmacies: string; providers: string; updated_at: string; updated_by: string | null }
+      | undefined;
+    if (!row) return emptyInsuranceNetwork(this.getById(recipientId)?.insurance ?? null);
+    const parse = (raw: string): NetworkEntry[] => {
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    };
+    return {
+      plan: row.plan,
+      pharmacies: parse(row.pharmacies),
+      providers: parse(row.providers),
+      updatedAt: row.updated_at,
+      updatedBy: row.updated_by,
+    };
+  }
+
+  setInsuranceNetwork(
+    recipientId: string,
+    input: { plan: string | null; pharmacies: NetworkEntry[]; providers: NetworkEntry[] },
+    updatedBy = 'caregiver',
+  ): InsuranceNetwork {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO insurance_networks (recipient_id, plan, pharmacies, providers, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (recipient_id) DO UPDATE SET
+        plan = excluded.plan,
+        pharmacies = excluded.pharmacies,
+        providers = excluded.providers,
+        updated_at = excluded.updated_at,
+        updated_by = excluded.updated_by
+    `).run(recipientId, input.plan, JSON.stringify(input.pharmacies), JSON.stringify(input.providers), now, updatedBy);
+    try {
+      appendAuditEntry({
+        event: 'insurance_network.updated',
+        actor: updatedBy,
+        details: { recipientId, pharmacies: input.pharmacies.length, providers: input.providers.length },
+      });
+    } catch (err: any) {
+      logger.warn({ err: err?.message || err }, '[care-recipients] failed appending insurance network update to audit log');
+    }
+    return this.getInsuranceNetwork(recipientId);
+  }
+
+  // ── Sensitive profile change approvals (#1233) ──────────────────────────────
+
+  createProfileChangeRequest(input: {
+    recipientId: string;
+    kind: ProfileChangeKind;
+    summary: string;
+    changes: ProfileChangeDetail[];
+    payload: Record<string, unknown>;
+    requestedBy: string;
+  }): ProfileChangeRequest {
+    const id = `pcr_${randomUUID()}`;
+    this.db.prepare(`
+      INSERT INTO profile_change_requests
+        (id, recipient_id, kind, summary, changes, payload, status, requested_by, requested_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    `).run(
+      id,
+      input.recipientId,
+      input.kind,
+      input.summary,
+      JSON.stringify(input.changes),
+      JSON.stringify(input.payload),
+      input.requestedBy,
+      new Date().toISOString(),
+    );
+    return this.getProfileChangeRequest(id)!;
+  }
+
+  getProfileChangeRequest(id: string): ProfileChangeRequest | undefined {
+    const row = this.db.prepare('SELECT * FROM profile_change_requests WHERE id = ?').get(id) as ProfileChangeRow | undefined;
+    return row ? rowToProfileChange(row) : undefined;
+  }
+
+  /** Oldest first, so the approvals list reads in the order changes were asked for. */
+  listProfileChangeRequests(recipientId: string, status?: ProfileChangeStatus): ProfileChangeRequest[] {
+    const rows = (status
+      ? this.db
+          .prepare('SELECT * FROM profile_change_requests WHERE recipient_id = ? AND status = ? ORDER BY requested_at ASC, rowid ASC')
+          .all(recipientId, status)
+      : this.db
+          .prepare('SELECT * FROM profile_change_requests WHERE recipient_id = ? ORDER BY requested_at ASC, rowid ASC')
+          .all(recipientId)) as ProfileChangeRow[];
+    return rows.map(rowToProfileChange);
+  }
+
+  /**
+   * Marks a pending request approved/rejected. Returns undefined when it was
+   * already decided, so two owners deciding at once can't both apply it.
+   */
+  decideProfileChangeRequest(
+    id: string,
+    decision: 'approved' | 'rejected',
+    decidedBy: string,
+    note?: string,
+  ): ProfileChangeRequest | undefined {
+    const result = this.db.prepare(`
+      UPDATE profile_change_requests
+      SET status = ?, decided_by = ?, decided_at = ?, decision_note = ?
+      WHERE id = ? AND status = 'pending'
+    `).run(decision, decidedBy, new Date().toISOString(), note ?? null, id);
+    return Number(result.changes) > 0 ? this.getProfileChangeRequest(id) : undefined;
+  }
+
+  getAutoTopupRule(recipientId: string): AutoTopupRule | null {
+    const row = this.db
+      .prepare('SELECT rule FROM wallet_auto_topup WHERE recipient_id = ?')
+      .get(recipientId) as { rule: string } | undefined;
+    if (!row) return null;
+    try {
+      return JSON.parse(row.rule) as AutoTopupRule;
+    } catch {
+      return null;
+    }
+  }
+
+  setAutoTopupRule(recipientId: string, rule: AutoTopupRule, updatedBy: string): AutoTopupRule {
+    this.db.prepare(`
+      INSERT INTO wallet_auto_topup (recipient_id, rule, updated_at, updated_by)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT (recipient_id) DO UPDATE SET
+        rule = excluded.rule, updated_at = excluded.updated_at, updated_by = excluded.updated_by
+    `).run(recipientId, JSON.stringify(rule), new Date().toISOString(), updatedBy);
+    return rule;
+  }
+}
+
+// ── Sensitive profile change approvals (#1233) ────────────────────────────────
+
+export const PROFILE_CHANGE_KINDS = ['policy_limit_increase', 'caregiver_removal', 'auto_topup_change'] as const;
+export type ProfileChangeKind = (typeof PROFILE_CHANGE_KINDS)[number];
+export type ProfileChangeStatus = 'pending' | 'approved' | 'rejected';
+
+/** One field the request would change, for display ("Daily limit: $100 → $250"). */
+export interface ProfileChangeDetail {
+  field: string;
+  label: string;
+  before: unknown;
+  after: unknown;
+}
+
+export interface ProfileChangeRequest {
+  id: string;
+  recipient_id: string;
+  kind: ProfileChangeKind;
+  summary: string;
+  changes: ProfileChangeDetail[];
+  /** What gets applied on approval (e.g. the policy fields, or the caregiver id). */
+  payload: Record<string, unknown>;
+  status: ProfileChangeStatus;
+  requested_by: string;
+  requested_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+}
+
+interface ProfileChangeRow extends Omit<ProfileChangeRequest, 'changes' | 'payload'> {
+  changes: string;
+  payload: string;
+}
+
+function rowToProfileChange(row: ProfileChangeRow): ProfileChangeRequest {
+  const parse = <T>(raw: string, fallback: T): T => {
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return fallback;
+    }
+  };
+  return { ...row, changes: parse(row.changes, []), payload: parse(row.payload, {}) };
+}
+
+/** Low-balance auto-topup rule, as configured from the wallet banner. */
+export interface AutoTopupRule {
+  enabled: boolean;
+  threshold: number;
+  topUpAmount: number;
+  fundingSource: string;
 }
 
 export interface NewCareTask {
