@@ -39,6 +39,7 @@
     "check:env-sync": "tsx scripts/check-env-sync.ts",
     "check:vitest-lock": "node scripts/check-vitest-version-lock.mjs",
     "simulate:spending-reset": "node --import tsx scripts/simulate-spending-reset.ts",
+    "drill:wallet-low": "node --import tsx scripts/drill-wallet-low.ts",
     "generate:sample-bill": "node --import tsx scripts/generate-sample-bill.ts",
     "clear:stale-locks": "node --import tsx scripts/clear-stale-locks.ts",
     "benchmark:investigations": "node --import tsx scripts/benchmark-investigations.ts",

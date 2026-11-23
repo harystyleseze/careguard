@@ -69,10 +69,26 @@ If the balance check is firing too often (e.g. you keep getting paused right aft
 2. **Horizon flake.** If Horizon returns wrong balances or times out, the script returns `error` and **does not** pause. So this should not be a source of false positives — but if it is, file an issue and capture `data/audit.log.jsonl`.
 3. **State drift between cron and server.** The pause flip is in-process. If you run the script from cron in a *different* container than the server, the server won't pick up the pause. Use `WALLET_BALANCE_CHECK_ENABLED=1` instead.
 
+## Game-Day Drill
+
+Rehearse the full auto-pause-to-resume cycle in staging and measure total operator response time against the 15-minute (`*/15 * * * *`) scheduled-check interval:
+
+1. **Trigger low-balance auto-pause:** Drain the staging agent wallet below `WALLET_LOW_USDC_THRESHOLD` (or run `npm run drill:wallet-low -- --dry-run` for an in-process rehearsal) and confirm `GET /agent/status` returns `"paused": true` with `"pausedReason": "low-balance-usdc"`.
+2. **Confirm notification:** Verify the `[CRITICAL]` `notify()` line in server logs and the corresponding Slack alert if `SLACK_WEBHOOK_URL` is configured.
+3. **Fund and verify recovery:** Mint testnet USDC via the faucet steps above, wait ~5s for settlement, and run `npm run wallet:check` to confirm recovery.
+4. **Resume and audit:** Call `POST /agent/resume` and confirm both `agent.auto-paused` and `agent.resumed` entries appear in `data/audit.log.jsonl`.
+5. **Measure cycle time:** Record total elapsed time against the 15-minute check interval:
+
+| Date | Environment | Cycle Duration | Within 15m Budget? | Notes |
+|------|-------------|----------------|--------------------|-------|
+| _TBD_ | staging | _TBD_ | _TBD_ | Initial drill template (#969) |
+
 ## Related
 
 - Issue [#107](https://github.com/harystyleseze/careguard/issues/107) — original spec
+- Issue [#969](https://github.com/harystyleseze/careguard/issues/969) — game-day drill
 - Issue [#71](https://github.com/harystyleseze/careguard/issues/71) — full notification service (Slack/email)
 - Issue [#72](https://github.com/harystyleseze/careguard/issues/72) — durable audit log
 - `shared/wallet-balance.ts` — implementation
 - `scripts/check-wallet-balance.ts` — CLI runner
+- `scripts/drill-wallet-low.ts` — game-day drill runner
