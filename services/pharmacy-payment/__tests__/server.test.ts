@@ -242,6 +242,52 @@ describe("POST /pharmacy/order — 400 validation errors", () => {
   });
 });
 
+// ── Blocklist: auth/cookie headers must not be forwarded ─────────────────────
+
+describe("POST /pharmacy/order — header forwarding blocklist", () => {
+  it("strips Authorization header before passing to mppx (never leaks caller creds)", async () => {
+    let capturedHeaders: Headers | undefined;
+    mppChargeImpl = async (webReq: Request) => {
+      capturedHeaders = webReq.headers;
+      return {
+        status: 402,
+        challenge: {
+          headers: new Map([["X-Payment-Required", "1"]]),
+          text: async () => "{}",
+        },
+      };
+    };
+
+    await request(app)
+      .post("/pharmacy/order")
+      .set("Authorization", "Bearer secret-token")
+      .send({ drug: "Metformin", pharmacy: "CVS", amount: 10 });
+
+    expect(capturedHeaders?.has("authorization")).toBe(false);
+  });
+
+  it("strips Cookie header before passing to mppx", async () => {
+    let capturedHeaders: Headers | undefined;
+    mppChargeImpl = async (webReq: Request) => {
+      capturedHeaders = webReq.headers;
+      return {
+        status: 402,
+        challenge: {
+          headers: new Map([["X-Payment-Required", "1"]]),
+          text: async () => "{}",
+        },
+      };
+    };
+
+    await request(app)
+      .post("/pharmacy/order")
+      .set("Cookie", "session=abc123")
+      .send({ drug: "Metformin", pharmacy: "CVS", amount: 10 });
+
+    expect(capturedHeaders?.has("cookie")).toBe(false);
+  });
+});
+
 // ── POST /pharmacy/order — concurrent orders ──────────────────────────────────
 
 describe("POST /pharmacy/order — concurrent orders (Issue #31 acceptance criterion)", () => {
