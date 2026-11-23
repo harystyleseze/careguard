@@ -104,20 +104,28 @@ export const BILL_AUDIT_UPCODED_MULTIPLIER = parseFloat(
   process.env.BILL_AUDIT_UPCODED_MULTIPLIER || "3.0",
 );
 
-if (
-  isNaN(BILL_AUDIT_OVERCHARGE_MULTIPLIER) ||
-  isNaN(BILL_AUDIT_SUGGESTED_MULTIPLIER) ||
-  isNaN(BILL_AUDIT_UPCODED_MULTIPLIER) ||
-  !(
-    BILL_AUDIT_UPCODED_MULTIPLIER > BILL_AUDIT_OVERCHARGE_MULTIPLIER &&
-    BILL_AUDIT_OVERCHARGE_MULTIPLIER > BILL_AUDIT_SUGGESTED_MULTIPLIER &&
-    BILL_AUDIT_SUGGESTED_MULTIPLIER > 1.0
-  )
-) {
-  throw new Error(
-    "Invalid bill-audit multipliers config: must satisfy UPCODED > OVERCHARGE > SUGGESTED > 1.0",
-  );
+export function validateBillAuditMultipliers(
+  overcharge: number,
+  suggested: number,
+  upcoded: number,
+): void {
+  if (
+    isNaN(overcharge) ||
+    isNaN(suggested) ||
+    isNaN(upcoded) ||
+    !(upcoded > overcharge && overcharge > suggested && suggested > 1.0)
+  ) {
+    throw new Error(
+      `Invalid bill-audit multipliers config: must satisfy UPCODED > OVERCHARGE > SUGGESTED > 1.0 (got UPCODED=${upcoded}, OVERCHARGE=${overcharge}, SUGGESTED=${suggested})`,
+    );
+  }
 }
+
+validateBillAuditMultipliers(
+  BILL_AUDIT_OVERCHARGE_MULTIPLIER,
+  BILL_AUDIT_SUGGESTED_MULTIPLIER,
+  BILL_AUDIT_UPCODED_MULTIPLIER,
+);
 
 interface AuditThresholdConfig {
   default: number;

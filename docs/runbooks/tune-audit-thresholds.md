@@ -31,3 +31,16 @@ If these criteria are not met, the server will log an error and refuse to start 
   - Set `BILL_AUDIT_OVERCHARGE_MULTIPLIER=2.0`
   - Set `BILL_AUDIT_SUGGESTED_MULTIPLIER=1.5`
   - Set `BILL_AUDIT_UPCODED_MULTIPLIER=4.0`
+
+## Game-Day Drill: Boot-Time Multiplier Validation
+
+Rehearse the boot-time safety net in staging to confirm invalid multiplier combinations refuse to start:
+
+1. **Invalid Case 1 (`UPCODED <= OVERCHARGE`):** Start with `BILL_AUDIT_UPCODED_MULTIPLIER=2.0 BILL_AUDIT_OVERCHARGE_MULTIPLIER=2.0 BILL_AUDIT_SUGGESTED_MULTIPLIER=1.2` and confirm boot fails with `Invalid bill-audit multipliers config: must satisfy UPCODED > OVERCHARGE > SUGGESTED > 1.0`.
+2. **Invalid Case 2 (`SUGGESTED <= 1.0`):** Start with `BILL_AUDIT_SUGGESTED_MULTIPLIER=1.0` (and `0.9`) and confirm boot fails with the same clear error.
+3. **Valid Configurations:** Start with the Medicare-strictness (`1.3 / 1.1 / 3.0`) and Commercial-tolerance (`2.0 / 1.5 / 4.0`) examples above and confirm the server boots cleanly.
+4. **Error Clarity & Follow-ups:** Confirm the error output includes the configured values for fast operator diagnosis.
+
+| Date | Environment | Invalid Cases Refused? | Valid Presets Booted? | Follow-ups |
+|------|-------------|------------------------|-----------------------|------------|
+| _TBD_ | staging | _TBD_ | _TBD_ | _TBD_ (#968) |
