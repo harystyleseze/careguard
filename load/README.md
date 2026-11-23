@@ -38,6 +38,39 @@ The k6 script itself exercises `/agent/run` and `/agent/spending` without adding
 an authorization header, so use the local test configuration expected by the
 running agent.
 
+## Agent key-rotation load test
+
+`npm run load:agent-run-rotation` runs `load/agent-run-rotation.js`, which keeps
+20 VUs hitting `/agent/run` while a single VU rotates `AGENT_SECRET_KEY`
+mid-run (env update + SIGHUP). It verifies the zero-downtime claim in
+[`docs/runbooks/rotate-agent-key.md`](../docs/runbooks/rotate-agent-key.md)
+under sustained concurrent traffic rather than the runbook's single-request
+manual check.
+
+k6 cannot modify another process's environment or send it a signal, so the
+agent must be started with the test-only preload hook enabled:
+
+```sh
+LOAD_TEST_ROTATION_HOOK=1 ROTATION_HOOK_PORT=3006 \
+  node --import ./load/rotation-hook.mjs --import tsx server.ts
+```
+
+Then, in another shell, generate a new Stellar secret and run the test:
+
+```sh
+NEW_AGENT_SECRET_KEY="$(node -e "console.log(require('@stellar/stellar-sdk').Keypair.random().secret())")" \
+  npm run load:agent-run-rotation
+```
+
+The hook is inert unless `LOAD_TEST_ROTATION_HOOK=1` and is never mounted by
+the application itself. Optional vars: `BASE_URL`, `ROTATION_HOOK_URL`,
+`ROTATION_START` (default `10s`), `ITERATIONS` (default `40`).
+
+Thresholds fail the run on any 500, rotation-boundary error, misrouted,
+duplicate, or mixed-key payment. The summary also compares the observed
+`transactionCount`/service-fee deltas with the expected run count and reports
+whether the runbook's zero-downtime claim was CONFIRMED or REFUTED.
+
 ## Bill-audit load test
 
 `npm run load:bill-audit` runs `load/bill-audit.js` against the bill-audit
@@ -65,6 +98,7 @@ thresholds currently set by the scripts are:
 | Script | Thresholds |
 | --- | --- |
 | `npm run load` | `errors_500` count = 0; `success_rate` = 100%; `agent_run_duration_ms` p95 < 30s |
+| `npm run load:agent-run-rotation` | `errors_500`, `rotation_boundary_errors`, `misrouted_payments`, `duplicate_payments`, `mixed_key_settlement` all count = 0; `success_rate` = 100%; `agent_run_duration_ms` p95 < 30s |
 | `npm run load:bill-audit` | `errors_5xx` count = 0; `success_rate` > 99%; `bill_audit_duration_ms` p95 < 2s |
 
 The summary's `thresholds` section shows each condition as met or breached.

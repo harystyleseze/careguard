@@ -30,6 +30,7 @@
     "e2e": "cd dashboard && npx playwright test --config ../e2e/playwright.config.ts",
     "e2e:debug": "cd dashboard && npx playwright test --config ../e2e/playwright.config.ts --headed --ui",
     "load": "k6 run load/agent-run.js",
+    "load:agent-run-rotation": "k6 run load/agent-run-rotation.js",
     "load:bill-audit": "k6 run load/bill-audit.js",
     "load:pharmacy-compare": "k6 run load/pharmacy-compare.js",
     "load:drug-interactions": "k6 run load/drug-interactions.js",
