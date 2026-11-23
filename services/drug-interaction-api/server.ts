@@ -24,6 +24,7 @@ import { applySecurityMiddleware } from "../../shared/security-middleware.ts";
 import { logger } from "../../shared/logger.ts";
 import { requestLifecycleMiddleware } from "../../shared/request-lifecycle.ts";
 import { gracefulShutdown } from "../../shared/graceful-shutdown.ts";
+import { createJsonBodyErrorHandler } from "../../shared/json-body-error.ts";
 import { checkInteractions, DrugInteractionsQuerySchema } from "./logic.ts";
 import type { DrugInteractionsQuery } from "./logic.ts";
 
@@ -89,21 +90,7 @@ app.get("/drug/interactions", (req, res) => {
   });
 });
 
-app.use(
-  (
-    err: any,
-    _req: express.Request,
-    res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    if (err.type === "entity.too.large") {
-      return res
-        .status(413)
-        .json({ error: "Request body too large", limit: err.limit });
-    }
-    next(err);
-  },
-);
+app.use(createJsonBodyErrorHandler());
 
 let isDraining = false;
 app.get("/ready", (_req, res) => {

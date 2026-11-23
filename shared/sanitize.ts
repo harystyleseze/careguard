@@ -30,6 +30,22 @@ export function sanitizeUserString(input: unknown): string {
   return s;
 }
 
+export class SanitizationError extends Error {
+  readonly field: string;
+
+  constructor(field: string) {
+    super(`${field} must contain at least one supported character after sanitization`);
+    this.name = "SanitizationError";
+    this.field = field;
+  }
+}
+
+export function sanitizeRequiredUserString(input: unknown, field: string): string {
+  const sanitized = sanitizeUserString(input);
+  if (!sanitized) throw new SanitizationError(field);
+  return sanitized;
+}
+
 /** Maximum length allowed for a free-text annotation on a bill line item. */
 const ANNOTATION_MAX_LENGTH = 280;
 

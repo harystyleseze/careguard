@@ -32,8 +32,12 @@ import { createCorsMiddleware } from "../../shared/cors.ts";
 import { applySecurityMiddleware } from "../../shared/security-middleware.ts";
 import { logger } from "../../shared/logger.ts";
 import { requestLifecycleMiddleware } from "../../shared/request-lifecycle.ts";
+import { createJsonBodyErrorHandler } from "../../shared/json-body-error.ts";
 import { gracefulShutdown } from "../../shared/graceful-shutdown.ts";
-import { sanitizeUserString } from "../../shared/sanitize.ts";
+import {
+  SanitizationError,
+  sanitizeRequiredUserString,
+} from "../../shared/sanitize.ts";
 import { billAuditOversizedRejectionsTotal } from "../../shared/metrics.ts";
 import { extractLineItemsFromBillImage } from "../../shared/bill-ocr.ts";
 
@@ -379,9 +383,12 @@ applyX402Middleware(app, {
 app.post("/bill/audit", (req, res) => {
   try {
     const validatedData = validateBillAuditRequest(req.body);
-    const sanitizedLineItems = validatedData.lineItems.map((item) => ({
+    const sanitizedLineItems = validatedData.lineItems.map((item, index) => ({
       ...item,
-      description: sanitizeUserString(item.description),
+      description: sanitizeRequiredUserString(
+        item.description,
+        `lineItems[${index}].description`,
+      ),
     }));
     res.json(
       auditBill(sanitizedLineItems, {
@@ -391,7 +398,15 @@ app.post("/bill/audit", (req, res) => {
       }),
     );
   } catch (error) {
-    if (error instanceof BillAuditValidationError) {
+    if (error instanceof SanitizationError) {
+      res.status(400).json({
+        error: error.message,
+        code: "INVALID_SANITIZED_TEXT",
+        details: {
+          issues: [{ path: error.field, message: error.message }],
+        },
+      });
+    } else if (error instanceof BillAuditValidationError) {
       const validationError = error as BillAuditValidationError;
       res.status(400).json({
         error: validationError.message,
@@ -408,21 +423,10 @@ app.post("/bill/audit", (req, res) => {
 });
 
 app.use(
-  (
-    err: any,
-    _req: express.Request,
-    res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    if (err.type === "entity.too.large") {
-      return res.status(413).json({
-        error: "Request body too large",
-        code: "BODY_TOO_LARGE",
-        details: { limit: err.limit },
-      });
-    }
-    next(err);
-  },
+  createJsonBodyErrorHandler({
+    code: "INVALID_JSON_BODY",
+    includeDetails: true,
+  }),
 );
 
 // --- Bill OCR endpoint (#1229) ---

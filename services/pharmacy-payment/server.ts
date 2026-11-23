@@ -21,8 +21,12 @@ import { createCorsMiddleware } from "../../shared/cors.ts";
 import { applySecurityMiddleware } from "../../shared/security-middleware.ts";
 import { logger } from "../../shared/logger.ts";
 import { requestLifecycleMiddleware } from "../../shared/request-lifecycle.ts";
+import { createJsonBodyErrorHandler } from "../../shared/json-body-error.ts";
 import { gracefulShutdown } from "../../shared/graceful-shutdown.ts";
-import { sanitizeUserString } from "../../shared/sanitize.ts";
+import {
+  SanitizationError,
+  sanitizeRequiredUserString,
+} from "../../shared/sanitize.ts";
 import {
   concurrentRequestsMiddleware,
   perRouteLimiters,
@@ -83,7 +87,7 @@ async function loadOrders(): Promise<any[]> {
  * Trade-off: File-based locking is slower than in-memory storage but is sufficient for the demo.
  * For production, consider switching to SQLite (#168) or a proper database.
  */
-async function saveOrder(order: any) {
+export async function saveOrder(order: any) {
   let release: any;
   try {
     // Acquire exclusive lock on the orders file
@@ -174,8 +178,22 @@ app.post(
     }
 
     const order = parsedOrder.data as MedicationOrderInput;
-    const safeDrug = sanitizeUserString(order.drug);
-    const safePharmacy = sanitizeUserString(order.pharmacy);
+    let safeDrug: string;
+    let safePharmacy: string;
+    try {
+      safeDrug = sanitizeRequiredUserString(order.drug, "drug");
+      safePharmacy = sanitizeRequiredUserString(order.pharmacy, "pharmacy");
+    } catch (error) {
+      if (error instanceof SanitizationError) {
+        res.status(400).json({
+          error: error.message,
+          code: "INVALID_SANITIZED_TEXT",
+          details: { field: error.field },
+        });
+        return;
+      }
+      throw error;
+    }
 
     // Convert Express request to Web Request for mppx. Never forward the
     // caller's own auth/session headers into the upstream MPP charge call —
@@ -247,12 +265,7 @@ app.post(
   },
 );
 
-app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (err.type === "entity.too.large") {
-    return res.status(413).json({ error: "Request body too large", limit: err.limit });
-  }
-  next(err);
-});
+app.use(createJsonBodyErrorHandler());
 
 let isDraining = false;
 app.get("/ready", (_req, res) => {

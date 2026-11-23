@@ -161,6 +161,31 @@ describe("POST /pharmacy/order (Issue #790)", () => {
     expect(after.body.orders.length).toBe(beforeCount);
   });
 
+  it("rejects fields that sanitize to empty with 400", async () => {
+    const chargeSpy = vi.fn(successCharge);
+    mppChargeImpl = chargeSpy;
+
+    const res = await request(app)
+      .post("/pharmacy/order")
+      .send({ drug: "????", pharmacy: "CVS", amount: 12.5 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("INVALID_SANITIZED_TEXT");
+    expect(res.body.details.field).toBe("drug");
+    expect(chargeSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns a JSON 400 for malformed JSON bodies", async () => {
+    const res = await request(app)
+      .post("/pharmacy/order")
+      .set("Content-Type", "application/json")
+      .send("{bad json");
+
+    expect(res.status).toBe(400);
+    expect(res.headers["content-type"]).toMatch(/application\/json/);
+    expect(res.body.error).toBe("Invalid JSON body");
+  });
+
   it("does not forward the caller's Authorization/Cookie headers to the upstream MPP call", async () => {
     mppChargeImpl = successCharge;
 

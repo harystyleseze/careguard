@@ -18,6 +18,11 @@ vi.mock("../../../shared/x402-middleware.ts", () => ({
   NETWORK: "stellar:testnet",
   OZ_FACILITATOR_URL: "https://example.invalid/facilitator",
 }));
+vi.mock("../../../shared/x402-verify-middleware.ts", () => ({
+  applyX402Middleware: vi.fn(),
+  NETWORK: "stellar:testnet",
+  OZ_FACILITATOR_URL: "https://example.invalid/facilitator",
+}));
 
 let app: Express;
 let server: Server;
@@ -88,6 +93,17 @@ describe("GET /drug/interactions (Issue #789)", () => {
     expect(res.status).toBeLessThan(500);
     expect(JSON.stringify(res.body)).not.toMatch(/at .*\(.*:\d+:\d+\)/); // no stack-trace-shaped text
     expect(JSON.stringify(res.body).toLowerCase()).not.toContain("node_modules");
+  });
+
+  it("returns a JSON 400 for malformed JSON bodies", async () => {
+    const res = await request(app)
+      .post("/drug/interactions")
+      .set("Content-Type", "application/json")
+      .send("{bad json");
+
+    expect(res.status).toBe(400);
+    expect(res.headers["content-type"]).toMatch(/application\/json/);
+    expect(res.body.error).toBe("Invalid JSON body");
   });
 });
 

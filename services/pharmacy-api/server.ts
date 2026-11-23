@@ -22,6 +22,7 @@ import { applySecurityMiddleware } from "../../shared/security-middleware.ts";
 import { createPharmacyAdminAuth } from "../../shared/pharmacy-admin-auth.ts";
 import { logger } from "../../shared/logger.ts";
 import { requestLifecycleMiddleware } from "../../shared/request-lifecycle.ts";
+import { createJsonBodyErrorHandler } from "../../shared/json-body-error.ts";
 import { metricsHandler, pharmacyUnknownDrugTotal } from "../../shared/metrics.ts";
 import type { PharmacyPricingStore } from "./db.ts";
 import { createPharmacyPricingStore } from "./db.ts";
@@ -291,16 +292,12 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
     }
   });
 
-  app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (err.type === "entity.too.large") {
-      return res.status(413).json({
-        error: "Request body too large",
-        code: "BODY_TOO_LARGE",
-        details: { limit: err.limit },
-      });
-    }
-    next(err);
-  });
+  app.use(
+    createJsonBodyErrorHandler({
+      code: "INVALID_JSON_BODY",
+      includeDetails: true,
+    }),
+  );
 
   app.get("/ready", (_req, res) => {
     if (isDraining) {
