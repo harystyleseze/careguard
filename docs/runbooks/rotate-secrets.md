@@ -110,6 +110,21 @@ Set a recurring reminder every 90 days. After each rotation, append a dated entr
 
 ---
 
+## Game-Day Drill: Quarterly Rotation Rehearsal
+
+Rehearse the full quarterly calendar in one timed sitting against staging:
+
+1. **Agent wallet (dry-run):** Run `npx tsx scripts/rotate-agent-wallet.ts` (no `--execute`) against staging and review the printed XLM/USDC sweep plan.
+2. **Console & secret rotations:** Rehearse OZ API key, LLM API key, and MPP secret rotation steps back-to-back in staging/sandbox consoles.
+3. **Compliance audit entries:** Run `npm run drill:rotate-secrets` (or append manually) to verify a dated `secret.rotated` entry is written to `data/audit.log.jsonl` for each of the four secrets.
+4. **Calendar sizing:** Measure total elapsed time against the 90-day cadence and file follow-up issues for any ambiguous or undocumented step.
+
+| Date | Environment | Total Duration | Recommended Block | Follow-ups |
+|------|-------------|----------------|-------------------|------------|
+| _TBD_ | staging | _TBD_ | _TBD_ | _TBD_ (#966) |
+
+---
+
 ## Related
 
 - Issue [#95](https://github.com/harystyleseze/careguard/issues/95) — original spec
