@@ -170,6 +170,69 @@ groups:
             gateway, or mismatched USDC balances.
           runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/wallet-low.md"
 
+      - alert: AgentTransactionRejectionRateSustained
+        # Fire when > 10 % of agent transactions are rejected over 5 min, sustained
+        # for 10 min.  This metric tracks agent-level transaction outcomes
+        # (completed/pending/rejected) which is broader in scope than
+        # StellarTxFailureRateHigh (watches stellar_tx_submitted_total — raw
+        # network submissions only) and PolicyBlockRateSustained (watches
+        # policy_blocks_total — in-process policy enforcement only).  A
+        # rejected agent transaction can result from either a policy block or
+        # a Stellar network failure, so this alert is the union of those two
+        # failure modes at the agent level.  See metrics-naming.md §3 for the
+        # known scope overlap.
+        expr: |
+          (
+            sum(rate(agent_transactions_total{status="rejected"}[5m]))
+            /
+            sum(rate(agent_transactions_total[5m]))
+          ) > 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agent transaction rejection rate above 10 % (5 m window)"
+          description: >
+            {{ $value | humanizePercentage }} of agent transactions are being
+            rejected.  This covers both spending-policy blocks and Stellar
+            network failures — check PolicyBlockRateSustained and
+            StellarTxFailureRateHigh to narrow the cause.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/wallet-low.md"
+
+  # -------------------------------------------------------------------------
+  # Agent spending / budget overruns (#950)
+  # -------------------------------------------------------------------------
+  - name: careguard-spending
+    rules:
+      - alert: AgentSpendingBudgetOverrun
+        # Fire when the hourly spend in any category exceeds a per-category
+        # threshold derived from the monthly budgets in docs/SPENDING-POLICY.md:
+        #   medications:   medicationMonthlyBudget = $300 → $50/hr (17 % of monthly)
+        #   bills:         billMonthlyBudget     = $500 → $200/hr (40 % of monthly)
+        #   service_fees:  API costs ~$0.03/run      → $5/hr (clear runaway signal)
+        # Sustained for 10 min to avoid paging on a single large legitimate
+        # payment (e.g. a $1,000 bill) that briefly spikes the delta.
+        #
+        # agent_spending_usd is a monotonically increasing Gauge (cumulative
+        # spend by category); delta() over a 1 h window gives the spend rate.
+        expr: |
+          delta(agent_spending_usd{category="medications"}[1h]) > 50
+          or
+          delta(agent_spending_usd{category="bills"}[1h]) > 200
+          or
+          delta(agent_spending_usd{category="service_fees"}[1h]) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agent spending in category {{ $labels.category }} exceeds budget threshold"
+          description: >
+            Hourly spend for {{ $labels.category }} is above the per-category
+            budget threshold.  This may indicate a runaway agent loop or an
+            unexpected cost spike.  Check the Spending by Category dashboard
+            panel and verify the spending policy limits.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/agent-cost-overrun.md"
+
   # -------------------------------------------------------------------------
   # Agent queue depth / saturation
   # -------------------------------------------------------------------------
@@ -246,3 +309,78 @@ groups:
             The model may start truncating earlier conversation turns,
             leading to missed context and incorrect decisions.
           runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/README.md"
+
+      - alert: AgentLlmLatencyHigh
+        # Fire when the p95 LLM call latency exceeds 10 000 ms (10 s) sustained
+        # for 5 min.  Threshold rationale: dashboard-guide.md documents the
+        # normal range as 500 ms–5 s; 10 s is 2× the upper bound and indicates
+        # provider throttling or network degradation.
+        #
+        # NOTE: agent_llm_latency_ms was originally a point-in-time Gauge
+        # (latest observation only) with no distributional data.  It has since
+        # been converted to a Histogram (issue #1034) with buckets
+        # [100, 250, 500, 1000, 2000, 5000, 10000, 20000, 30000].  This alert
+        # uses histogram_quantile() to compute the p95 from the bucket data,
+        # which was not possible with the original Gauge.
+        #
+        # Cross-reference: docs/observability/dashboard-guide.md "LLM Latency"
+        # panel documents this threshold as the anomaly boundary.
+        expr: |
+          histogram_quantile(0.95, sum(rate(agent_llm_latency_ms_bucket[5m])) by (le, model)) > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM p95 latency above 10 s for model {{ $labels.model }}"
+          description: >
+            The 95th-percentile LLM call latency for model {{ $labels.model }}
+            is {{ $value }} ms.  Sustained high latency may indicate LLM
+            provider throttling or network issues.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/llm-rate-limit.md"
+
+  # -------------------------------------------------------------------------
+  # Pharmacy catalog gaps and label-cardinality abuse (#953)
+  # -------------------------------------------------------------------------
+  - name: careguard-pharmacy
+    rules:
+      - alert: PharmacyUnknownDrugRateHigh
+        # Fire when unknown-drug lookups exceed 5/min sustained for 10 min.
+        # Threshold rationale: under normal operation the pharmacy catalog
+        # covers all requested drugs.  A sustained rate of unknown-drug
+        # lookups indicates either a catalog gap (a drug that should be listed
+        # is missing) or label-cardinality abuse (a client sending arbitrary
+        # strings).  5/min is well above the near-zero baseline.
+        expr: rate(pharmacy_unknown_drug_total[5m]) * 60 > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pharmacy unknown-drug lookup rate is elevated"
+          description: >
+            {{ $value | humanize }} unknown-drug lookups per minute over the
+            last 5 min.  Check whether a legitimate drug is missing from the
+            catalog or a client is sending arbitrary drug strings.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/pharmacy-catalog-gap.md"
+
+      - alert: PharmacyUnknownDrugCardinalityHigh
+        # Fire when the number of distinct drug labels exceeds 100, sustained
+        # for 10 min.  Threshold rationale: metrics-naming.md §2.1 caps label
+        # cardinality at ~20 unique values per label.  100 distinct drug labels
+        # is 5× that limit and a clear cardinality-abuse signal — each unique
+        # drug string creates a new time series in Prometheus.
+        #
+        # This rule detects label-cardinality growth directly via
+        # count(count by (drug) (pharmacy_unknown_drug_total)), which counts
+        # the number of distinct drug label values.
+        expr: count(count by (drug) (pharmacy_unknown_drug_total)) > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pharmacy unknown-drug label cardinality is above 100 distinct values"
+          description: >
+            {{ $value }} distinct drug labels exist for
+            pharmacy_unknown_drug_total.  This is a cardinality risk — each
+            unique drug string creates a new Prometheus time series.  Consider
+            capping the label to a safe set or dropping it entirely.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/pharmacy-catalog-gap.md"

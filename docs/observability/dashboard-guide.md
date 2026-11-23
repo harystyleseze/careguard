@@ -61,6 +61,7 @@ The combined overview dashboard showing high-level health of the entire system.
 - **Type:** Timeseries
 - **Baseline:** Completed should dominate. Rejected should be near zero.
 - **Anomaly:** Rising rejected rate indicates spending policy blocks or Stellar network issues. See [runbook: wallet low](../runbooks/wallet-low.md).
+- **Alert:** `AgentTransactionRejectionRateSustained` fires when > 10 % of agent transactions are rejected for 10 min. This is broader in scope than `StellarTxFailureRateHigh` (raw network submissions) and `PolicyBlockRateSustained` (in-process policy blocks) — see [metrics-naming.md](./metrics-naming.md) §3 for the scope overlap.
 
 ### Stellar Transaction Success Rate
 - **Metric:** `rate(agent_stellar_tx_success_total[5m])`
@@ -109,6 +110,7 @@ See CareGuard Overview above.
 - **Metric:** `agent_llm_latency_ms{model}`
 - **Baseline:** Typically 500ms–5s depending on model and input size.
 - **Anomaly:** Sustained high latency may indicate LLM provider throttling or network issues.
+- **Alert:** `AgentLlmLatencyHigh` fires when the p95 latency exceeds 10 000 ms (10 s) for 5 min. See [runbook: llm-rate-limit](../runbooks/llm-rate-limit.md). The metric is a Histogram (converted from a Gauge in issue #1034); the alert uses `histogram_quantile(0.95, ...)` over the bucket data.
 
 ### LLM Errors
 - **Metric:** `agent_llm_error_total`

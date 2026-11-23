@@ -20,9 +20,9 @@ See the [Grafana dashboard guide](./dashboard-guide.md) for how these are visual
 | `agent_llm_iteration_tokens` | Gauge | `kind` | Tokens consumed in the most recent agent iteration. | Agent dashboard, per-run drill-down |
 | `agent_llm_context_usage_ratio` | Gauge | — | Latest iteration's token usage as a fraction of the model's context window. | Agent dashboard; alerts near context exhaustion |
 | `agent_llm_error_total` | Counter | — | Total LLM API errors during agent runs. | Agent dashboard error-rate panel |
-| `agent_llm_latency_ms` | Gauge | `model` | Latest observed LLM API call latency. | Agent dashboard latency panel |
-| `agent_spending_usd` | Gauge | `category` | Running USD spend, broken out by category. | Overview dashboard "LLM Cost (USD)" and budget alerts |
-| `agent_transactions_total` | Counter | — | Total Stellar transactions initiated by the agent. | Agent dashboard |
+| `agent_llm_latency_ms` | Histogram | `model` | LLM API call latency distribution (ms). Buckets: 100, 250, 500, 1k, 2k, 5k, 10k, 20k, 30k. | Agent dashboard latency panel; `AgentLlmLatencyHigh` alert |
+| `agent_spending_usd` | Gauge | `category` | Running USD spend, broken out by category. | Overview dashboard "LLM Cost (USD)", `AgentSpendingBudgetOverrun` alert |
+| `agent_transactions_total` | Counter | `status` | Total agent-initiated transactions, by outcome (`completed`/`pending`/`rejected`). | Agent dashboard "Transaction Status" panel; `AgentTransactionRejectionRateSustained` alert |
 
 ## Payments / Stellar
 
@@ -41,7 +41,7 @@ See the [Grafana dashboard guide](./dashboard-guide.md) for how these are visual
 
 | Metric | Type | Labels | Meaning | Used by |
 |---|---|---|---|---|
-| `pharmacy_unknown_drug_total` | Counter | `drug` | Total price lookups for a drug not in the catalog. | Pharmacy panel; flags catalog gaps |
+| `pharmacy_unknown_drug_total` | Counter | `drug` | Total price lookups for a drug not in the catalog. | Pharmacy panel; `PharmacyUnknownDrugRateHigh` and `PharmacyUnknownDrugCardinalityHigh` alerts |
 | `bill_audit_oversized_rejections_total` | Counter | — | Total bill-audit requests rejected for exceeding `BILL_AUDIT_MAX_ITEMS`. | Pharmacy panel; input-size guardrail visibility |
 
 ## Agent Queue
@@ -65,8 +65,11 @@ symptoms showing up in the app-level metrics above.
   have no label for which *user/session* triggered them — useful for aggregate rates,
   but you cannot currently attribute a spike to a specific caller from these metrics
   alone.
-- `agent_llm_latency_ms` and `agent_llm_iteration_tokens` are Gauges tracking only the
-  *latest* observation, not a distribution — there's no histogram/percentile view of
-  LLM latency or token usage over time.
+- `agent_llm_iteration_tokens` is a Gauge tracking only the *latest* observation,
+  not a distribution — there's no histogram/percentile view of token usage over
+  time. (`agent_llm_latency_ms` was also a Gauge but has been converted to a
+  Histogram — see the metric entry above.)
 - `pharmacy_unknown_drug_total`'s `drug` label is unbounded (any string a client
-  sends), which is a cardinality risk if abused.
+  sends), which is a cardinality risk if abused. The `PharmacyUnknownDrugRateHigh`
+  and `PharmacyUnknownDrugCardinalityHigh` alerts in `docker/prometheus/rules.yml`
+  watch for elevated lookup rates and label-cardinality growth respectively.
