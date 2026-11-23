@@ -274,4 +274,77 @@ describe("verifyWebhook", () => {
     const expected = `sha256=${createHmac("sha256", SECRET).update(`${ts}.${body}`).digest("hex")}`;
     expect(sig).toBe(expected);
   });
+
+  // ── Dual-secret rotation drill (Issue #970) ─────────────────────────────────
+
+  describe("dual-secret rotation drill (Issue #970)", () => {
+    const OLD_SECRET = "old-webhook-secret-value";
+    const NEW_SECRET = "new-webhook-secret-value";
+    const SYNTHETIC_BODY = '{"amount":"1","asset":"USDC","tx":"test"}';
+
+    it("accepts both old- and new-signed events during the overlap window", async () => {
+      const app = express();
+      app.use(express.json());
+      app.post(
+        "/webhooks/stellar/deposit",
+        verifyWebhook({ secret: NEW_SECRET, fallbackSecret: OLD_SECRET }),
+        (_req, res) => res.status(200).json({ status: "received" }),
+      );
+
+      const ts = nowSeconds();
+      const oldRes = await request(app)
+        .post("/webhooks/stellar/deposit")
+        .set({
+          "content-type": "application/json",
+          "x-webhook-timestamp": ts,
+          "x-webhook-id": `rotation-old-${ts}`,
+          "x-webhook-signature": computeWebhookSignature(OLD_SECRET, ts, SYNTHETIC_BODY),
+        })
+        .send(SYNTHETIC_BODY);
+      expect(oldRes.status).toBe(200);
+      expect(oldRes.body).toEqual({ status: "received" });
+
+      const newRes = await request(app)
+        .post("/webhooks/stellar/deposit")
+        .set({
+          "content-type": "application/json",
+          "x-webhook-timestamp": ts,
+          "x-webhook-id": `rotation-test-${ts}`,
+          "x-webhook-signature": computeWebhookSignature(NEW_SECRET, ts, SYNTHETIC_BODY),
+        })
+        .send(SYNTHETIC_BODY);
+      expect(newRes.status).toBe(200);
+      expect(newRes.body).toEqual({ status: "received" });
+
+      // Replay with same X-Webhook-Id is de-duplicated
+      const replayRes = await request(app)
+        .post("/webhooks/stellar/deposit")
+        .set({
+          "content-type": "application/json",
+          "x-webhook-timestamp": ts,
+          "x-webhook-id": `rotation-test-${ts}`,
+          "x-webhook-signature": computeWebhookSignature(NEW_SECRET, ts, SYNTHETIC_BODY),
+        })
+        .send(SYNTHETIC_BODY);
+      expect(replayRes.status).toBe(200);
+      expect(replayRes.body).toEqual({ status: "already_processed" });
+    });
+
+    it("rejects old-signed events once the old secret is removed", async () => {
+      const app = buildApp({ secret: NEW_SECRET });
+      const ts = nowSeconds();
+      const res = await request(app)
+        .post("/webhooks/stellar/deposit")
+        .set({
+          "content-type": "application/json",
+          "x-webhook-timestamp": ts,
+          "x-webhook-id": `rotation-after-cutover-${ts}`,
+          "x-webhook-signature": computeWebhookSignature(OLD_SECRET, ts, SYNTHETIC_BODY),
+        })
+        .send(SYNTHETIC_BODY);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/invalid webhook signature/i);
+    });
+  });
 });

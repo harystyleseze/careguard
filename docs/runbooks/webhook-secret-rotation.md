@@ -38,19 +38,22 @@ Keep the output — this is `NEW_SECRET`.
 
 ### 2. Enable dual-secret mode (zero-downtime)
 
-The `verifyWebhook` middleware accepts a single secret.  To rotate without
-dropping events, temporarily deploy a thin wrapper that tries the new secret
-first and falls back to the old one:
+`verifyWebhook` accepts both `secret` and `fallbackSecret` (and automatically
+reads `WEBHOOK_SECRET_NEW` + `WEBHOOK_SECRET` when called with no arguments).
+To rotate without dropping events, deploy with both secrets active:
 
 ```ts
-// In agent/server.ts, replace verifyWebhook() with:
+// In agent/server.ts:
 import { verifyWebhook } from "../shared/verify-webhook.ts";
 
 app.post(
   "/webhooks/stellar/deposit",
   express.raw({ type: "application/json" }),
-  verifyWebhook({ secret: process.env.WEBHOOK_SECRET_NEW }),
-  // TODO: remove fallback once all senders have switched
+  verifyWebhook({
+    secret: process.env.WEBHOOK_SECRET_NEW,
+    fallbackSecret: process.env.WEBHOOK_SECRET,
+  }),
+  // TODO: remove fallbackSecret once all senders have switched
   (req, res) => { /* ... */ },
 );
 ```
@@ -138,3 +141,21 @@ If the new secret causes failures before the sender has updated:
   de-duplicated by `X-Webhook-Id` in Redis/in-process cache.
 - The timestamp tolerance is ±5 minutes.  Ensure sender and receiver clocks are
   NTP-synced to avoid spurious 400s during rotation.
+
+---
+
+## Game-Day Drill
+
+Rehearse the dual-secret cutover end-to-end in staging without dropping events:
+
+1. **Overlap window:** Deploy with both `WEBHOOK_SECRET_NEW` and `WEBHOOK_SECRET` set (using `verifyWebhook({ secret: process.env.WEBHOOK_SECRET_NEW, fallbackSecret: process.env.WEBHOOK_SECRET })`). Confirm events signed with either secret return `200`.
+2. **Synthetic test event:** Run the HMAC-signed `curl` command from Step 4 above and confirm `200 {"status":"received"}`.
+3. **Timestamp & replay windows:**
+   - Send a request at `now - 299s` (accepted) and `now - 301s` (rejected with `400`, confirming ±5 min tolerance).
+   - Replay the same `X-Webhook-Id` within 10 minutes and confirm `200 {"status":"already_processed"}`.
+4. **Old-secret removal:** Remove `WEBHOOK_SECRET` / `fallbackSecret`, deploy with only the new secret, and confirm events signed with the old secret are rejected with `400`.
+5. **Follow-ups:** File a follow-up issue for any clock-skew or de-dup edge case observed during the drill.
+
+| Date | Environment | Overlap Verified? | Old Secret Rejected? | Edge Cases Filed |
+|------|-------------|-------------------|----------------------|------------------|
+| _TBD_ | staging | _TBD_ | _TBD_ | _TBD_ (#970) |
