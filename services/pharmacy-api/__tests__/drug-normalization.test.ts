@@ -1,47 +1,122 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { normalizeDrugName, PharmacyPricingStore } from "../db.ts";
+import {
+  getPharmacyPrices,
+  PRICING_DATABASE,
+} from "../../../shared/pharmacy-pricing.ts";
 
-function normalizeKeys(db: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(db).map(([k, v]) => [k.toLowerCase(), v]));
-}
+describe("Drug Name Normalization & Case-Insensitive Lookup (#911)", () => {
+  describe("normalizeDrugName unit function (from db.ts)", () => {
+    it("converts uppercase, title-case, and mixed-case drug names to lowercase", () => {
+      expect(normalizeDrugName("LISINOPRIL")).toBe("lisinopril");
+      expect(normalizeDrugName("Lisinopril")).toBe("lisinopril");
+      expect(normalizeDrugName("lIsInOpRiL")).toBe("lisinopril");
+      expect(normalizeDrugName("LisinoPril")).toBe("lisinopril");
+      expect(normalizeDrugName("lisinopril")).toBe("lisinopril");
+    });
 
-describe('StaticProvider PRICING_DATABASE key normalization', () => {
-  it('all keys are lowercase after normalization', () => {
-    const rawKeys = ['lisinopril', 'metformin', 'atorvastatin', 'amlodipine', 'omeprazole'];
-    const db = normalizeKeys(Object.fromEntries(rawKeys.map(k => [k, []])));
-    for (const key of Object.keys(db)) {
-      expect(key).toBe(key.toLowerCase());
-    }
+    it("trims leading and trailing whitespace while lowercasing", () => {
+      expect(normalizeDrugName("   atorvastatin   ")).toBe("atorvastatin");
+      expect(normalizeDrugName("\tMetformin\n")).toBe("metformin");
+    });
+
+    it("is idempotent — applying normalization repeatedly yields identical output", () => {
+      const rawNames = ["Lisinopril", "METFORMIN", "Atorvastatin", "  amlodipine  "];
+      for (const name of rawNames) {
+        const once = normalizeDrugName(name);
+        const twice = normalizeDrugName(once);
+        expect(twice).toBe(once);
+      }
+    });
+
+    it("ensures all real catalog keys in PRICING_DATABASE match normalized output", () => {
+      const catalogKeys = Object.keys(PRICING_DATABASE);
+      expect(catalogKeys.length).toBeGreaterThan(0);
+      for (const key of catalogKeys) {
+        expect(key).toBe(normalizeDrugName(key));
+      }
+    });
   });
 
-  it('getPrices lookup succeeds for title-case input (Lisinopril)', () => {
-    const database: Record<string, boolean> = { lisinopril: true };
-    expect(database['Lisinopril'.toLowerCase()]).toBe(true);
+  describe("getPharmacyPrices() case-insensitive lookups (from shared/pharmacy-pricing.ts)", () => {
+    it("lookup succeeds for title-case input (Lisinopril)", () => {
+      const result = getPharmacyPrices("Lisinopril");
+      expect(result.prices.length).toBeGreaterThan(0);
+      expect(result.usedZipCode).toBe("90210");
+    });
+
+    it("lookup succeeds for all-caps input (LISINOPRIL)", () => {
+      const result = getPharmacyPrices("LISINOPRIL");
+      expect(result.prices.length).toBeGreaterThan(0);
+    });
+
+    it("lookup succeeds for mixed-case input (lIsInOpRiL)", () => {
+      const result = getPharmacyPrices("lIsInOpRiL");
+      expect(result.prices.length).toBeGreaterThan(0);
+    });
+
+    it("lookup succeeds for camel-case input (LisinoPril)", () => {
+      const result = getPharmacyPrices("LisinoPril");
+      expect(result.prices.length).toBeGreaterThan(0);
+    });
+
+    it("lookup succeeds for already-lowercase input (lisinopril)", () => {
+      const result = getPharmacyPrices("lisinopril");
+      expect(result.prices.length).toBeGreaterThan(0);
+    });
+
+    it("lookup succeeds for whitespace-padded input (  lisinopril  )", () => {
+      const result = getPharmacyPrices("  lisinopril  ");
+      expect(result.prices.length).toBeGreaterThan(0);
+    });
+
+    it("returns identical price lists regardless of casing input", () => {
+      const lower = getPharmacyPrices("lisinopril");
+      const title = getPharmacyPrices("Lisinopril");
+      const upper = getPharmacyPrices("LISINOPRIL");
+      const mixed = getPharmacyPrices("lIsInOpRiL");
+
+      expect(title.prices).toEqual(lower.prices);
+      expect(upper.prices).toEqual(lower.prices);
+      expect(mixed.prices).toEqual(lower.prices);
+    });
+
+    it("throws a clear error for an unlisted drug", () => {
+      expect(() => getPharmacyPrices("NonExistentMedicine")).toThrow(
+        "Drug not found: NonExistentMedicine",
+      );
+    });
   });
 
-  it('getPrices lookup succeeds for all-caps input (LISINOPRIL)', () => {
-    const database: Record<string, boolean> = { lisinopril: true };
-    expect(database['LISINOPRIL'.toLowerCase()]).toBe(true);
-  });
+  describe("PharmacyPricingStore.getPrices() case-insensitivity on SQLite store", () => {
+    let store: PharmacyPricingStore;
 
-  it('getPrices lookup succeeds for mixed-case input (lIsInOpRiL)', () => {
-    const database: Record<string, boolean> = { lisinopril: true };
-    expect(database['lIsInOpRiL'.toLowerCase()]).toBe(true);
-  });
+    beforeEach(() => {
+      store = new PharmacyPricingStore({
+        dbPath: ":memory:",
+        seedData: {
+          drugs: [
+            { name: "lisinopril", displayName: "Lisinopril", defaultDosage: "10mg" },
+          ],
+          pharmacies: [
+            { id: "costco-001", name: "Costco Pharmacy", distanceMiles: 2.1 },
+          ],
+          prices: [
+            { drug: "lisinopril", pharmacyId: "costco-001", price: 3.5 },
+          ],
+        },
+      });
+    });
 
-  it('getPrices lookup succeeds for camel-case input (LisinoPril)', () => {
-    const database: Record<string, boolean> = { lisinopril: true };
-    expect(database['LisinoPril'.toLowerCase()]).toBe(true);
-  });
+    afterEach(() => {
+      store.close();
+    });
 
-  it('getPrices lookup succeeds for already-lowercase input (lisinopril)', () => {
-    const database: Record<string, boolean> = { lisinopril: true };
-    expect(database['lisinopril'.toLowerCase()]).toBe(true);
-  });
-
-  it('normalization is idempotent — applying twice gives same result', () => {
-    const rawKeys = ['Lisinopril', 'METFORMIN', 'Atorvastatin'];
-    const once = rawKeys.map(k => k.toLowerCase());
-    const twice = once.map(k => k.toLowerCase());
-    expect(once).toEqual(twice);
+    it("queries prices across various casing permutations on the SQLite store", () => {
+      const expected = store.getPrices("lisinopril");
+      expect(store.getPrices("Lisinopril")).toEqual(expected);
+      expect(store.getPrices("LISINOPRIL")).toEqual(expected);
+      expect(store.getPrices("lIsInOpRiL")).toEqual(expected);
+    });
   });
 });

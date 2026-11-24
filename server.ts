@@ -640,8 +640,25 @@ app.post("/pharmacy/drugs", requirePharmacyAdmin, (req, res) => {
     return;
   }
 
+  const payload = parsedBody.data as DrugRecordInput;
+  const sanitizedName = sanitizeUserString(payload.name);
+  const sanitizedDisplayName = payload.displayName !== undefined
+    ? sanitizeUserString(payload.displayName)
+    : undefined;
+
+  if (!sanitizedName) {
+    res.status(400).json({
+      error: "Drug name must contain safe characters",
+    });
+    return;
+  }
+
   res.status(201).json({
-    drug: pharmacyStore.upsertDrug(parsedBody.data as DrugRecordInput),
+    drug: pharmacyStore.upsertDrug({
+      ...payload,
+      name: sanitizedName,
+      displayName: sanitizedDisplayName,
+    }),
   });
 });
 
@@ -660,8 +677,25 @@ app.put("/pharmacy/drugs/:drugName", requirePharmacyAdmin, (req, res) => {
     return;
   }
 
+  const payload = parsedBody.data as DrugRecordInput;
+  const sanitizedName = sanitizeUserString(payload.name);
+  const sanitizedDisplayName = payload.displayName !== undefined
+    ? sanitizeUserString(payload.displayName)
+    : undefined;
+
+  if (!sanitizedName) {
+    res.status(400).json({
+      error: "Drug name must contain safe characters",
+    });
+    return;
+  }
+
   res.json({
-    drug: pharmacyStore.upsertDrug(parsedBody.data as DrugRecordInput),
+    drug: pharmacyStore.upsertDrug({
+      ...payload,
+      name: sanitizedName,
+      displayName: sanitizedDisplayName,
+    }),
   });
 });
 
@@ -686,10 +720,20 @@ app.post("/pharmacy/pharmacies", requirePharmacyAdmin, (req, res) => {
     return;
   }
 
+  const payload = parsedBody.data as PharmacyRecordInput;
+  const sanitizedName = sanitizeUserString(payload.name);
+  if (!sanitizedName) {
+    res.status(400).json({
+      error: "Pharmacy name must contain safe characters",
+    });
+    return;
+  }
+
   res.status(201).json({
-    pharmacy: pharmacyStore.upsertPharmacy(
-      parsedBody.data as PharmacyRecordInput,
-    ),
+    pharmacy: pharmacyStore.upsertPharmacy({
+      ...payload,
+      name: sanitizedName,
+    }),
   });
 });
 
@@ -712,10 +756,20 @@ app.put(
       return;
     }
 
+    const payload = parsedBody.data as PharmacyRecordInput;
+    const sanitizedName = sanitizeUserString(payload.name);
+    if (!sanitizedName) {
+      res.status(400).json({
+        error: "Pharmacy name must contain safe characters",
+      });
+      return;
+    }
+
     res.json({
-      pharmacy: pharmacyStore.upsertPharmacy(
-        parsedBody.data as PharmacyRecordInput,
-      ),
+      pharmacy: pharmacyStore.upsertPharmacy({
+        ...payload,
+        name: sanitizedName,
+      }),
     });
   },
 );
