@@ -33,16 +33,14 @@ describe("shared/paths.ts (Issue #928)", () => {
     expect(rawPathname.startsWith("/C:")).toBe(true); // confirms the latent bug in raw URL pathname
 
     // urlToFilePath must produce C:\... without leading slash on Windows
-    const converted = urlToFilePath(new URL("file:///C:/careguard/data"));
-    if (process.platform === "win32") {
-      expect(converted).toMatch(/^[a-zA-Z]:\\/);
-      expect(converted.startsWith("/")).toBe(false);
-    } else {
-      // On non-Windows platforms, fileURLToPath will reject or format according to POSIX,
-      // but verifying urlToFilePath handles normal file URLs safely:
-      const localUrl = new URL("../data", import.meta.url);
-      const convertedLocal = urlToFilePath(localUrl);
-      expect(typeof convertedLocal).toBe("string");
+    const converted = urlToFilePath(new URL("file:///C:/careguard/data"), "win32");
+    expect(converted).toMatch(/^[a-zA-Z]:\\/);
+    expect(converted.startsWith("/")).toBe(false);
+
+    const localUrl = new URL("../data", import.meta.url);
+    const convertedLocal = urlToFilePath(localUrl);
+    expect(typeof convertedLocal).toBe("string");
+    if (process.platform !== "win32") {
       expect(convertedLocal.startsWith("/")).toBe(true);
     }
   });

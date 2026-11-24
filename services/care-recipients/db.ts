@@ -3,7 +3,7 @@ import { createRequire } from 'module';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import path from 'path';
 import { logger } from '../../shared/logger.ts';
-import { getDataDir } from '../../shared/paths.ts';
+import { getDataFilePath } from '../../shared/paths.ts';
 import { appendAuditEntry } from '../../shared/audit-log.ts';
 import {
   type CostSplit,
@@ -194,11 +194,7 @@ function defaultDbPath(): string {
   if (process.env.NODE_ENV === 'test') {
     return ':memory:';
   }
-  // Fall back to DATA_DIR so a single-volume-mount deployment works (#1043).
-  if (process.env.DATA_DIR) {
-    return path.join(process.env.DATA_DIR, 'careguard.sqlite');
-  }
-  return path.join(getDataDir(), 'careguard.sqlite');
+  return getDataFilePath('careguard.sqlite');
 }
 
 function rowToRecipient(row: CareRecipientRow): CareRecipientEntity {
