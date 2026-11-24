@@ -28,6 +28,7 @@ import { createPharmacyPricingStore } from "./db.ts";
 import { resolveRequestedDosage } from "./dosage.ts";
 import { PRICING_DATABASE, getPharmacyPrices, getAvailableDrugs, DEFAULT_ZIP_CODE } from "../../shared/pharmacy-pricing.ts";
 import {
+  buildNoPricesFoundResponse,
   buildCompareResponse,
   DrugRecordSchema,
   PharmacyCompareQuerySchema,
@@ -284,10 +285,7 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
       );
     } catch (error) {
       pharmacyUnknownDrugTotal.inc({ drug });
-      res.status(404).json({
-        error: `No pricing records found for drug: ${drug}`,
-        code: "NOT_FOUND_DRUG",
-      });
+      res.status(404).json(buildNoPricesFoundResponse(drug));
     }
   });
 

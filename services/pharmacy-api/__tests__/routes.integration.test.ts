@@ -456,7 +456,7 @@ describe("GET /pharmacy/compare", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 404 with NO_PRICES_FOUND for a drug not in the catalog", async () => {
+  it("returns 404 with the canonical not-found body for a drug not in the catalog", async () => {
     const { app } = makeApp();
     const res = await request(app).get("/pharmacy/compare").query({ drug: "unknowndrug", zip: "90210" });
     expect(res.status).toBe(404);
