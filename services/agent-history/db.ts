@@ -2,6 +2,7 @@ import { mkdirSync } from 'fs';
 import { createRequire } from 'module';
 import { randomUUID } from 'crypto';
 import path from 'path';
+import { getDataDir } from '../../shared/paths.ts';
 import { redact, redactPII } from '../../shared/redact.ts';
 
 const require = createRequire(import.meta.url);
@@ -78,7 +79,10 @@ function defaultDbPath(): string {
   if (process.env.NODE_ENV === 'test') {
     return ':memory:';
   }
-  return new URL('../../data/careguard.sqlite', import.meta.url).pathname;
+  if (process.env.DATA_DIR) {
+    return path.join(process.env.DATA_DIR, 'careguard.sqlite');
+  }
+  return path.join(getDataDir(), 'careguard.sqlite');
 }
 
 const BARE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

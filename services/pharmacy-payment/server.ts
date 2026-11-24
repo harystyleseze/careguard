@@ -52,8 +52,9 @@ if (!MPP_SECRET_KEY) throw new Error("MPP_SECRET_KEY required in .env");
 import { existsSync, mkdirSync, accessSync, constants as fsConstants } from "fs";
 import { readFile, writeFile, rename, unlink } from "fs/promises";
 import lock from "proper-lockfile";
+import { getDataDir } from "../../shared/paths.ts";
 
-const DATA_DIR = process.env.DATA_DIR || new URL("../../data", import.meta.url).pathname;
+const DATA_DIR = getDataDir();
 const ORDERS_FILE = `${DATA_DIR}/orders.json`;
 const MPP_STORE_FILE = `${DATA_DIR}/mpp-store.json`;
 
@@ -66,7 +67,7 @@ function createMppStore(filePath: string) {
   return storeFactory.fileSystem?.(filePath) ?? Store.memory();
 }
 
-async function loadOrders(): Promise<any[]> {
+export async function loadOrders(): Promise<any[]> {
   if (!existsSync(ORDERS_FILE)) return [];
   try {
     return JSON.parse(await readFile(ORDERS_FILE, "utf-8"));
@@ -84,7 +85,7 @@ async function loadOrders(): Promise<any[]> {
  * Trade-off: File-based locking is slower than in-memory storage but is sufficient for the demo.
  * For production, consider switching to SQLite (#168) or a proper database.
  */
-async function saveOrder(order: any) {
+export async function saveOrder(order: any) {
   let release: any;
   try {
     // Acquire exclusive lock on the orders file
