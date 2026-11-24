@@ -327,6 +327,35 @@ const entrypointUrl = process.argv[1]
   ? pathToFileURL(path.resolve(process.argv[1])).href
   : "";
 
+/**
+ * Wire up a SIGTERM handler that:
+ *   1. Stops accepting new connections (`setDraining`).
+ *   2. Waits for the HTTP server to drain (`server.close`).
+ *   3. Closes the SQLite pricing-store handle (`pricingStore.close`).
+ *   4. Exits cleanly, or force-exits after `timeoutMs` if draining stalls.
+ *
+ * Exported so tests can call it without forking a child process.
+ */
+export function registerSigterm(
+  pharmApp: ReturnType<typeof createPharmacyApp>,
+  server: ReturnType<typeof pharmApp.app.listen>,
+  timeoutMs = 30_000,
+): void {
+  process.on("SIGTERM", () => {
+    logger.info("SIGTERM received. Draining server...");
+    pharmApp.setDraining(true);
+    server.close(() => {
+      pharmApp.pricingStore.close();
+      logger.info("Server and pricing store closed. Exiting process.");
+      process.exit(0);
+    });
+    setTimeout(() => {
+      logger.error("Graceful shutdown timeout. Forcing exit.");
+      process.exit(1);
+    }, timeoutMs);
+  });
+}
+
 if (import.meta.url === entrypointUrl) {
   const startedApp = defaultPharmacyApp;
   const server = startedApp.app.listen(PORT, () => {
@@ -344,16 +373,5 @@ if (import.meta.url === entrypointUrl) {
     );
   });
 
-  process.on("SIGTERM", () => {
-    logger.info("SIGTERM received. Draining server...");
-    startedApp.setDraining(true);
-    server.close(() => {
-      logger.info("Server closed. Exiting process.");
-      process.exit(0);
-    });
-    setTimeout(() => {
-      logger.error("Graceful shutdown timeout. Forcing exit.");
-      process.exit(1);
-    }, 30000);
-  });
+  registerSigterm(startedApp, server);
 }
