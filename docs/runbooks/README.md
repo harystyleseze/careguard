@@ -33,6 +33,7 @@ Operational runbooks for on-call engineers. Each runbook follows the template:
 
 | Drill | Issue | Summary |
 |---|---|---|
+| [961-leaked-secret-tabletop.md](../drills/961-leaked-secret-tabletop.md) | #961 | Testnet-only tabletop rehearsal of leaked `AGENT_SECRET_KEY` sweep & API-key revocation |
 | [962-oz-facilitator-outage.md](../drills/962-oz-facilitator-outage.md) | #962 | Block outbound OZ facilitator egress and verify fail-closed behaviour & recovery |
 | [963-agent-api-key-rotation.md](../drills/963-agent-api-key-rotation.md) | #963 | Rehearse zero-downtime three-phase `AGENT_API_KEY` rotation in staging |
 | [964-sighup-key-rotation.md](../drills/964-sighup-key-rotation.md) | #964 | Rehearse SIGHUP-based `AGENT_SECRET_KEY` rotation under live traffic & 60s TTL fallback |
