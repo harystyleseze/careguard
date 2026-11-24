@@ -3,6 +3,7 @@ import { createRequire } from 'module';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import path from 'path';
 import { logger } from '../../shared/logger.ts';
+import { getDataDir } from '../../shared/paths.ts';
 import { appendAuditEntry } from '../../shared/audit-log.ts';
 import {
   type CostSplit,
@@ -197,7 +198,7 @@ function defaultDbPath(): string {
   if (process.env.DATA_DIR) {
     return path.join(process.env.DATA_DIR, 'careguard.sqlite');
   }
-  return new URL('../../data/careguard.sqlite', import.meta.url).pathname;
+  return path.join(getDataDir(), 'careguard.sqlite');
 }
 
 function rowToRecipient(row: CareRecipientRow): CareRecipientEntity {
@@ -352,6 +353,31 @@ export class CareRecipientsStore {
         timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
+    this.migrateLegacyCaregiverColumn();
+  }
+
+  /**
+   * Migration path (#1179): databases created before the join table stored a
+   * single care_recipients.caregiver_user_id. Each non-empty value becomes an
+   * active 'owner' link, then the column is dropped. Runs at most once (the
+   * column no longer exists afterwards) and is atomic.
+   */
+  private migrateLegacyCaregiverColumn(): void {
+    const columns = this.db.prepare('PRAGMA table_info(care_recipients)').all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'caregiver_user_id')) return;
+
+    const migratedAt = new Date().toISOString();
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT OR IGNORE INTO care_recipient_caregivers
+          (recipient_id, caregiver_user_id, role, status, created_at, accepted_at)
+        SELECT id, caregiver_user_id, 'owner', 'active', ?, ?
+        FROM care_recipients
+        WHERE caregiver_user_id IS NOT NULL AND caregiver_user_id <> ''
+      `).run(migratedAt, migratedAt);
+      this.db.exec('ALTER TABLE care_recipients DROP COLUMN caregiver_user_id');
+      logger.info('[care-recipients] migrated legacy caregiver_user_id to care_recipient_caregivers');
+    });
   }
 
   private seedIfEmpty(): void {
@@ -374,38 +400,109 @@ export class CareRecipientsStore {
     logger.info('[care-recipients] seeded default recipient Rosa Garcia');
   }
 
-  list(): CareRecipientEntity[] {
+  list(caregiverUserId?: string): CareRecipientEntity[] {
+    if (caregiverUserId) {
+      const rows = this.db
+        .prepare(`
+          SELECT cr.* FROM care_recipients cr
+          JOIN care_recipient_caregivers crc ON cr.id = crc.recipient_id
+          WHERE crc.caregiver_user_id = ? AND crc.status = 'active'
+          ORDER BY cr.name ASC
+        `)
+        .all(caregiverUserId) as CareRecipientRow[];
+      return rows.map(rowToRecipient);
+    }
     const rows = this.db
       .prepare('SELECT * FROM care_recipients ORDER BY name ASC')
       .all() as CareRecipientRow[];
     return rows.map(rowToRecipient);
   }
 
-  getById(id: string): CareRecipientEntity | undefined {
+  getById(id: string, caregiverUserId?: string): CareRecipientEntity | undefined {
+    if (caregiverUserId) {
+      const row = this.db
+        .prepare(`
+          SELECT cr.* FROM care_recipients cr
+          JOIN care_recipient_caregivers crc ON cr.id = crc.recipient_id
+          WHERE cr.id = ? AND crc.caregiver_user_id = ? AND crc.status = 'active'
+        `)
+        .get(id, caregiverUserId) as CareRecipientRow | undefined;
+      return row ? rowToRecipient(row) : undefined;
+    }
     const row = this.db
       .prepare('SELECT * FROM care_recipients WHERE id = ?')
       .get(id) as CareRecipientRow | undefined;
     return row ? rowToRecipient(row) : undefined;
   }
 
-  create(input: CareRecipientInput): CareRecipientEntity {
+  create(input: CareRecipientInput, caregiverUserId?: string): CareRecipientEntity {
     // Date.now() alone collides under concurrent creates of the same name within
     // the same millisecond (duplicate PRIMARY KEY -> insert throws); a short
     // random suffix keeps ids readable while guaranteeing uniqueness.
     const base = input.name.toLowerCase().replace(/\s+/g, '_');
     const id = `${base}_${Date.now()}_${randomUUID().slice(0, 8)}`;
-    this.db.prepare(`
-      INSERT INTO care_recipients (id, name, age, medications, primary_doctor, insurance)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      input.name,
-      input.age ?? null,
-      JSON.stringify(input.medications ?? []),
-      input.primary_doctor ?? null,
-      input.insurance ?? null,
-    );
-    return this.getById(id)!;
+    const now = new Date().toISOString();
+    return this.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO care_recipients (id, name, age, medications, primary_doctor, insurance)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        input.name,
+        input.age ?? null,
+        JSON.stringify(input.medications ?? []),
+        input.primary_doctor ?? null,
+        input.insurance ?? null,
+      );
+      if (caregiverUserId) {
+        this.db.prepare(`
+          INSERT INTO care_recipient_caregivers
+            (recipient_id, caregiver_user_id, role, status, created_at, accepted_at)
+          VALUES (?, ?, 'owner', 'active', ?, ?)
+        `).run(id, caregiverUserId, now, now);
+      }
+      return this.getById(id)!;
+    });
+  }
+
+  update(id: string, input: Partial<CareRecipientInput>, caregiverUserId?: string): CareRecipientEntity | undefined {
+    return this.transaction(() => {
+      const existing = this.getById(id, caregiverUserId);
+      if (!existing) return undefined;
+
+      const name = input.name !== undefined ? input.name : existing.name;
+      const age = input.age !== undefined ? input.age : existing.age;
+      const medications = input.medications !== undefined ? input.medications : existing.medications;
+      const primary_doctor = input.primary_doctor !== undefined ? input.primary_doctor : existing.primary_doctor;
+      const insurance = input.insurance !== undefined ? input.insurance : existing.insurance;
+
+      this.db.prepare(`
+        UPDATE care_recipients
+        SET name = ?, age = ?, medications = ?, primary_doctor = ?, insurance = ?
+        WHERE id = ?
+      `).run(
+        name,
+        age ?? null,
+        JSON.stringify(medications ?? []),
+        primary_doctor ?? null,
+        insurance ?? null,
+        id,
+      );
+      return this.getById(id)!;
+    });
+  }
+
+  delete(id: string, caregiverUserId?: string): boolean {
+    return this.transaction(() => {
+      const existing = this.getById(id, caregiverUserId);
+      if (!existing) return false;
+
+      this.db.prepare('DELETE FROM approval_delegations WHERE recipient_id = ?').run(id);
+      this.db.prepare('DELETE FROM side_effect_entries WHERE recipient_id = ?').run(id);
+      this.db.prepare('DELETE FROM cost_splits WHERE recipient_id = ?').run(id);
+      const res = this.db.prepare('DELETE FROM care_recipients WHERE id = ?').run(id);
+      return Number(res.changes) > 0;
+    });
   }
 
   // ── Caregiver links (#1179) ─────────────────────────────────────────────────

@@ -103,6 +103,7 @@ Schedule the following in your team's calendar every 3 months:
 | LLM API key | Regenerate in provider console |
 | MPP_SECRET_KEY | `openssl rand -hex 32` and update env |
 | JWT secret (once #10 lands) | Dual-verify rotation |
+| Audit-log tamper game-day drill | Run `npx tsx scripts/drill-audit-tamper.ts` & time detection/lockdown per `docs/runbooks/audit-log-tamper-detected.md` |
 
 **Suggested calendar entry:** `CareGuard secret rotation — Q[1/2/3/4]`
 

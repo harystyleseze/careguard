@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   MedicationOrderSchema,
   OrderAmountSchema,
+  isKnownDrugPharmacyPair,
 } from "../validation.ts";
 
 describe("OrderAmountSchema", () => {
@@ -37,6 +38,12 @@ describe("OrderAmountSchema", () => {
     expect(() => OrderAmountSchema.parse("Infinity")).toThrow();
   });
 
+  it("rejects string amounts with trailing garbage", () => {
+    expect(() => OrderAmountSchema.parse("10abc")).toThrow();
+    expect(() => OrderAmountSchema.parse("5.00x")).toThrow();
+    expect(() => OrderAmountSchema.parse("10 ")).toThrow();
+  });
+
   it("rejects overlong drug names", () => {
     expect(() =>
       MedicationOrderSchema.parse({
@@ -45,5 +52,25 @@ describe("OrderAmountSchema", () => {
         amount: 10,
       }),
     ).toThrow();
+  });
+});
+
+describe("isKnownDrugPharmacyPair (Issue #927)", () => {
+  it("accepts known drug/pharmacy pairs from the catalog", () => {
+    expect(isKnownDrugPharmacyPair("lisinopril", "Costco Pharmacy")).toBe(true);
+    expect(isKnownDrugPharmacyPair("metformin", "CVS Pharmacy")).toBe(true);
+    expect(isKnownDrugPharmacyPair("atorvastatin", "Walgreens")).toBe(true);
+  });
+
+  it("matches drug/pharmacy case-insensitively", () => {
+    expect(isKnownDrugPharmacyPair("LISINOPRIL", "costco pharmacy")).toBe(true);
+    expect(isKnownDrugPharmacyPair("  Lisinopril  ", "  Costco Pharmacy  ")).toBe(true);
+  });
+
+  it("rejects fabricated drug/pharmacy pairs", () => {
+    expect(isKnownDrugPharmacyPair("Fabricatol", "Fake Pharmacy")).toBe(false);
+    expect(isKnownDrugPharmacyPair("lisinopril", "Nonexistent Pharmacy")).toBe(false);
+    expect(isKnownDrugPharmacyPair("Nonexistent Drug", "CVS Pharmacy")).toBe(false);
+    expect(isKnownDrugPharmacyPair("", "CVS Pharmacy")).toBe(false);
   });
 });

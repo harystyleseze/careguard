@@ -116,7 +116,7 @@ const SEVERITY_ORDER: Record<string, number> = {
   mild: 2,
 };
 
-function sortPairsBySeverity(pairs: any[]) {
+export function sortPairsBySeverity(pairs: any[]) {
   return pairs.sort((left, right) => {
     const severityDiff =
       (SEVERITY_ORDER[left.severity] ?? 3) - (SEVERITY_ORDER[right.severity] ?? 3);

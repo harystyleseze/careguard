@@ -2,6 +2,7 @@ import { mkdirSync } from "fs";
 import { createRequire } from "module";
 import path from "path";
 import { logger } from "../../shared/logger.ts";
+import { getDataDir } from "../../shared/paths.ts";
 import { PHARMACY_SEED_DATA, type PharmacySeedData } from "./seed.ts";
 
 const require = createRequire(import.meta.url);
@@ -55,7 +56,7 @@ function defaultDbPath() {
     return path.join(process.env.DATA_DIR, "pharmacy-pricing.sqlite");
   }
 
-  return new URL("../../data/pharmacy-pricing.sqlite", import.meta.url).pathname;
+  return path.join(getDataDir(), "pharmacy-pricing.sqlite");
 }
 
 export class PharmacyPricingStore {

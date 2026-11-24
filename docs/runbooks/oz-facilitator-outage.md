@@ -115,4 +115,5 @@ Action items:
 - `agent/tools.ts` — x402 payment logic per tool
 - [rotate-secrets.md](rotate-secrets.md) — if outage is caused by an expired/invalid API key
 - [wallet-low.md](wallet-low.md) — if the agent wallet ran dry mid-session
+- [Game-Day Drill #962](../drills/962-oz-facilitator-outage.md) — staging outage rehearsal & SLA timing
 - Issue [#130](https://github.com/harystyleseze/careguard/issues/130) — runbook collection spec

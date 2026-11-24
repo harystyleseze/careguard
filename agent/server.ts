@@ -71,7 +71,7 @@ import {
   validateSignerKeyForNetwork,
 } from "../shared/stellar-network.ts";
 import { verifyWebhook } from "../shared/verify-webhook.ts";
-import { requireApiKey } from "../shared/auth.ts";
+import { requireApiKey, parseCookies, requireCaregiverToken } from "../shared/auth.ts";
 import { fetchWalletBalances } from "../shared/wallet-balance.ts";
 import {
   loadRecipientAllergies,
@@ -174,56 +174,6 @@ validateSignerKeyForNetwork(process.env.AGENT_SECRET_KEY, STELLAR_CONFIG);
 const horizonServer = new Horizon.Server(STELLAR_CONFIG.horizonUrl);
 
 const _piiScrub = process.env.LLM_PII_SCRUB !== "false";
-
-function parseCookies(
-  cookieHeader: string | undefined,
-): Record<string, string> {
-  const list: Record<string, string> = {};
-  if (!cookieHeader) return list;
-  cookieHeader.split(";").forEach((cookie) => {
-    const parts = cookie.split("=");
-    list[parts.shift()!.trim()] = decodeURIComponent(parts.join("="));
-  });
-  return list;
-}
-
-function requireCaregiverToken(
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction,
-) {
-  const auth = req.headers.authorization;
-  let token: string | undefined;
-
-  if (auth?.startsWith("Bearer ")) {
-    token = auth.slice("Bearer ".length);
-  } else {
-    const cookies = parseCookies(req.headers.cookie);
-    token = cookies["caregiver_token"];
-
-    if (token) {
-      const csrfHeader = req.headers["x-csrf-token"];
-      const csrfCookie = cookies["csrf_token"];
-      if (!csrfHeader || !csrfCookie || csrfHeader !== csrfCookie) {
-        res.status(403).json({ error: "CSRF token mismatch or missing" });
-        return;
-      }
-    }
-  }
-
-  if (!token) {
-    res
-      .status(401)
-      .setHeader("WWW-Authenticate", "Bearer")
-      .json({ error: "Missing caregiver token" });
-    return;
-  }
-  if (token !== CAREGIVER_TOKEN) {
-    res.status(403).json({ error: "Invalid caregiver token" });
-    return;
-  }
-  next();
-}
 
 // SSE client registry — one entry per open /agent/stream connection
 const sseClients = new Set<express.Response>();
