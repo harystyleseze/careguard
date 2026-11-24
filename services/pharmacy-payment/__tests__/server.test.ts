@@ -152,7 +152,7 @@ vi.mock('proper-lockfile', () => ({
 // test harness that duplicates the route logic with injected dependencies.
 
 import express from 'express';
-import { MedicationOrderSchema } from '../validation.ts';
+import { MedicationOrderSchema, isKnownDrugPharmacyPair } from '../validation.ts';
 import { sanitizeUserString } from '../../../shared/sanitize.ts';
 
 function createTestApp(opts: {
@@ -178,6 +178,16 @@ function createTestApp(opts: {
     }
 
     const order = parsedOrder.data;
+
+    // Reject unknown drug/pharmacy pairs before any charge is attempted (#927).
+    if (!isKnownDrugPharmacyPair(order.drug, order.pharmacy)) {
+      res.status(400).json({
+        error: "Unknown drug or pharmacy",
+        code: "UNKNOWN_DRUG_PHARMACY_PAIR",
+      });
+      return;
+    }
+
     const safeDrug = sanitizeUserString(order.drug);
     const safePharmacy = sanitizeUserString(order.pharmacy);
 
@@ -363,6 +373,22 @@ describe('POST /pharmacy/order — 400 validation errors', () => {
       .post('/pharmacy/order')
       .send({ drug: 'Metformin', pharmacy: 'CVS', amount: 0 });
     expect(res.status).toBe(400);
+  });
+
+  it('rejects an unknown drug/pharmacy pair before any charge is attempted (Issue #927)', async () => {
+    const mppChargeMock = vi.fn().mockResolvedValue(defaultMppCharge({}));
+    const app = createTestApp({
+      mppCharge: mppChargeMock,
+      loadOrders: loadOrdersFn,
+      saveOrder: saveOrderFn,
+    });
+    const res = await request(app)
+      .post('/pharmacy/order')
+      .send({ drug: 'Fabricatol', pharmacy: 'Fake Pharmacy', amount: 10 });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('UNKNOWN_DRUG_PHARMACY_PAIR');
+    expect(mppChargeMock).not.toHaveBeenCalled();
+    expect(orderStore).toHaveLength(0);
   });
 });
 

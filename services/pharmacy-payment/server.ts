@@ -29,6 +29,7 @@ import {
 } from "../../shared/rate-limit.ts";
 import {
   MedicationOrderSchema,
+  isKnownDrugPharmacyPair,
   type MedicationOrderInput,
 } from "./validation.ts";
 import {
@@ -174,6 +175,17 @@ app.post(
     }
 
     const order = parsedOrder.data as MedicationOrderInput;
+
+    // Reject orders for drugs/pharmacies that do not exist in the catalog
+    // before any payment flow is initiated (Issue #927).
+    if (!isKnownDrugPharmacyPair(order.drug, order.pharmacy)) {
+      res.status(400).json({
+        error: "Unknown drug or pharmacy",
+        code: "UNKNOWN_DRUG_PHARMACY_PAIR",
+      });
+      return;
+    }
+
     const safeDrug = sanitizeUserString(order.drug);
     const safePharmacy = sanitizeUserString(order.pharmacy);
 

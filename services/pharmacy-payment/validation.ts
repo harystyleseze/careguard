@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { freeTextSchema } from "../../shared/free-text.ts";
+import { PRICING_DATABASE } from "../../shared/pharmacy-pricing.ts";
 
 export const OrderAmountSchema = z
   .union([z.number(), z.string()])
@@ -39,3 +40,19 @@ export const MedicationOrderSchema = z
   .strict();
 
 export type MedicationOrderInput = z.infer<typeof MedicationOrderSchema>;
+
+// Known (drug, pharmacy) pairs drawn from the shared pharmacy pricing catalog.
+// Used to reject orders for drugs/pharmacies that do not exist before any
+// payment is initiated (Issue #927).
+const KNOWN_DRUG_PHARMACY_PAIRS = new Set(
+  Object.entries(PRICING_DATABASE).flatMap(([drug, byZip]) =>
+    Object.values(byZip).flatMap((prices) =>
+      prices.map((p) => `${drug.toLowerCase()}::${p.pharmacy.toLowerCase()}`),
+    ),
+  ),
+);
+
+export function isKnownDrugPharmacyPair(drug: string, pharmacy: string): boolean {
+  const key = `${String(drug ?? "").trim().toLowerCase()}::${String(pharmacy ?? "").trim().toLowerCase()}`;
+  return KNOWN_DRUG_PHARMACY_PAIRS.has(key);
+}
