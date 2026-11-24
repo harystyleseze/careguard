@@ -42,6 +42,45 @@ describe("/recipients routes (Issue #791)", () => {
     expect(res.status).toBe(403);
   });
 
+  it("regression (#989): rejects wrong-length caregiver tokens without throwing", async () => {
+    const wrongLengthTokens = [
+      "x",
+      "short",
+      CAREGIVER_TOKEN.slice(0, -1),
+      `${CAREGIVER_TOKEN}extra`,
+      "x".repeat(5000),
+    ];
+
+    for (const wrongToken of wrongLengthTokens) {
+      const res = await request(app)
+        .get("/recipients")
+        .set("Authorization", `Bearer ${wrongToken}`);
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("Invalid caregiver token");
+    }
+  });
+
+  it("regression (#989): constant-length hash comparison eliminates token length timing leakage", async () => {
+    const shortToken = "x";
+    const sameLengthWrong = "w".repeat(CAREGIVER_TOKEN.length);
+    const longToken = "x".repeat(1000);
+
+    const resShort = await request(app)
+      .get("/recipients")
+      .set("Authorization", `Bearer ${shortToken}`);
+    expect(resShort.status).toBe(403);
+
+    const resSame = await request(app)
+      .get("/recipients")
+      .set("Authorization", `Bearer ${sameLengthWrong}`);
+    expect(resSame.status).toBe(403);
+
+    const resLong = await request(app)
+      .get("/recipients")
+      .set("Authorization", `Bearer ${longToken}`);
+    expect(resLong.status).toBe(403);
+  });
+
   it("POST /recipients creates a recipient and GET /recipients lists it back", async () => {
     const createRes = await request(app)
       .post("/recipients")
