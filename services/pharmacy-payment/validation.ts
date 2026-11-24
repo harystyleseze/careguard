@@ -8,21 +8,21 @@ export const OrderAmountSchema = z
       typeof value === "number" ? value : parseFloat(value);
     if (!Number.isFinite(parsed)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "amount must be a valid number",
       });
       return z.NEVER;
     }
     if (parsed < 0.01) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "amount must be at least $0.01",
       });
       return z.NEVER;
     }
     if (parsed > 10000) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "amount must not exceed $10,000",
       });
       return z.NEVER;

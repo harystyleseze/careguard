@@ -166,6 +166,14 @@ success it prints the total entry count and exits `0`; on the first
 mismatch it prints the failing line number/index and exits `1`
 (consumed by [`audit-log-tamper-detected.md`](../runbooks/audit-log-tamper-detected.md)).
 
+For CI and machine-readable checks, add `--json`. It emits an object with
+`ok` and `errors` fields and retains the same non-zero exit status on a failed
+verification:
+
+```bash
+npx tsx scripts/verify-audit-log.ts --json
+```
+
 To verify a **rotated archive** instead of the live file, point
 `AUDIT_FILE` at it directly:
 

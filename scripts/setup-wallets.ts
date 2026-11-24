@@ -7,13 +7,15 @@
 
 import { Keypair, Networks, TransactionBuilder, Operation, Asset, Horizon } from "@stellar/stellar-sdk";
 import { createHash, createHmac } from "crypto";
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, statSync } from "fs";
 import path from "path";
 import { pathToFileURL } from "url";
 import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from "@scure/bip39";
 import { wordlist as englishWordlist } from "@scure/bip39/wordlists/english";
 import { logger } from "../shared/logger.ts";
 import { getTargetFee } from "../shared/stellar-fee.ts";
+import { fetchWalletBalances } from "../shared/wallet-balance.ts";
+import { ArgParser } from "../shared/cli-args.ts";
 
 const HORIZON_URL = "https://horizon-testnet.stellar.org";
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
@@ -144,6 +146,7 @@ export async function resolveSetupSeed(options: {
   const cwd = options.cwd || process.cwd();
   const seedPath = path.join(cwd, DEV_SEED_FILE);
   if (existsSync(seedPath)) {
+    warnIfInsecurePermissions(seedPath);
     return {
       seed: readFileSync(seedPath, "utf-8").trim(),
       source: "file",
@@ -161,7 +164,34 @@ export async function resolveSetupSeed(options: {
 
   const seed = generateMnemonic(englishWordlist, GENERATED_MNEMONIC_STRENGTH);
   writeFileSync(seedPath, `${seed}\n`, { mode: 0o600 });
+  warnIfInsecurePermissions(seedPath);
   return { seed, source: "generated", path: seedPath };
+}
+
+/**
+ * Warns to stderr if the .dev-seed file is world- or group-readable, which
+ * matters because it can deterministically regenerate all local wallet keys.
+ * Skips gracefully on Windows where POSIX file modes don't apply.
+ */
+export function warnIfInsecurePermissions(filePath: string): void {
+  if (process.platform === "win32") return;
+
+  try {
+    const stats = statSync(filePath);
+    // POSIX mode & 0o077 — if any of owner-write, group, or other bits
+    // beyond 0o600 are set, the file is overly permissive.
+    const mode = stats.mode;
+    if ((mode & 0o077) !== 0) {
+      const currentOctal = "0" + (mode & 0o777).toString(8);
+      console.error(
+        `  ⚠ WARNING: ${filePath} has permissions ${currentOctal} (should be 0600).\n` +
+        `    This file can regenerate all local wallet keys. Fix with:\n` +
+        `      chmod 600 ${filePath}`
+      );
+    }
+  } catch {
+    // File might not exist yet or stat failed — nothing to warn about.
+  }
 }
 
 const MAX_FRIENDBOT_RETRIES = 5;
@@ -171,14 +201,13 @@ export async function verifyFundedBalance(
   publicKey: string,
   horizonServer: Horizon.Server = new Horizon.Server(HORIZON_URL),
 ): Promise<void> {
-  const account = await horizonServer.loadAccount(publicKey);
-  const xlm = account.balances.find((b: any) => b.asset_type === "native");
-  if (!xlm || parseFloat(xlm.balance) <= 0) {
+  const balances = await fetchWalletBalances(publicKey, HORIZON_URL, USDC_ISSUER);
+  if (balances.xlm <= 0) {
     throw new Error(
-      `Balance verification failed for ${publicKey}: XLM balance is ${xlm?.balance ?? "missing"}`,
+      `Balance verification failed for ${publicKey}: XLM balance is 0`,
     );
   }
-  logger.info({ wallet: publicKey.slice(0, 8), xlm: xlm.balance }, "XLM balance verified");
+  logger.info({ wallet: publicKey.slice(0, 8), xlm: balances.xlm }, "XLM balance verified");
 }
 
 export async function fundAccountWithRetry(
@@ -203,9 +232,9 @@ export async function fundAccountWithRetry(
           lastError = new Error(`Friendbot ${status}: ${text}`);
           if (attempt < MAX_FRIENDBOT_RETRIES - 1) {
             const delayMs = FRIENDBOT_RETRY_BASE_MS * Math.pow(2, attempt);
-            logger.warn(
-              { wallet: publicKey.slice(0, 8), attempt: attempt + 1, delayMs },
-              "transient Friendbot error, retrying"
+            console.log(
+              `  ⏳ Friendbot retry ${attempt + 1}/${MAX_FRIENDBOT_RETRIES} for ${publicKey.slice(0, 8)}… ` +
+              `waiting ${delayMs}ms before next attempt (HTTP ${status})`
             );
             await new Promise((resolve) => setTimeout(resolve, delayMs));
             continue;
@@ -222,9 +251,9 @@ export async function fundAccountWithRetry(
         lastError = err;
         if (attempt < MAX_FRIENDBOT_RETRIES - 1) {
           const delayMs = FRIENDBOT_RETRY_BASE_MS * Math.pow(2, attempt);
-          logger.warn(
-            { wallet: publicKey.slice(0, 8), attempt: attempt + 1, error: msg, delayMs },
-            "network error, retrying"
+          console.log(
+            `  ⏳ Friendbot retry ${attempt + 1}/${MAX_FRIENDBOT_RETRIES} for ${publicKey.slice(0, 8)}… ` +
+            `waiting ${delayMs}ms before next attempt (${msg})`
           );
           await new Promise((resolve) => setTimeout(resolve, delayMs));
           continue;
@@ -234,6 +263,11 @@ export async function fundAccountWithRetry(
     }
   }
 
+  const walletName = publicKey.slice(0, 8);
+  console.error(
+    `  ✗ Failed to fund wallet ${walletName} after ${MAX_FRIENDBOT_RETRIES} attempts. ` +
+    `Last error: ${lastError?.message ?? "unknown"}`
+  );
   throw lastError || new Error(`Failed to fund ${publicKey} after ${MAX_FRIENDBOT_RETRIES} attempts`);
 }
 
@@ -271,11 +305,8 @@ async function addUsdcTrustline(keypair: Keypair, maxRetries = 1): Promise<void>
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const account = await server.loadAccount(publicKey);
-
-      const hasTrustline = account.balances.some(
-        (b: any) => b.asset_code === "USDC" && b.asset_issuer === USDC_ISSUER
-      );
+      const balances = await fetchWalletBalances(publicKey, HORIZON_URL, USDC_ISSUER);
+      const hasTrustline = Boolean(balances.hasUsdcTrustline);
 
       if (hasTrustline) {
         logger.info({ wallet: publicKey.slice(0, 8) }, "USDC trustline already exists");
@@ -283,6 +314,7 @@ async function addUsdcTrustline(keypair: Keypair, maxRetries = 1): Promise<void>
       }
 
       const targetFee = await getTargetFee(server);
+      const account = await server.loadAccount(publicKey);
 
       const tx = new TransactionBuilder(account, {
         fee: targetFee,
@@ -316,11 +348,35 @@ async function addUsdcTrustline(keypair: Keypair, maxRetries = 1): Promise<void>
 }
 
 async function main() {
-  const writeEnv = process.argv.includes("--write-env");
-  const yes = process.argv.includes("--yes");
-  const seedArg = process.argv
-    .find((arg) => arg.startsWith("--seed="))
-    ?.slice("--seed=".length);
+  const parser = new ArgParser("setup-wallets.ts", "Creates and funds Stellar testnet wallets for CareGuard")
+    .addFlag({
+      name: "write-env",
+      description: "Write derived keys to .env file",
+      type: "boolean",
+    })
+    .addFlag({
+      name: "yes",
+      shorthand: "y",
+      description: "Skip confirmation prompts",
+      type: "boolean",
+    })
+    .addFlag({
+      name: "seed",
+      description: "Seed material (BIP-39 mnemonic or legacy hex)",
+      type: "string",
+    })
+    .addFlag({
+      name: "resume",
+      description: "Resume from .env — skip wallets whose keys are already populated",
+      type: "boolean",
+    });
+
+  const args = parser.parse();
+  const writeEnv = Boolean(args.flags["write-env"]);
+  const yes = Boolean(args.flags["yes"]);
+  const resume = Boolean(args.flags.resume);
+  const seedArg = args.flags.seed as string | undefined;
+
   logger.info("CareGuard Wallet Setup starting");
 
   const cwd = process.cwd();
@@ -341,8 +397,28 @@ async function main() {
 
   const wallets = deriveWalletsFromSeed(seed.seed);
 
+  // #1337 — When --resume is passed, read .env to find wallets whose keys are
+  // already populated and skip regenerating/funding/trustlining them.
+  const alreadySetup = new Set<string>();
+  if (resume) {
+    const envPath = path.join(cwd, ".env");
+    if (existsSync(envPath)) {
+      const envContent = readFileSync(envPath, "utf-8");
+      for (const wallet of wallets) {
+        const pubPattern = new RegExp(`^${wallet.name}_PUBLIC_KEY=G[A-Z0-9]{55}$`, "m");
+        if (pubPattern.test(envContent)) {
+          alreadySetup.add(wallet.name);
+          logger.info({ name: wallet.name }, "already set up in .env, skipping (--resume)");
+        }
+      }
+    } else {
+      logger.warn("--resume passed but no .env found, proceeding with full setup");
+    }
+  }
+
   logger.info("step 1: funding accounts via Friendbot");
   for (const wallet of wallets) {
+    if (alreadySetup.has(wallet.name)) continue;
     if (checkpoint.fundedWallets.includes(wallet.publicKey)) {
       logger.info({ name: wallet.name, wallet: wallet.publicKey.slice(0, 8) }, "already funded (from checkpoint)");
       continue;
@@ -360,6 +436,7 @@ async function main() {
 
   logger.info("step 2: adding USDC trustlines");
   for (const wallet of wallets) {
+    if (alreadySetup.has(wallet.name)) continue;
     if (checkpoint.trustedWallets.includes(wallet.publicKey)) {
       logger.info({ name: wallet.name, wallet: wallet.publicKey.slice(0, 8) }, "trustline already added (from checkpoint)");
       continue;

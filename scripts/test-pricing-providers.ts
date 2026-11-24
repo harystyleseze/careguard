@@ -3,7 +3,20 @@
  * Run with: node --import tsx scripts/test-pricing-providers.ts
  */
 
-import { createPricingProvider, StaticProvider, GoodRxProvider, CostcoRxProvider } from '../shared/pricing-sources.ts';
+import {
+  createPricingProvider,
+  StaticProvider,
+  GoodRxProvider,
+  CostcoRxProvider,
+  PRICING_PROVIDER_CONFIG,
+} from '../shared/pricing-sources.ts';
+
+function listProviders(): void {
+  console.log('Registered pricing providers:');
+  for (const provider of PRICING_PROVIDER_CONFIG) {
+    console.log(`- ${provider.name}: ${provider.description}`);
+  }
+}
 
 async function testProvider(providerName: string) {
   console.log(`\n${'='.repeat(60)}`);
@@ -37,6 +50,11 @@ async function testProvider(providerName: string) {
 }
 
 async function main() {
+  if (process.argv.includes('--list')) {
+    listProviders();
+    return;
+  }
+
   console.log('\n🏥 Pharmacy Pricing Provider Test Suite');
   console.log('Testing all available providers...\n');
   

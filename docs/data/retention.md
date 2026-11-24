@@ -188,8 +188,7 @@ this issue.
   existing "Testnet → Mainnet Cutover Gates" checklist does not yet include
   an at-rest-encryption gate; adding one before any real-patient-data
   mainnet launch is a prerequisite this doc surfaces but does not itself
-  implement (out of scope for issue #755 — see Scope Notes in
-  `implementation.md`).
+  implement (out of scope for issue #755).
 
 ---
 

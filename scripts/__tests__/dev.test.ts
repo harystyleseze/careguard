@@ -82,22 +82,18 @@ afterAll(() => {
 // Helper: load dev.ts in isolation and return the spawned mock children
 // --------------------------------------------------------------------------
 
-async function loadDev(): Promise<MockChild[]> {
-  const children: MockChild[] = [];
+import { startDevServer } from "../../scripts/dev.ts";
 
+async function loadDev(argvArgs: string[] = []): Promise<MockChild[]> {
   mockSpawn.mockClear();
   mockSpawn.mockImplementation(() => {
     const child = createMockChild();
-    children.push(child);
     return child;
   });
 
-  await vi.isolateModules(async () => {
-    // Dynamic import triggers all top-level code in dev.ts
-    await import("../../scripts/dev.ts");
-  });
+  startDevServer(["node", "scripts/dev.ts", ...argvArgs]);
 
-  return children;
+  return mockSpawn.mock.results.map((r) => r.value as MockChild);
 }
 
 // --------------------------------------------------------------------------
@@ -110,8 +106,26 @@ describe("dev.ts — multi-process dev runner (Issue #41)", () => {
     expect(mockSpawn).toHaveBeenCalledTimes(5);
   });
 
+  it("supports filtering services via --only flag", async () => {
+    const children = await loadDev(["--only=billing,drugs"]);
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
+
+    const calls = mockSpawn.mock.calls;
+    expect(calls[0][1][2]).toContain("bill-audit-api");
+    expect(calls[1][1][2]).toContain("drug-interaction-api");
+  });
+
+  it("exits with code 1 and logs error when an invalid service is passed to --only", async () => {
+    processExitSpy.mockClear();
+    await loadDev(["--only=invalid,billing"]);
+
+    expect(mockSpawn).toHaveBeenCalledTimes(0);
+    expect(processExitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("spawns each process with node --import tsx and the correct script path", async () => {
     await loadDev();
+
 
     const calls = mockSpawn.mock.calls;
     expect(calls).toHaveLength(5);
@@ -124,11 +138,11 @@ describe("dev.ts — multi-process dev runner (Issue #41)", () => {
     }
 
     // Spot-check service scripts (in SERVICES order)
-    expect(calls[0][2]).toContain("pharmacy-api");
-    expect(calls[1][2]).toContain("bill-audit-api");
-    expect(calls[2][2]).toContain("drug-interaction-api");
-    expect(calls[3][2]).toContain("pharmacy-payment");
-    expect(calls[4][2]).toContain("agent");
+    expect(calls[0][1][2]).toContain("pharmacy-api");
+    expect(calls[1][1][2]).toContain("bill-audit-api");
+    expect(calls[2][1][2]).toContain("drug-interaction-api");
+    expect(calls[3][1][2]).toContain("pharmacy-payment");
+    expect(calls[4][1][2]).toContain("agent");
   });
 
   it("routes stdout data with a per-service colour prefix", async () => {

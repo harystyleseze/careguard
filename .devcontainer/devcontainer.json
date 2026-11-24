@@ -1,0 +1,22 @@
+{
+  "name": "CareGuard",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "postCreateCommand": "npm install --legacy-peer-deps",
+  "forwardPorts": [3000, 3004, 6379, 9090, 3030],
+  "portsAttributes": {
+    "3000": { "label": "Dashboard" },
+    "3004": { "label": "API Server" },
+    "6379": { "label": "Redis" },
+    "9090": { "label": "Prometheus" },
+    "3030": { "label": "Grafana" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-vscode.vscode-typescript-next"
+      ]
+    }
+  }
+}

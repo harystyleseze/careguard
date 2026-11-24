@@ -21,13 +21,12 @@ import { createCorsMiddleware } from "../../shared/cors.ts";
 import { applySecurityMiddleware } from "../../shared/security-middleware.ts";
 import { createPharmacyAdminAuth } from "../../shared/pharmacy-admin-auth.ts";
 import { logger } from "../../shared/logger.ts";
-import { requestContextMiddleware } from "../../shared/request-context.ts";
-import { requestLoggerMiddleware } from "../../shared/request-logger.ts";
-import { pharmacyUnknownDrugTotal } from "../../shared/metrics.ts";
+import { requestLifecycleMiddleware } from "../../shared/request-lifecycle.ts";
+import { metricsHandler, pharmacyUnknownDrugTotal } from "../../shared/metrics.ts";
 import type { PharmacyPricingStore } from "./db.ts";
 import { createPharmacyPricingStore } from "./db.ts";
 import { resolveRequestedDosage } from "./dosage.ts";
-import { PRICING_DATABASE, getPharmacyPrices, getAvailableDrugs } from "../../shared/pharmacy-pricing.ts";
+import { PRICING_DATABASE, getPharmacyPrices, getAvailableDrugs, DEFAULT_ZIP_CODE } from "../../shared/pharmacy-pricing.ts";
 import {
   buildCompareResponse,
   DrugRecordSchema,
@@ -67,8 +66,7 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
   applySecurityMiddleware(app);
   app.use(createCorsMiddleware());
   app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "20kb" }));
-  app.use(requestContextMiddleware());
-  app.use(requestLoggerMiddleware());
+  app.use(requestLifecycleMiddleware());
 
   app.get("/", (_req, res) => {
     res.json({
@@ -83,6 +81,10 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
       drugCount: pricingStore.getDrugCount(),
     });
   });
+
+  // Prometheus metrics for standalone mode — shares the registry (and
+  // METRICS_TOKEN gating) with the unified server via shared/metrics.ts.
+  app.get("/metrics", metricsHandler());
 
   app.get("/pharmacy/drugs", (_req, res) => {
     const drugs = pricingStore.listDrugs();
@@ -241,6 +243,9 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
       drug: req.query.drug,
       dosage: req.query.dosage,
       zip: req.query.zip,
+      recipient: req.query.recipient,
+      recipient_id: req.query.recipient_id,
+      recipientId: req.query.recipientId,
     });
     if (!parsedQuery.success) {
       res.status(400).json({
@@ -253,10 +258,18 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
 
     const query = parsedQuery.data as any;
     const drug = query.drug.trim().toLowerCase();
-    const dosage = resolveRequestedDosage(drug, query.dosage);
+    const recipient =
+      query.recipient ||
+      query.recipient_id ||
+      query.recipientId ||
+      (req.headers["x-recipient-id"] as string | undefined);
+    const dosage = resolveRequestedDosage(drug, query.dosage, recipient);
 
     try {
-      const { prices, usedZipCode, isFallbackZip } = getPharmacyPrices(drug, query.zip);
+      const prices = pricingStore.getPrices(drug);
+      const isFallbackZip = Boolean(query.zip && query.zip !== DEFAULT_ZIP_CODE);
+      const usedZipCode = isFallbackZip ? DEFAULT_ZIP_CODE : (query.zip || DEFAULT_ZIP_CODE);
+
       res.json(
         buildCompareResponse({
           drug,
@@ -314,6 +327,35 @@ const entrypointUrl = process.argv[1]
   ? pathToFileURL(path.resolve(process.argv[1])).href
   : "";
 
+/**
+ * Wire up a SIGTERM handler that:
+ *   1. Stops accepting new connections (`setDraining`).
+ *   2. Waits for the HTTP server to drain (`server.close`).
+ *   3. Closes the SQLite pricing-store handle (`pricingStore.close`).
+ *   4. Exits cleanly, or force-exits after `timeoutMs` if draining stalls.
+ *
+ * Exported so tests can call it without forking a child process.
+ */
+export function registerSigterm(
+  pharmApp: ReturnType<typeof createPharmacyApp>,
+  server: ReturnType<typeof pharmApp.app.listen>,
+  timeoutMs = 30_000,
+): void {
+  process.on("SIGTERM", () => {
+    logger.info("SIGTERM received. Draining server...");
+    pharmApp.setDraining(true);
+    server.close(() => {
+      pharmApp.pricingStore.close();
+      logger.info("Server and pricing store closed. Exiting process.");
+      process.exit(0);
+    });
+    setTimeout(() => {
+      logger.error("Graceful shutdown timeout. Forcing exit.");
+      process.exit(1);
+    }, timeoutMs);
+  });
+}
+
 if (import.meta.url === entrypointUrl) {
   const startedApp = defaultPharmacyApp;
   const server = startedApp.app.listen(PORT, () => {
@@ -331,16 +373,5 @@ if (import.meta.url === entrypointUrl) {
     );
   });
 
-  process.on("SIGTERM", () => {
-    logger.info("SIGTERM received. Draining server...");
-    startedApp.setDraining(true);
-    server.close(() => {
-      logger.info("Server closed. Exiting process.");
-      process.exit(0);
-    });
-    setTimeout(() => {
-      logger.error("Graceful shutdown timeout. Forcing exit.");
-      process.exit(1);
-    }, 30000);
-  });
+  registerSigterm(startedApp, server);
 }

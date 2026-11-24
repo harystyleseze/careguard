@@ -4,6 +4,14 @@
  * When REDIS_URL is set, uses ioredis to connect to Redis.
  * When REDIS_URL is unset, falls back to an in-process Map-based cache with a
  * warning log. The fallback is not shared across server instances.
+ *
+ * ioredis-mock version relationship (issue #1385): ioredis-mock's major version
+ * is unrelated to ioredis's. This repo uses ioredis ^5 (resolves to 5.x) plus
+ * ioredis-mock ^8 in devDependencies; ioredis-mock 8.x declares ioredis ^5 as a
+ * peer dependency and tracks the ioredis 5.x command surface. The full surface
+ * used here — GET, SET (incl. PX/NX), INCR, DEL — is covered by ioredis-mock
+ * (see shared/__tests__/redis-ioredis-mock.test.ts). When upgrading ioredis to
+ * a new major, upgrade ioredis-mock to the 8.x line that tracks that major.
  */
 
 import Redis from "ioredis";
@@ -19,18 +27,45 @@ export interface CacheClient {
 
 // ─── In-process fallback ──────────────────────────────────────────────────────
 
-export function createInMemoryClient(): CacheClient {
+/** Expired in-memory entries are swept once per minute by default. */
+export const IN_MEMORY_SWEEP_INTERVAL_MS = 60_000;
+
+export interface InMemoryCacheClient extends CacheClient {
+  readonly size: number;
+}
+
+export function createInMemoryClient(
+  sweepIntervalMs = IN_MEMORY_SWEEP_INTERVAL_MS,
+): InMemoryCacheClient {
+  if (!Number.isFinite(sweepIntervalMs) || sweepIntervalMs <= 0) {
+    throw new RangeError("sweepIntervalMs must be a positive finite number");
+  }
+
   interface Entry {
     value: string;
     expiresAt: number | null;
   }
   const store = new Map<string, Entry>();
 
+  const sweepTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of store) {
+      if (entry.expiresAt !== null && now >= entry.expiresAt) {
+        store.delete(key);
+      }
+    }
+  }, sweepIntervalMs);
+  sweepTimer.unref();
+
   function live(entry: Entry): boolean {
     return entry.expiresAt === null || Date.now() < entry.expiresAt;
   }
 
   return {
+    get size() {
+      return store.size;
+    },
+
     async get(key) {
       const entry = store.get(key);
       if (!entry || !live(entry)) {

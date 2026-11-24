@@ -6,12 +6,25 @@
  * - Uses dynamic import so the dependency is optional at runtime: if
  *   @sentry/node isn't installed, init silently no-ops instead of crashing.
  * - All payloads pass through redact() before being sent.
+ * - Aligned on @sentry/node ^10.62.0 to match dashboard @sentry/nextjs ^10.62.0 (v10 line).
+ *   v8+ removed Sentry.Handlers.* in favor of OpenTelemetry auto-instrumentation.
+ *   v10 keeps that model (OTEL v2) — see https://docs.sentry.io/platforms/javascript/guides/express/
+ *   For error monitoring without tracing, no requestHandler middleware is needed; the SDK instruments
+ *   http/express automatically when Sentry.init() runs first. We keep a backwards-compatible
+ *   requestHandler/errorHandler surface and fall back to manual captureException for 5xx when
+ *   Handlers is absent. When Sentry.setupExpressErrorHandler(app) is available (v8+/v10), it is
+ *   the documented way to enrich error events with route context — attachSentry will prefer it
+ *   when present, otherwise the 5xx-only manual handler still ensures error capture in staging.
  *
  * Usage:
  *   const sentry = await initSentry({ service: "agent" });
  *   app.use(sentry.requestHandler());
  *   // ...routes...
  *   app.use(sentry.errorHandler());
+ *   // or:
+ *   const done = attachSentry(app, sentry); // before routes
+ *   // ...routes...
+ *   done(); // after routes
  */
 
 import "dotenv/config";
@@ -35,6 +48,9 @@ const NOOP: SentryHandle = {
   captureException: () => {},
 };
 
+// Cached Sentry module for attachSentry's v10 setupExpressErrorHandler path.
+let _cachedSentry: any = null;
+
 function shouldEnable(): boolean {
   if (!process.env.SENTRY_DSN) return false;
   const env = process.env.NODE_ENV || "development";
@@ -50,12 +66,17 @@ export async function initSentry(opts: { service: string }): Promise<SentryHandl
     // Dynamic import keeps the dependency optional. If it's not installed,
     // we degrade gracefully instead of crashing the server.
     Sentry = await import("@sentry/node");
+    _cachedSentry = Sentry;
   } catch {
     logger.warn("Sentry: SENTRY_DSN set but @sentry/node not installed — skipping");
     return NOOP;
   }
 
-  Sentry.init({
+  // Build init options compatible with both v8 and v10.
+  // v10 (OTEL v2) keeps the same top-level keys (dsn, environment, release,
+  // tracesSampleRate, serverName, initialScope, beforeSend) but integrations
+  // have moved from class-based to function-based and Handlers.* is gone.
+  const initOptions: any = {
     dsn: process.env.SENTRY_DSN,
     environment: process.env.SENTRY_ENVIRONMENT || process.env.NODE_ENV || "development",
     release: process.env.SENTRY_RELEASE,
@@ -82,14 +103,41 @@ export async function initSentry(opts: { service: string }): Promise<SentryHandl
       }
       return event;
     },
-  });
+  };
+
+  // v8+/v10: Handlers.* removed — http/express are auto-instrumented via OTEL
+  // when Sentry.init() runs before other imports. Add function-based integrations
+  // only when the SDK exposes them, so v8 and v10 both work without warnings.
+  try {
+    const integrations: any[] = [];
+    // requestDataIntegration replaces Handlers.requestHandler user/request extraction
+    if (typeof Sentry.requestDataIntegration === "function") {
+      integrations.push(Sentry.requestDataIntegration());
+    } else if (typeof Sentry.httpIntegration === "function" && !Sentry.Handlers) {
+      integrations.push(Sentry.httpIntegration());
+    }
+    // expressIntegration adds route transaction names when tracing is enabled
+    if (typeof Sentry.expressIntegration === "function" && !Sentry.Handlers) {
+      integrations.push(Sentry.expressIntegration());
+    }
+    if (integrations.length > 0) {
+      initOptions.integrations = integrations;
+    }
+  } catch {
+    // integration setup is best-effort; never block init
+  }
+
+  Sentry.init(initOptions);
 
   // Express integration shape varies across @sentry/node versions: prefer the
-  // dedicated handlers when available, fall back to a manual error path.
+  // dedicated handlers when available (v7), otherwise no-op/fallback for v8+/v10.
+  // In v10, Sentry.setupExpressErrorHandler(app) is the documented error handler
+  // (call after routes) — we provide a 5xx-only fallback so error capture still
+  // works when that API is not used via attachSentry.
   const requestHandler: RequestHandler =
     typeof Sentry.Handlers?.requestHandler === "function"
       ? Sentry.Handlers.requestHandler()
-      : NOOP_REQUEST;
+      : NOOP_REQUEST; // v8+/v10: OTEL auto-instruments, no middleware needed
 
   const errorHandler: ErrorRequestHandler =
     typeof Sentry.Handlers?.errorHandler === "function"
@@ -100,9 +148,12 @@ export async function initSentry(opts: { service: string }): Promise<SentryHandl
           },
         })
       : ((err: any, _req, _res, next) => {
-          try {
-            Sentry.captureException(err);
-          } catch {}
+          const status = err?.status || err?.statusCode || 500;
+          if (status >= 500) {
+            try {
+              Sentry.captureException(err);
+            } catch {}
+          }
           next(err);
         });
 
@@ -124,8 +175,26 @@ export async function initSentry(opts: { service: string }): Promise<SentryHandl
  * Convenience: install both request and error handlers around a router.
  * Call this BEFORE registering routes; it returns a function to call AFTER
  * routes are registered, which installs the error handler.
+ *
+ * On Sentry v10 (and v8), the SDK auto-instruments Express via OTEL, so
+ * requestHandler is a no-op. For rich error context (route name, trace),
+ * the documented API is Sentry.setupExpressErrorHandler(app) called after
+ * routes — we try that first when the cached SDK exposes it, and fall back
+ * to the 5xx-only captureException handler otherwise.
  */
 export function attachSentry(app: Application, sentry: SentryHandle): () => void {
   app.use(sentry.requestHandler());
-  return () => app.use(sentry.errorHandler());
+  return () => {
+    // Prefer the v8+/v10 helper when available for full route/trace context.
+    const Sany: any = _cachedSentry;
+    if (Sany && typeof Sany.setupExpressErrorHandler === "function") {
+      try {
+        Sany.setupExpressErrorHandler(app);
+        return;
+      } catch {
+        // fall through to generic handler
+      }
+    }
+    app.use(sentry.errorHandler());
+  };
 }

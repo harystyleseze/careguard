@@ -44,6 +44,7 @@ services:
         condition: service_started
 
   dashboard:
+    profiles: [full]
     build:
       context: .
       dockerfile: dashboard/Dockerfile
@@ -82,6 +83,7 @@ services:
     networks: [careguard]
 
   prometheus:
+    profiles: [monitoring]
     image: prom/prometheus:v2.55.0
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -104,6 +106,7 @@ services:
         condition: service_started
 
   grafana:
+    profiles: [monitoring]
     image: grafana/grafana:11.3.0
     environment:
       GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"

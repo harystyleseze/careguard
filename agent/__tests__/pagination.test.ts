@@ -41,6 +41,14 @@ describe('Transaction Pagination', () => {
     expect(response.body.transactions).toEqual([]);
   });
 
+  it('should clamp limit to the maximum page size (issue #1302)', async () => {
+    const response = await auth(request(app).get('/agent/transactions?limit=100000'))
+      .expect(200);
+
+    expect(response.body.pagination.limit).toBe(500);
+    expect(response.body.transactions.length).toBeLessThanOrEqual(500);
+  });
+
   it('should respect offset parameter', async () => {
     const response = await auth(request(app).get('/agent/transactions?limit=5&offset=10'))
       .expect(200);

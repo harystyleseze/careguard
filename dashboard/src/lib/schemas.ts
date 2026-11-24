@@ -1,6 +1,4 @@
-import { z } from 'zod';
-import { getTranslations } from '../i18n';
-import { POLICY_FIELD_T_KEY } from './policy-field-labels';
+import { z } from "zod";
 
 export const SpendingPolicyInput = z.object({
   dailyLimit: z.number(),
@@ -9,6 +7,7 @@ export const SpendingPolicyInput = z.object({
   billMonthlyBudget: z.number(),
   approvalThreshold: z.number(),
   holdTimeSeconds: z.number(),
+  warningThresholdPct: z.number().optional(),
 });
 
 export type SpendingPolicyInput = z.infer<typeof SpendingPolicyInput>;
@@ -24,16 +23,15 @@ export type PolicyValidation = {
   isValid: boolean;
 };
 
-// Validation messages use the English labels — same source of truth
-// (POLICY_FIELD_T_KEY + translation entries) that policy-tab.tsx uses to
-// render the field labels the caregiver actually sees (#1144).
-const enPolicy = getTranslations('en').policy;
-const FIELD_LABEL: Record<keyof SpendingPolicyInput, string> = Object.fromEntries(
-  (Object.keys(POLICY_FIELD_T_KEY) as Array<keyof SpendingPolicyInput>).map((field) => [
-    field,
-    enPolicy[POLICY_FIELD_T_KEY[field] as keyof typeof enPolicy],
-  ]),
-) as Record<keyof SpendingPolicyInput, string>;
+const FIELD_LABEL: Record<keyof SpendingPolicyInput, string> = {
+  dailyLimit: "Daily limit",
+  monthlyLimit: "Monthly limit",
+  medicationMonthlyBudget: "Medication budget",
+  billMonthlyBudget: "Bill budget",
+  approvalThreshold: "Approval threshold",
+  holdTimeSeconds: "Hold time before auto-approval (seconds)",
+  warningThresholdPct: "Budget warning threshold (%)",
+};
 
 export function validatePolicy(input: unknown): PolicyValidation {
   const errors: PolicyFieldError[] = [];
@@ -55,37 +53,36 @@ export function validatePolicy(input: unknown): PolicyValidation {
 
   const v = parsed.data;
   const moneyFields: (keyof SpendingPolicyInput)[] = [
-    'dailyLimit',
-    'monthlyLimit',
-    'medicationMonthlyBudget',
-    'billMonthlyBudget',
-    'approvalThreshold',
+    "dailyLimit",
+    "monthlyLimit",
+    "medicationMonthlyBudget",
+    "billMonthlyBudget",
+    "approvalThreshold",
   ];
   // holdTimeSeconds may be 0 (no hold), money fields must be ≥ 1 (#211)
-  const allFields: (keyof SpendingPolicyInput)[] = [...moneyFields, 'holdTimeSeconds'];
+  const allFields: (keyof SpendingPolicyInput)[] = [
+    ...moneyFields,
+    "holdTimeSeconds",
+  ];
 
   for (const f of allFields) {
-    if (!Number.isFinite(v[f])) {
+    const val = v[f];
+    if (val === undefined || !Number.isFinite(val)) {
       errors.push({
         field: f,
         message: `${FIELD_LABEL[f]} must be a finite number`,
       });
-    } else if (moneyFields.includes(f as any) && v[f] < 1) {
+    } else if (moneyFields.includes(f as any) && val < 1) {
       errors.push({
         field: f,
         message: `${FIELD_LABEL[f]} must be at least 1`,
       });
-    } else if (f === 'holdTimeSeconds' && v[f] < 0) {
+    } else if (f === "holdTimeSeconds" && val < 0) {
       errors.push({
         field: f,
         message: `${FIELD_LABEL[f]} cannot be negative`,
       });
-    } else if (f === 'holdTimeSeconds' && v[f] > 86400) {
-      errors.push({
-        field: f,
-        message: `${FIELD_LABEL[f]} cannot exceed 86,400`,
-      });
-    } else if (moneyFields.includes(f as any) && v[f] > 50000) {
+    } else if (val > 50000) {
       errors.push({
         field: f,
         message: `${FIELD_LABEL[f]} cannot exceed 50,000`,
@@ -99,8 +96,8 @@ export function validatePolicy(input: unknown): PolicyValidation {
     v.dailyLimit > v.monthlyLimit
   ) {
     errors.push({
-      field: 'dailyLimit',
-      message: 'Daily limit cannot exceed monthly limit',
+      field: "dailyLimit",
+      message: "Daily limit cannot exceed monthly limit",
     });
   }
 
@@ -115,9 +112,9 @@ export function validatePolicy(input: unknown): PolicyValidation {
     v.approvalThreshold > approvalCap
   ) {
     errors.push({
-      field: 'approvalThreshold',
+      field: "approvalThreshold",
       message:
-        'Approval threshold cannot exceed the smallest budget cap (daily, medication, bill)',
+        "Approval threshold cannot exceed the smallest budget cap (daily, medication, bill)",
     });
   }
 
@@ -128,10 +125,25 @@ export function validatePolicy(input: unknown): PolicyValidation {
     v.medicationMonthlyBudget + v.billMonthlyBudget > v.monthlyLimit
   ) {
     errors.push({
-      field: 'medicationMonthlyBudget',
+      field: "medicationMonthlyBudget",
       message:
-        'Medication and bill budgets together cannot exceed monthly limit',
+        "Medication and bill budgets together cannot exceed monthly limit",
     });
+  }
+
+  // warningThresholdPct is optional; validate it only when provided
+  if (v.warningThresholdPct !== undefined) {
+    if (
+      !Number.isInteger(v.warningThresholdPct) ||
+      v.warningThresholdPct < 1 ||
+      v.warningThresholdPct > 99
+    ) {
+      errors.push({
+        field: "warningThresholdPct",
+        message:
+          "Budget warning threshold must be a whole number between 1 and 99",
+      });
+    }
   }
 
   return { errors, warnings, isValid: errors.length === 0 };

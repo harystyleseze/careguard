@@ -30,7 +30,7 @@ import {
   beforeEach,
   afterEach,
 } from "vitest";
-import {
+import fs, {
   writeFileSync,
   readFileSync,
   existsSync,
@@ -115,27 +115,26 @@ function verifyChain(filePath: string): { valid: boolean; entries: number } {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Suite 1 — renameSync failure during rotation does not break the hash chain
+// Suite 1 — rename failure during rotation does not break the hash chain
 // ══════════════════════════════════════════════════════════════════════════════
 describe("Chaos #811 — renameSync failure during rotation", () => {
   it("hash chain remains valid when renameSync throws (disk full simulation)", async () => {
     // Write a few entries
-    appendAuditEntry({ event: "pre.rotation.1", actor: "system" });
-    appendAuditEntry({ event: "pre.rotation.2", actor: "system" });
+    await appendAuditEntry({ event: "pre.rotation.1", actor: "system" });
+    await appendAuditEntry({ event: "pre.rotation.2", actor: "system" });
 
-    // Inject a renameSync failure on the NEXT call (simulates disk-full mid-rotation)
-    const { renameSync } = await import("fs");
+    // Inject a rename failure on the NEXT call (simulates disk-full mid-rotation)
     const renameSpy = vi
-      .spyOn(await import("fs"), "renameSync")
-      .mockImplementationOnce(() => {
-        throw Object.assign(new Error("ENOSPC: no space left on device, rename"), {
+      .spyOn(fs.promises, "rename")
+      .mockRejectedValueOnce(
+        Object.assign(new Error("ENOSPC: no space left on device, rename"), {
           code: "ENOSPC",
-        });
-      });
+        }),
+      );
 
     // Attempt a third append — rotation may be triggered
     // The important thing is the chain stays valid regardless
-    appendAuditEntry({ event: "post.rotation.attempt", actor: "system" });
+    await appendAuditEntry({ event: "post.rotation.attempt", actor: "system" });
 
     renameSpy.mockRestore();
 
@@ -152,15 +151,15 @@ describe("Chaos #811 — renameSync failure during rotation", () => {
       .mockImplementation(() => true);
 
     const renameSpy = vi
-      .spyOn(await import("fs"), "renameSync")
-      .mockImplementationOnce(() => {
-        throw Object.assign(
+      .spyOn(fs.promises, "rename")
+      .mockRejectedValueOnce(
+        Object.assign(
           new Error("ENOSPC: no space left on device, rename"),
           { code: "ENOSPC" },
-        );
-      });
+        ),
+      );
 
-    appendAuditEntry({ event: "disk.pressure.test", actor: "system" });
+    await appendAuditEntry({ event: "disk.pressure.test", actor: "system" });
 
     renameSpy.mockRestore();
 
@@ -187,46 +186,47 @@ describe("Chaos #811 — low/zero free space: records not silently dropped", () 
       .spyOn(process.stderr, "write")
       .mockImplementation(() => true);
 
-    // Simulate appendFileSync throwing ENOSPC (disk full during write)
+    // Simulate appendFile throwing ENOSPC (disk full during write)
     const appendSpy = vi
-      .spyOn(await import("fs"), "appendFileSync")
-      .mockImplementationOnce(() => {
-        throw Object.assign(
+      .spyOn(fs.promises, "appendFile")
+      .mockRejectedValueOnce(
+        Object.assign(
           new Error("ENOSPC: no space left on device, write"),
           { code: "ENOSPC" },
-        );
-      });
+        ),
+      );
 
-    appendAuditEntry({ event: "disk.full.write", actor: "system" });
+    await appendAuditEntry({ event: "disk.full.write", actor: "system" });
+
+    const stderrMessages = stderrSpy.mock.calls
+      .flat()
+      .map(String)
+      .join(" ");
 
     appendSpy.mockRestore();
     stderrSpy.mockRestore();
 
     // Verify that the error was not swallowed — stderr must have been called
-    const stderrMessages = stderrSpy.mock.calls
-      .flat()
-      .map(String)
-      .join(" ");
     expect(stderrMessages).toMatch(/audit-log|failed|write/i);
   });
 
   it("a single failed append does not corrupt the previously written entries", async () => {
     // Write two valid entries first
-    appendAuditEntry({ event: "good.entry.1", actor: "actor-a" });
-    appendAuditEntry({ event: "good.entry.2", actor: "actor-b" });
+    await appendAuditEntry({ event: "good.entry.1", actor: "actor-a" });
+    await appendAuditEntry({ event: "good.entry.2", actor: "actor-b" });
 
     // Simulate ENOSPC on the third write
     const appendSpy = vi
-      .spyOn(await import("fs"), "appendFileSync")
-      .mockImplementationOnce(() => {
-        throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
-      });
+      .spyOn(fs.promises, "appendFile")
+      .mockRejectedValueOnce(
+        Object.assign(new Error("ENOSPC"), { code: "ENOSPC" }),
+      );
 
     const stderrSpy = vi
       .spyOn(process.stderr, "write")
       .mockImplementation(() => true);
 
-    appendAuditEntry({ event: "failed.entry.3", actor: "actor-c" });
+    await appendAuditEntry({ event: "failed.entry.3", actor: "actor-c" });
 
     appendSpy.mockRestore();
     stderrSpy.mockRestore();
@@ -248,29 +248,29 @@ describe("Chaos #811 — low/zero free space: records not silently dropped", () 
 // ══════════════════════════════════════════════════════════════════════════════
 describe("Chaos #811 — post-rotation-failure appends", () => {
   it("appends continue on the existing file after a failed rotation", async () => {
-    appendAuditEntry({ event: "before.rotation.failure", actor: "sys" });
+    await appendAuditEntry({ event: "before.rotation.failure", actor: "sys" });
 
-    // Cause the next renameSync to fail
+    // Cause the next rename to fail
     const renameSpy = vi
-      .spyOn(await import("fs"), "renameSync")
-      .mockImplementationOnce(() => {
-        throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
-      });
+      .spyOn(fs.promises, "rename")
+      .mockRejectedValueOnce(
+        Object.assign(new Error("ENOSPC"), { code: "ENOSPC" }),
+      );
 
     const stderrSpy = vi
       .spyOn(process.stderr, "write")
       .mockImplementation(() => true);
 
     // This append may trigger rotation; rename fails
-    appendAuditEntry({ event: "during.rotation.failure", actor: "sys" });
+    await appendAuditEntry({ event: "during.rotation.failure", actor: "sys" });
 
     renameSpy.mockRestore();
     stderrSpy.mockRestore();
 
     // Subsequent append — must succeed without throwing
-    expect(() => {
-      appendAuditEntry({ event: "after.rotation.failure", actor: "sys" });
-    }).not.toThrow();
+    await expect(
+      appendAuditEntry({ event: "after.rotation.failure", actor: "sys" }),
+    ).resolves.not.toThrow();
 
     // The active file must still exist and the chain must be valid
     expect(existsSync(TEST_FILE)).toBe(true);
@@ -278,24 +278,22 @@ describe("Chaos #811 — post-rotation-failure appends", () => {
   });
 
   it("chain is continuous across appends that follow a failed rotation", async () => {
-    appendAuditEntry({ event: "entry.1", actor: "sys" });
+    await appendAuditEntry({ event: "entry.1", actor: "sys" });
 
     // Force a rename failure
     const renameSpy = vi
-      .spyOn(await import("fs"), "renameSync")
-      .mockImplementationOnce(() => {
-        throw new Error("ENOSPC");
-      });
+      .spyOn(fs.promises, "rename")
+      .mockRejectedValueOnce(new Error("ENOSPC"));
     const stderrSpy = vi
       .spyOn(process.stderr, "write")
       .mockImplementation(() => true);
 
-    appendAuditEntry({ event: "entry.2.rotation.attempt.failed", actor: "sys" });
+    await appendAuditEntry({ event: "entry.2.rotation.attempt.failed", actor: "sys" });
 
     renameSpy.mockRestore();
     stderrSpy.mockRestore();
 
-    appendAuditEntry({ event: "entry.3.after.failure", actor: "sys" });
+    await appendAuditEntry({ event: "entry.3.after.failure", actor: "sys" });
 
     // Every entry that made it to disk must link correctly in the chain
     if (existsSync(TEST_FILE)) {
@@ -308,9 +306,9 @@ describe("Chaos #811 — post-rotation-failure appends", () => {
 // Suite 4 — Verify path detects gap / tamper from interrupted rotation
 // ══════════════════════════════════════════════════════════════════════════════
 describe("Chaos #811 — verify detects tamper or gap after interrupted rotation", () => {
-  it("tampered prevHash is detected by the chain verifier", () => {
-    appendAuditEntry({ event: "entry.a", actor: "actor-1" });
-    appendAuditEntry({ event: "entry.b", actor: "actor-2" });
+  it("tampered prevHash is detected by the chain verifier", async () => {
+    await appendAuditEntry({ event: "entry.a", actor: "actor-1" });
+    await appendAuditEntry({ event: "entry.b", actor: "actor-2" });
 
     const content = readFileSync(TEST_FILE, "utf-8")
       .split("\n")
@@ -340,10 +338,10 @@ describe("Chaos #811 — verify detects tamper or gap after interrupted rotation
     }).toThrow(); // prevHash mismatch → expect().toBe throws
   });
 
-  it("a gap (missing entry) is detectable because prevHash will not match", () => {
-    appendAuditEntry({ event: "gap.1", actor: "a" });
-    appendAuditEntry({ event: "gap.2", actor: "b" });
-    appendAuditEntry({ event: "gap.3", actor: "c" });
+  it("a gap (missing entry) is detectable because prevHash will not match", async () => {
+    await appendAuditEntry({ event: "gap.1", actor: "a" });
+    await appendAuditEntry({ event: "gap.2", actor: "b" });
+    await appendAuditEntry({ event: "gap.3", actor: "c" });
 
     // Simulate an interrupted rotation that dropped the middle entry
     const lines = readFileSync(TEST_FILE, "utf-8")
@@ -377,20 +375,21 @@ describe("Chaos #811 — verify detects tamper or gap after interrupted rotation
 describe("Chaos #811 — recovery after disk-pressure is relieved", () => {
   it("rotation succeeds and chain remains continuous once disk space returns", async () => {
     // Seed the active file with two valid entries
-    appendAuditEntry({ event: "recovery.seed.1", actor: "sys" });
-    appendAuditEntry({ event: "recovery.seed.2", actor: "sys" });
+    await appendAuditEntry({ event: "recovery.seed.1", actor: "sys" });
+    await appendAuditEntry({ event: "recovery.seed.2", actor: "sys" });
 
     // Simulate disk full: first rename fails, second succeeds
     let renameCallCount = 0;
+    const origRename = fs.promises.rename;
     const renameSpy = vi
-      .spyOn(await import("fs"), "renameSync")
-      .mockImplementation((...args: Parameters<typeof import("fs").renameSync>) => {
+      .spyOn(fs.promises, "rename")
+      .mockImplementation((...args) => {
         renameCallCount++;
         if (renameCallCount === 1) {
-          throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
+          return Promise.reject(Object.assign(new Error("ENOSPC"), { code: "ENOSPC" }));
         }
         // Allow subsequent renames to proceed normally
-        return (vi.importActual("fs") as any).renameSync(...args);
+        return origRename.apply(fs.promises, args);
       });
 
     const stderrSpy = vi
@@ -398,24 +397,26 @@ describe("Chaos #811 — recovery after disk-pressure is relieved", () => {
       .mockImplementation(() => true);
 
     // This will fail rotation (disk full)
-    appendAuditEntry({ event: "recovery.during.pressure", actor: "sys" });
+    await appendAuditEntry({ event: "recovery.during.pressure", actor: "sys" });
 
     stderrSpy.mockRestore();
     renameSpy.mockRestore(); // disk "freed"
 
     // Now appends should proceed normally and the chain must be valid
-    expect(() => {
-      appendAuditEntry({ event: "recovery.after.1", actor: "sys" });
-      appendAuditEntry({ event: "recovery.after.2", actor: "sys" });
-    }).not.toThrow();
+    await expect(
+      appendAuditEntry({ event: "recovery.after.1", actor: "sys" }),
+    ).resolves.not.toThrow();
+    await expect(
+      appendAuditEntry({ event: "recovery.after.2", actor: "sys" }),
+    ).resolves.not.toThrow();
 
     expect(existsSync(TEST_FILE)).toBe(true);
     verifyChain(TEST_FILE);
   });
 
-  it("lastCheckedAt and lastError on the log file are consistent after recovery", () => {
+  it("lastCheckedAt and lastError on the log file are consistent after recovery", async () => {
     // Verify no stale error is left in the audit log after recovery
-    appendAuditEntry({ event: "chain.check.after.recovery", actor: "sys" });
+    await appendAuditEntry({ event: "chain.check.after.recovery", actor: "sys" });
 
     const lines = readFileSync(TEST_FILE, "utf-8")
       .split("\n")
@@ -438,9 +439,9 @@ describe("Chaos #811 — recovery after disk-pressure is relieved", () => {
 // Suite 6 — Canonical hash-chain correctness (regression guard)
 // ══════════════════════════════════════════════════════════════════════════════
 describe("Chaos #811 — canonical hash chain correctness under normal conditions", () => {
-  it("builds a valid chain for 5 consecutive entries", () => {
+  it("builds a valid chain for 5 consecutive entries", async () => {
     for (let i = 1; i <= 5; i++) {
-      appendAuditEntry({ event: `canonical.${i}`, actor: `actor-${i}` });
+      await appendAuditEntry({ event: `canonical.${i}`, actor: `actor-${i}` });
     }
 
     const lines = readFileSync(TEST_FILE, "utf-8")
@@ -453,8 +454,8 @@ describe("Chaos #811 — canonical hash chain correctness under normal condition
     expect(entries).toBe(5);
   });
 
-  it("genesis entry has the all-zeros prevHash", () => {
-    appendAuditEntry({ event: "genesis.check", actor: "sys" });
+  it("genesis entry has the all-zeros prevHash", async () => {
+    await appendAuditEntry({ event: "genesis.check", actor: "sys" });
     const first = JSON.parse(
       readFileSync(TEST_FILE, "utf-8").split("\n")[0],
     );

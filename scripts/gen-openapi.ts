@@ -7,13 +7,14 @@
  */
 
 import { z } from "zod";
-import { writeFileSync, mkdirSync } from "fs";
+import { writeFileSync, mkdirSync, watch } from "fs";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import {
   MAX_FREE_TEXT_LENGTH,
   MAX_FREE_TEXT_LIST_LENGTH,
 } from "../shared/free-text.ts";
+import { ArgParser } from "../shared/cli-args.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const docsDir = path.resolve(__dirname, "../docs");
@@ -88,7 +89,8 @@ function bodyTooLargeResponse() {
 
 const RATE_LIMIT_RESPONSE = errorResponse(
   "Too many requests for this route's rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; " +
-    "back off and retry after the `Retry-After` header.",
+    "back off and retry after the `Retry-After` header. See docs/api-examples/rate-limits.md " +
+    "for per-endpoint limits, response headers, and retry guidance.",
 );
 
 const SERVER_ERROR_RESPONSE = errorResponse(
@@ -167,7 +169,8 @@ export function generateSpec(): OpenAPISpec {
       title: "CareGuard API",
       version: "1.0.0",
       description:
-        "OpenAPI spec for CareGuard services: agent spending, pharmacy, bill audit, drug interactions, and payments.",
+        "OpenAPI spec for CareGuard services: agent spending, pharmacy, bill audit, drug interactions, and payments. " +
+        "See docs/api-examples/rate-limits.md for rate-limit behavior, response headers, and retry guidance.",
     },
     servers: [
       {
@@ -192,6 +195,12 @@ export function generateSpec(): OpenAPISpec {
           bearerFormat: "token",
           description:
             "Bearer token used to authorize caregiver access to /agent/* endpoints. Set CAREGIVER_TOKEN in environment variables.",
+        },
+        X402Auth: {
+          type: "apiKey",
+          name: "X-Payment",
+          in: "header",
+          description: "x402 payment proof header for paid endpoints on Stellar.",
         },
       },
       schemas: {
@@ -359,7 +368,8 @@ export function generateSpec(): OpenAPISpec {
       },
       "/agent/spending": {
         get: {
-          summary: "Get agent spending summary",
+          summary:
+            "Get agent spending summary. See docs/api-examples/agent-spending.md for a full field reference and sample response.",
           tags: ["Agent"],
           responses: {
             "200": {
@@ -369,16 +379,34 @@ export function generateSpec(): OpenAPISpec {
                   schema: {
                     type: "object",
                     properties: {
-                      totalSpent: { type: "number" },
-                      categories: { type: "object" },
+                      policy: {
+                        type: "object",
+                        description:
+                          "The current spending policy for this care recipient.",
+                      },
+                      spending: {
+                        type: "object",
+                        description:
+                          "Month-to-date totals by category: medications, bills, serviceFees, total.",
+                      },
+                      budgetRemaining: {
+                        type: "object",
+                        description:
+                          "Remaining budget for medications and bills, computed from policy minus spending.",
+                      },
+                      transactionCount: { type: "number" },
+                      recentTransactions: {
+                        type: "array",
+                        description:
+                          "The 5 most recent transactions, newest last.",
+                        items: { type: "object" },
+                      },
                     },
                   },
                 },
               },
             },
-            "401": { $ref: "#/components/responses/UnauthorizedError" },
-            "403": { $ref: "#/components/responses/ForbiddenError" },
-            "500": { $ref: "#/components/responses/InternalServerError" },
+            "401": errorResponse("Missing or invalid AGENT_API_KEY."),
             "429": RATE_LIMIT_RESPONSE,
             "500": SERVER_ERROR_RESPONSE,
           },
@@ -440,6 +468,8 @@ export function generateSpec(): OpenAPISpec {
       "/pharmacy/prices": {
         post: {
           summary: "Admin upsert for a drug price at a pharmacy",
+          description:
+            "Admin-only endpoint to create or update a drug price at a pharmacy. See docs/api-examples/pharmacy-prices-admin.md for detailed authorization rules, sample payloads, and effects on future comparison results.",
           tags: ["Pharmacy"],
           requestBody: {
             required: true,
@@ -472,15 +502,6 @@ export function generateSpec(): OpenAPISpec {
           responses: {
             "200": {
               description: "Price created or updated",
-            },
-            "400": {
-              $ref: "#/components/responses/BadRequestError",
-            },
-            "401": {
-              $ref: "#/components/responses/UnauthorizedError",
-            },
-            "403": {
-              $ref: "#/components/responses/ForbiddenError",
             },
             "400": errorResponse(
               "Validation error. `code` is one of VALIDATION_MISSING_FIELD, VALIDATION_INVALID_INPUT.",
@@ -537,24 +558,8 @@ export function generateSpec(): OpenAPISpec {
           },
           responses: {
             "200": {
-              description: "Audit results",
-            },
-            "400": {
-              $ref: "#/components/responses/BadRequestError",
-            },
-            "402": {
-              $ref: "#/components/responses/PaymentRequiredError",
-              description: "Validation error. `code` is one of VALIDATION_MISSING_FIELD, VALIDATION_INVALID_INPUT.",
-              content: {
-                "application/json": {
-                  schema: {
-                    type: "object",
-                    properties: {
-                      errors: { type: "array" },
-                    },
-                  },
-                },
-              },
+              description:
+                "Audit results. See docs/api-examples/bill-audit.md for a full curl example including the x402 payment flow.",
             },
             "402": paymentRequiredResponse(),
             "413": bodyTooLargeResponse(),
@@ -584,13 +589,8 @@ export function generateSpec(): OpenAPISpec {
           ],
           responses: {
             "200": {
-              description: "Drug interaction results",
-            },
-            "400": {
-              $ref: "#/components/responses/BadRequestError",
-            },
-            "402": {
-              $ref: "#/components/responses/PaymentRequiredError",
+              description:
+                "Drug interaction results. See docs/api-examples/drug-interactions.md for a full curl example including the x402 payment flow.",
             },
             "400": errorResponse(
               "Validation error. `code` is one of VALIDATION_MISSING_FIELD, VALIDATION_INVALID_INPUT, VALIDATION_INSUFFICIENT_SCORE.",
@@ -638,12 +638,6 @@ export function generateSpec(): OpenAPISpec {
             "200": {
               description: "Order confirmed",
             },
-            "400": {
-              $ref: "#/components/responses/BadRequestError",
-            },
-            "402": {
-              $ref: "#/components/responses/PaymentRequiredError",
-            },
             "400": errorResponse(
               "Validation error. `code` is one of VALIDATION_MISSING_FIELD, VALIDATION_INVALID_INPUT.",
             ),
@@ -674,12 +668,46 @@ export function generateSpec(): OpenAPISpec {
 }
 
 export function saveSpec() {
-  mkdirSync(docsDir, { recursive: true });
-
   const spec = generateSpec();
   const yaml = specToYaml(spec);
 
   const filePath = path.resolve(docsDir, "openapi.yml");
+  if (process.argv.includes("--check")) {
+    let committedYaml: string;
+    try {
+      committedYaml = readFileSync(filePath, "utf-8");
+    } catch {
+      console.error(`OpenAPI spec is missing: ${filePath}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    if (committedYaml !== yaml) {
+      console.error(`OpenAPI spec is stale: ${filePath}`);
+      const expectedLines = yaml.split("\n");
+      const actualLines = committedYaml.split("\n");
+      let firstDifference = 0;
+      while (
+        firstDifference < expectedLines.length &&
+        firstDifference < actualLines.length &&
+        expectedLines[firstDifference] === actualLines[firstDifference]
+      ) {
+        firstDifference += 1;
+      }
+      const lineNumber = firstDifference + 1;
+      console.error(`First difference at line ${lineNumber}:`);
+      console.error(`  committed: ${actualLines[firstDifference] ?? "<missing>"}`);
+      console.error(`  generated: ${expectedLines[firstDifference] ?? "<missing>"}`);
+      console.error("Run `npm run gen-openapi` and commit the updated spec.");
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(`✓ OpenAPI spec is up to date: ${filePath}`);
+    return;
+  }
+
+  mkdirSync(docsDir, { recursive: true });
   writeFileSync(filePath, yaml, "utf-8");
 
   console.log(`✓ OpenAPI spec generated: ${filePath}`);
@@ -749,5 +777,36 @@ export function specToYaml(obj: unknown, indent = 0): string {
 // Only write the file when run directly (`npm run gen-openapi`); importing this
 // module — e.g. from the CI validator — must have no side effects.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const parser = new ArgParser("gen-openapi.ts", "Generate OpenAPI 3.1 spec from zod schemas")
+    .addFlag({
+      name: "watch",
+      description: "Re-generate the spec on file changes",
+      type: "boolean",
+    });
+  const args = parser.parse();
+  const watchMode = Boolean(args.flags.watch);
+
   saveSpec();
+
+  if (watchMode) {
+    const watchDirs = [
+      path.resolve(__dirname, "../services"),
+      path.resolve(__dirname, "../agent"),
+    ];
+    console.log(`\n👀 Watching for changes in ${watchDirs.join(", ")}…`);
+
+    for (const dir of watchDirs) {
+      watch(dir, { recursive: true }, (eventType, filename) => {
+        if (filename && (filename.endsWith(".ts") || filename.endsWith(".js"))) {
+          const timestamp = new Date().toISOString();
+          console.log(`[${timestamp}] Change detected in ${filename} — regenerating spec…`);
+          try {
+            saveSpec();
+          } catch (err: any) {
+            console.error(`[${timestamp}] Regeneration failed: ${err?.message ?? err}`);
+          }
+        }
+      });
+    }
+  }
 }

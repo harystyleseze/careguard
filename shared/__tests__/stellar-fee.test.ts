@@ -265,3 +265,78 @@ describe("fee bump retry logic", () => {
     expect(result).toBe(800);
   });
 });
+
+describe("getTargetFee caching and concurrency (#1317)", () => {
+  beforeEach(() => {
+    import("../stellar-fee.ts").then((m) => m.clearFeeCache());
+  });
+
+  it("caches fee stats within TTL and avoids duplicate network calls", async () => {
+    const { getTargetFeeCached, clearFeeCache } = await import("../stellar-fee.ts");
+    clearFeeCache();
+    let callCount = 0;
+    const horizon = {
+      feeStats: vi.fn(async () => {
+        callCount++;
+        return {
+          fee_charged: { p90: "350" },
+        };
+      }),
+    } as unknown as Horizon.Server;
+
+    const fee1 = await getTargetFeeCached(horizon, 5000);
+    const fee2 = await getTargetFeeCached(horizon, 5000);
+    const fee3 = await getTargetFeeCached(horizon, 5000);
+
+    expect(fee1).toBe("350");
+    expect(fee2).toBe("350");
+    expect(fee3).toBe("350");
+    expect(callCount).toBe(1);
+  });
+
+  it("coalesces concurrent in-flight calls into a single network query", async () => {
+    const { getTargetFeeCached, clearFeeCache } = await import("../stellar-fee.ts");
+    clearFeeCache();
+    let callCount = 0;
+    const horizon = {
+      feeStats: vi.fn(async () => {
+        callCount++;
+        await new Promise((r) => setTimeout(r, 20));
+        return {
+          fee_charged: { p90: "450" },
+        };
+      }),
+    } as unknown as Horizon.Server;
+
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => getTargetFeeCached(horizon, 5000)),
+    );
+
+    expect(results).toHaveLength(10);
+    expect(results.every((r) => r === "450")).toBe(true);
+    expect(callCount).toBe(1);
+  });
+
+  it("refreshes fee after TTL expires or on forceRefresh", async () => {
+    const { getTargetFee, clearFeeCache } = await import("../stellar-fee.ts");
+    clearFeeCache();
+    let callCount = 0;
+    const horizon = {
+      feeStats: vi.fn(async () => {
+        callCount++;
+        return {
+          fee_charged: { p90: String(300 + callCount * 50) },
+        };
+      }),
+    } as unknown as Horizon.Server;
+
+    const fee1 = await getTargetFee(horizon, { ttlMs: 50 });
+    expect(fee1).toBe("350");
+    expect(callCount).toBe(1);
+
+    const feeForced = await getTargetFee(horizon, { ttlMs: 50, forceRefresh: true });
+    expect(feeForced).toBe("400");
+    expect(callCount).toBe(2);
+  });
+});
+

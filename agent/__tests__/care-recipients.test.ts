@@ -38,7 +38,6 @@ describe("CareRecipientsStore", () => {
       medications: ["Aspirin"],
       primary_doctor: "Dr. Smith",
       insurance: "Medicare",
-      caregiver_user_id: null,
     });
     expect(created.id).toMatch(/^john_doe_\d+_[0-9a-f]{8}$/);
     expect(created.name).toBe("John Doe");
@@ -50,8 +49,8 @@ describe("CareRecipientsStore", () => {
   });
 
   it("list returns all recipients sorted by name", () => {
-    store.create({ name: "Zara Young", age: 72, medications: [], primary_doctor: null, insurance: null, caregiver_user_id: null });
-    store.create({ name: "Adam Brown", age: 80, medications: [], primary_doctor: null, insurance: null, caregiver_user_id: null });
+    store.create({ name: "Zara Young", age: 72, medications: [], primary_doctor: null, insurance: null });
+    store.create({ name: "Adam Brown", age: 80, medications: [], primary_doctor: null, insurance: null });
     const list = store.list();
     // Should include Rosa Garcia + 2 new ones, sorted A→Z
     expect(list.map((r) => r.name)).toEqual(
@@ -66,7 +65,6 @@ describe("CareRecipientsStore", () => {
       medications: [],
       primary_doctor: null,
       insurance: null,
-      caregiver_user_id: null,
     });
     expect(created.medications).toEqual([]);
   });

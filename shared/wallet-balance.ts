@@ -23,6 +23,7 @@ export interface BalanceSnapshot {
   usdc: number;
   xlm: number;
   address: string;
+  hasUsdcTrustline?: boolean;
 }
 
 export interface WalletCheckResult {
@@ -42,22 +43,114 @@ export interface WalletCheckOptions {
 }
 
 const DEFAULT_USDC_ISSUER =
-  process.env.USDC_ISSUER || "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+  process.env.USDC_ISSUER ||
+  "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 
 // Resolve at module load time to get configured Horizon URL
 const STELLAR_CONFIG = resolveStellarNetwork();
 const DEFAULT_HORIZON = STELLAR_CONFIG.horizonUrl;
+const DEFAULT_BALANCE_CACHE_TTL_MS = 5_000;
 
-export function getThresholds(opts?: WalletCheckOptions): { usdc: number; xlm: number } {
-  const usdc = opts?.usdcThreshold ?? parseFloat(process.env.WALLET_LOW_USDC_THRESHOLD || "1");
-  const xlm = opts?.xlmThreshold ?? parseFloat(process.env.WALLET_LOW_XLM_THRESHOLD || "1");
+export interface BalanceCacheStats {
+  hits: number;
+  misses: number;
+  coalesced: number;
+}
+
+type BalanceCacheEntry = {
+  snapshot?: BalanceSnapshot;
+  expiresAt: number;
+  inFlight?: Promise<BalanceSnapshot>;
+};
+
+/** Small TTL + single-flight cache for Horizon account reads shared by all callers. */
+export class WalletBalanceCache {
+  private static readonly MAX_ENTRIES = 256;
+  private readonly entries = new Map<string, BalanceCacheEntry>();
+  private readonly counters: BalanceCacheStats = { hits: 0, misses: 0, coalesced: 0 };
+
+  async get(
+    key: string,
+    loader: () => Promise<BalanceSnapshot>,
+    ttlMs: number,
+    now: () => number = Date.now,
+  ): Promise<BalanceSnapshot> {
+    const current = this.entries.get(key);
+    if (current?.snapshot && current.expiresAt > now()) {
+      this.counters.hits++;
+      return current.snapshot;
+    }
+    if (current?.inFlight) {
+      this.counters.coalesced++;
+      return current.inFlight;
+    }
+
+    this.counters.misses++;
+    if (this.entries.size >= WalletBalanceCache.MAX_ENTRIES) {
+      for (const [cachedKey, entry] of this.entries) {
+        if (!entry.inFlight && entry.expiresAt <= now()) this.entries.delete(cachedKey);
+      }
+      if (this.entries.size >= WalletBalanceCache.MAX_ENTRIES) {
+        const oldestKey = this.entries.keys().next().value;
+        if (oldestKey !== undefined) this.entries.delete(oldestKey);
+      }
+    }
+    const inFlight = loader()
+      .then((snapshot) => {
+        this.entries.set(key, { snapshot, expiresAt: now() + Math.max(0, ttlMs) });
+        return snapshot;
+      })
+      .catch((error) => {
+        this.entries.delete(key);
+        throw error;
+      });
+    this.entries.set(key, { expiresAt: 0, inFlight });
+    return inFlight;
+  }
+
+  clear(): void {
+    this.entries.clear();
+    this.counters.hits = 0;
+    this.counters.misses = 0;
+    this.counters.coalesced = 0;
+  }
+
+  stats(): BalanceCacheStats {
+    return { ...this.counters };
+  }
+}
+
+const sharedBalanceCache = new WalletBalanceCache();
+
+export function clearWalletBalanceCache(): void {
+  sharedBalanceCache.clear();
+}
+
+export function getWalletBalanceCacheStats(): BalanceCacheStats {
+  return sharedBalanceCache.stats();
+}
+
+export function getThresholds(opts?: WalletCheckOptions): {
+  usdc: number;
+  xlm: number;
+} {
+  const usdc =
+    opts?.usdcThreshold ??
+    parseFloat(process.env.WALLET_LOW_USDC_THRESHOLD || "1");
+  const xlm =
+    opts?.xlmThreshold ??
+    parseFloat(process.env.WALLET_LOW_XLM_THRESHOLD || "1");
   return {
     usdc: Number.isFinite(usdc) && usdc >= 0 ? usdc : 1,
     xlm: Number.isFinite(xlm) && xlm >= 0 ? xlm : 1,
   };
 }
 
-export async function fetchWalletBalances(address: string, horizonUrl: string, usdcIssuer: string): Promise<BalanceSnapshot> {
+export async function fetchWalletBalances(
+  address: string,
+  horizonUrl: string,
+  usdcIssuer: string,
+): Promise<BalanceSnapshot> {
   const server = new Horizon.Server(horizonUrl);
   const account = await server.loadAccount(address);
   const usdcEntry = account.balances.find(
@@ -71,31 +164,47 @@ export async function fetchWalletBalances(address: string, horizonUrl: string, u
   };
 }
 
+const defaultLoadBalances = fetchWalletBalances;
 
-export async function checkWalletBalance(opts: WalletCheckOptions = {}): Promise<WalletCheckResult> {
+export async function checkWalletBalance(
+  opts: WalletCheckOptions = {},
+): Promise<WalletCheckResult> {
   const secret = opts.agentSecretKey ?? process.env.AGENT_SECRET_KEY;
   if (!secret) {
-    return { snapshot: null, action: "error", error: "AGENT_SECRET_KEY not set" };
+    return {
+      snapshot: null,
+      action: "error",
+      error: "AGENT_SECRET_KEY not set",
+    };
   }
 
   let address: string;
   try {
     address = Keypair.fromSecret(secret).publicKey();
   } catch (err: any) {
-    return { snapshot: null, action: "error", error: `Invalid AGENT_SECRET_KEY: ${err?.message ?? err}` };
+    return {
+      snapshot: null,
+      action: "error",
+      error: `Invalid AGENT_SECRET_KEY: ${err?.message ?? err}`,
+    };
   }
 
   const horizonUrl = opts.horizonUrl ?? DEFAULT_HORIZON;
   const usdcIssuer = opts.usdcIssuer ?? DEFAULT_USDC_ISSUER;
   const thresholds = getThresholds(opts);
   const loadBalances =
-    opts.loadBalances ?? ((addr: string) => fetchWalletBalances(addr, horizonUrl, usdcIssuer));
+    opts.loadBalances ??
+    ((addr: string) => defaultLoadBalances(addr, horizonUrl, usdcIssuer));
 
   let snapshot: BalanceSnapshot;
   try {
     snapshot = await loadBalances(address);
   } catch (err: any) {
-    return { snapshot: null, action: "error", error: `Horizon error: ${err?.message ?? err}` };
+    return {
+      snapshot: null,
+      action: "error",
+      error: `Horizon error: ${err?.message ?? err}`,
+    };
   }
 
   if (isPaused()) {
@@ -108,7 +217,13 @@ export async function checkWalletBalance(opts: WalletCheckOptions = {}): Promise
       level: "critical",
       title: "Agent paused: low USDC balance",
       description: `Agent wallet USDC ${snapshot.usdc.toFixed(2)} is below threshold ${thresholds.usdc}. Fund the wallet and resume from the dashboard.`,
-      context: { address, usdc: snapshot.usdc, xlm: snapshot.xlm, threshold: thresholds.usdc },
+      context: {
+        address,
+        usdc: snapshot.usdc,
+        xlm: snapshot.xlm,
+        threshold: thresholds.usdc,
+      },
+      recipientCaregiverId: "caregiver",
     });
     appendAuditEntry({
       event: "agent.auto-paused",
@@ -129,7 +244,13 @@ export async function checkWalletBalance(opts: WalletCheckOptions = {}): Promise
       level: "critical",
       title: "Agent paused: low XLM balance",
       description: `Agent wallet XLM ${snapshot.xlm.toFixed(2)} is below threshold ${thresholds.xlm}. Fund the wallet and resume from the dashboard.`,
-      context: { address, usdc: snapshot.usdc, xlm: snapshot.xlm, threshold: thresholds.xlm },
+      context: {
+        address,
+        usdc: snapshot.usdc,
+        xlm: snapshot.xlm,
+        threshold: thresholds.xlm,
+      },
+      recipientCaregiverId: "caregiver",
     });
     appendAuditEntry({
       event: "agent.auto-paused",

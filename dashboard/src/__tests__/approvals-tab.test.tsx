@@ -35,4 +35,33 @@ describe("ApprovalsTab", () => {
     expect(onApprove).toHaveBeenCalledWith("approval-1");
     expect(onCancel).toHaveBeenCalledWith("approval-1");
   });
+
+  it("renders exception requests with a single-action approval flow", () => {
+    const onApprove = vi.fn().mockResolvedValue(undefined);
+    const onCancel = vi.fn().mockResolvedValue(undefined);
+    const exceptionTx = {
+      ...APPROVAL,
+      id: "exception-1",
+      description: "Unexpected specialist bill",
+      amount: 450,
+      type: "exception",
+      reason: "Specialist consult required",
+      status: "pending",
+      category: "bills",
+    } as any;
+
+    render(
+      <ApprovalsTab
+        agentConnected
+        approvals={[exceptionTx]}
+        loading={false}
+        onApprove={onApprove}
+        onCancel={onCancel}
+      />,
+    );
+
+    expect(screen.getByText(/Request exception/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Approve exception/i }));
+    expect(onApprove).toHaveBeenCalledWith("exception-1");
+  });
 });

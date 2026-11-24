@@ -16,6 +16,17 @@ import { describe, it, expect, vi } from "vitest";
 import { PolicyTab } from "../components/tabs/policy-tab";
 import type { PolicyTabProps } from "../components/tabs/policy-tab";
 
+// #1238: the save preview fetches an impact estimate from the agent.
+const { agentFetchMock } = vi.hoisted(() => ({ agentFetchMock: vi.fn() }));
+vi.mock("../lib/agent-fetch", () => ({ agentFetch: agentFetchMock }));
+
+function impactResponse(impact: Record<string, unknown>) {
+  return { ok: true, json: async () => ({ impact }) } as Response;
+}
+
+const NO_IMPACT = { evaluated: 0, newlyBlocked: 0, newlyAllowed: 0, approvalChanged: 0, entries: [] };
+agentFetchMock.mockResolvedValue(impactResponse(NO_IMPACT));
+
 const RECIPIENT = { name: "Rosa Garcia" };
 
 const BASE_POLICY = {
@@ -151,6 +162,59 @@ describe("PolicyTab — form interaction (Issue #47)", () => {
 //   shouldSyncPolicy = forcePolicySync || (activeTabRef.current !== "policy" && !policyDirtyRef.current)
 // When activeTab === "policy", shouldSyncPolicy is false, so setPolicyForm is NOT called.
 
+describe("PolicyTab — Refresh vs Discard clarification (#1281)", () => {
+  it("shows helper text under each button explaining what it does", () => {
+    render(<PolicyTab {...buildProps()} />);
+    expect(
+      screen.getByText("Reloads the latest policy values from the server"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Restores the last saved values and discards your edits"),
+    ).toBeTruthy();
+  });
+
+  it("gives both buttons title tooltips with the same explanation", () => {
+    render(<PolicyTab {...buildProps()} />);
+    expect(screen.getByRole("button", { name: /Refresh from server/i })).toHaveAttribute(
+      "title",
+      "Reloads the latest policy values from the server",
+    );
+    expect(screen.getByRole("button", { name: /Discard changes/i })).toHaveAttribute(
+      "title",
+      "Restores the last saved values and discards your edits",
+    );
+  });
+
+  it("keeps behavior unchanged: refresh calls onForceSync, discard resets the form", () => {
+    const onForceSync = vi.fn();
+    const setPolicyForm = vi.fn();
+    const setPolicyDirty = vi.fn();
+    render(
+      <PolicyTab
+        {...buildProps({
+          onForceSync,
+          setPolicyForm,
+          setPolicyDirty,
+          spending: {
+            policy: { ...BASE_POLICY },
+            spending: { medications: 0, bills: 0, serviceFees: 0, total: 0 },
+            budgetRemaining: { medications: 0, bills: 0 },
+            transactionCount: 0,
+            recentTransactions: [],
+          } as never,
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Refresh from server/i }));
+    expect(onForceSync).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /Discard changes/i }));
+    expect(setPolicyForm).toHaveBeenCalledWith(BASE_POLICY);
+    expect(setPolicyDirty).toHaveBeenCalledWith(false);
+  });
+});
+
 describe("Polling guard — activeTab !== 'policy' prevents overwriting edits (Issue #47)", () => {
   it("shouldSyncPolicy is false when activeTab is 'policy'", () => {
     const activeTab = "policy";
@@ -238,6 +302,8 @@ describe("PolicyTab — policySaved prop drives button appearance (Issue #47)", 
     const btn = screen.getByRole("button", { name: /Update Policy/i });
     expect(btn).toBeTruthy();
     expect(btn.className).toContain("bg-sky-500");
+    expect(btn.className).toContain("transition-colors");
+    expect(btn.className).toContain("duration-700");
   });
 });
 
@@ -250,7 +316,13 @@ describe("PolicyTab — limit-increase confirmation (Issue #216)", () => {
   ): PolicyTabProps {
     return buildProps({
       policyForm: { ...BASE_POLICY, ...formOverrides },
-      spending: { policy: { ...BASE_POLICY } } as never,
+      spending: {
+        policy: { ...BASE_POLICY },
+        spending: { medications: 0, bills: 0, serviceFees: 0, total: 0 },
+        budgetRemaining: { medications: 0, bills: 0 },
+        transactionCount: 0,
+        recentTransactions: [],
+      } as never,
       onUpdatePolicy,
     });
   }
@@ -262,9 +334,29 @@ describe("PolicyTab — limit-increase confirmation (Issue #216)", () => {
     fireEvent.submit(form);
   }
 
-  it("decreasing a limit saves without a confirmation dialog", async () => {
+  it("decreasing a limit shows the preview without the exposure warning and saves on confirm (#1238)", async () => {
     const onUpdatePolicy = vi.fn().mockResolvedValue({ ok: true });
     render(<PolicyTab {...withBaseline({ medicationMonthlyBudget: 200 }, onUpdatePolicy)} />);
+
+    await act(async () => {
+      submitForm();
+    });
+
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).queryByText(/increases your spending exposure/i)).toBeNull();
+    expect(within(dialog).getByText(/\$300/)).toBeTruthy();
+    expect(within(dialog).getByText(/\$200/)).toBeTruthy();
+    expect(onUpdatePolicy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: /Confirm & Save/i }));
+    });
+    expect(onUpdatePolicy).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves directly when nothing changed", async () => {
+    const onUpdatePolicy = vi.fn().mockResolvedValue({ ok: true });
+    render(<PolicyTab {...withBaseline({}, onUpdatePolicy)} />);
 
     await act(async () => {
       submitForm();
@@ -359,5 +451,80 @@ describe("PolicyTab — limit-increase confirmation (Issue #216)", () => {
     expect(policySaved).toBe(false); // reset after 3 s
 
     vi.useRealTimers();
+  });
+});
+
+// --- Impact preview against recent payments (Issue #1238) ---
+
+describe("PolicyTab — impact preview (Issue #1238)", () => {
+  function withBaseline(formOverrides: Partial<typeof BASE_POLICY>, onUpdatePolicy = vi.fn().mockResolvedValue({ ok: true })) {
+    return buildProps({
+      policyForm: { ...BASE_POLICY, ...formOverrides },
+      spending: {
+        policy: { ...BASE_POLICY },
+        spending: { medications: 0, bills: 0, serviceFees: 0, total: 0 },
+        budgetRemaining: { medications: 0, bills: 0 },
+        transactionCount: 0,
+        recentTransactions: [],
+      } as never,
+      onUpdatePolicy,
+    });
+  }
+
+  async function submit() {
+    await act(async () => {
+      fireEvent.submit(screen.getByRole("button", { name: /Update Policy/i }).closest("form")!);
+    });
+  }
+
+  it("posts the proposed policy to the preview endpoint and summarises the impact", async () => {
+    agentFetchMock.mockResolvedValueOnce(
+      impactResponse({
+        evaluated: 10,
+        newlyBlocked: 2,
+        newlyAllowed: 0,
+        approvalChanged: 0,
+        entries: [
+          { id: "t1", timestamp: "2026-03-01T00:00:00Z", description: "Lisinopril refill", amount: 60, before: "allowed", after: "blocked", changed: true },
+          { id: "t2", timestamp: "2026-03-02T00:00:00Z", description: "Copay", amount: 20, before: "allowed", after: "allowed", changed: false },
+        ],
+      }),
+    );
+    render(<PolicyTab {...withBaseline({ medicationMonthlyBudget: 200 })} />);
+    await submit();
+
+    expect(agentFetchMock).toHaveBeenCalledWith(
+      "/agent/policy/preview",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ ...BASE_POLICY, medicationMonthlyBudget: 200 }) }),
+    );
+    const impact = await screen.findByText(/would have blocked 2 of the last 10 payments/i);
+    expect(impact).toBeTruthy();
+    expect(screen.getByText(/Lisinopril refill/)).toBeTruthy();
+    expect(screen.queryByText(/Copay/)).toBeNull();
+  });
+
+  it("still lets the caregiver save when the impact estimate fails", async () => {
+    agentFetchMock.mockRejectedValueOnce(new Error("offline"));
+    const onUpdatePolicy = vi.fn().mockResolvedValue({ ok: true });
+    render(<PolicyTab {...withBaseline({ medicationMonthlyBudget: 200 }, onUpdatePolicy)} />);
+    await submit();
+
+    await screen.findByText(/Couldn.t estimate the impact/i);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Confirm & Save/i }));
+    });
+    expect(onUpdatePolicy).toHaveBeenCalledTimes(1);
+  });
+
+  it("dismissing the preview leaves the policy unsaved", async () => {
+    const onUpdatePolicy = vi.fn().mockResolvedValue({ ok: true });
+    render(<PolicyTab {...withBaseline({ medicationMonthlyBudget: 200 }, onUpdatePolicy)} />);
+    await submit();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^Cancel$/i }));
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onUpdatePolicy).not.toHaveBeenCalled();
   });
 });

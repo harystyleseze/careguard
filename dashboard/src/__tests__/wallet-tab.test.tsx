@@ -68,6 +68,12 @@ describe("WalletTab — balance display (Issue #49)", () => {
     render(<WalletTab {...buildProps({ walletBalanceState: "error", walletBalanceError: "Custom error" })} />);
     expect(screen.getByText("Custom error")).toBeTruthy();
   });
+
+  it("shows a descriptive fallback (not a bare 'Error') when walletBalanceError is not provided (Issue #1277)", () => {
+    render(<WalletTab {...buildProps({ walletBalanceState: "error", walletBalanceError: null })} />);
+    expect(screen.queryByText("Error", { exact: true })).toBeNull();
+    expect(screen.getByText(/check your connection/i)).toBeTruthy();
+  });
 });
 
 describe("WalletTab — wallet address display (Issue #49)", () => {

@@ -22,6 +22,7 @@ export interface AgentResult {
   };
   events?: AgentEvent[];
   error?: AgentLlmError;
+  truncated?: boolean;
 }
 
 export interface AgentInfo {
@@ -55,6 +56,7 @@ export const DASHBOARD_TABS = [
   "policy",
   "wallet",
   "activity",
+  "household",
   "settings",
 ] as const;
 

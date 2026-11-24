@@ -8,7 +8,7 @@
  * use vm.Module, as that would create a second Registry instance.
  */
 
-import { Registry, Counter, Gauge, collectDefaultMetrics } from "prom-client";
+import { Registry, Counter, Gauge, Histogram, collectDefaultMetrics } from "prom-client";
 import type { RequestHandler } from "express";
 
 export const registry = new Registry();
@@ -27,6 +27,12 @@ export const agentToolCallsTotal = new Counter({
   name: "agent_tool_calls_total",
   help: "Total tool calls executed by the agent",
   labelNames: ["tool", "status"] as const,
+  registers: [registry],
+});
+
+export const agentToolCallCapExceededTotal = new Counter({
+  name: "agent_tool_call_cap_exceeded_total",
+  help: "Total agent runs that exceeded the tool call cap",
   registers: [registry],
 });
 
@@ -123,10 +129,14 @@ export const agentLlmErrorTotal = new Counter({
   registers: [registry],
 });
 
-export const agentLlmLatencyMs = new Gauge({
+// Converted from Gauge to Histogram to preserve latency distribution and
+// enable p50/p90/p99 computation in dashboards/alerts (#1034).
+// Buckets cover the typical LLM call range: 100ms–30s.
+export const agentLlmLatencyMs = new Histogram({
   name: "agent_llm_latency_ms",
-  help: "LLM API latency in milliseconds",
+  help: "LLM API call latency in milliseconds (histogram)",
   labelNames: ["model"] as const,
+  buckets: [100, 250, 500, 1000, 2000, 5000, 10000, 20000, 30000],
   registers: [registry],
 });
 
@@ -145,6 +155,20 @@ export const stellarTxBadSeqRetriesTotal = new Counter({
 export const billAuditOversizedRejectionsTotal = new Counter({
   name: "bill_audit_oversized_rejections_total",
   help: "Total bill audit requests rejected for exceeding BILL_AUDIT_MAX_ITEMS",
+  registers: [registry],
+});
+
+export const pharmacyPaymentOrdersTotal = new Counter({
+  name: "pharmacy_payment_orders_total",
+  help: "Total pharmacy medication orders processed",
+  labelNames: ["status", "pharmacy"] as const,
+  registers: [registry],
+});
+
+export const pharmacyMppChargesTotal = new Counter({
+  name: "pharmacy_mpp_charges_total",
+  help: "Total pharmacy MPP charge operations",
+  labelNames: ["status"] as const,
   registers: [registry],
 });
 

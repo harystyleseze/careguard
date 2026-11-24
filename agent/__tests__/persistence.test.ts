@@ -15,6 +15,7 @@ const { fsState, MOCK_HINT } = vi.hoisted(() => {
     fsState: {
       files: new Map<string, string>(),
       readOnlyPaths: new Set<string>(),
+      failAtomicTempWrites: false,
     },
     MOCK_HINT: Buffer.from([0xca, 0xfe, 0xba, 0xbe]),
   };
@@ -33,6 +34,11 @@ vi.mock("fs", () => ({
   }),
   writeFileSync: vi.fn((filePath: string, data: string) => {
     const key = String(filePath);
+    if (fsState.failAtomicTempWrites && key.includes(".tmp-")) {
+      const err: any = new Error(`EIO: interrupted write to '${key}'`);
+      err.code = "EIO";
+      throw err;
+    }
     for (const blocked of fsState.readOnlyPaths) {
       if (key.includes(blocked)) {
         const err: any = new Error(`EACCES: permission denied, open '${key}'`);
@@ -148,6 +154,7 @@ function freshTracker(transactionCount: number) {
 beforeEach(() => {
   fsState.files.clear();
   fsState.readOnlyPaths.clear();
+  fsState.failAtomicTempWrites = false;
   warnSpy.mockClear();
   errorSpy.mockClear();
 });
@@ -188,6 +195,69 @@ describe("Spending tracker persistence across restart (#44)", () => {
     expect(summary.policy.dailyLimit).toBe(123);
     expect(summary.policy.monthlyLimit).toBe(500);
     expect(summary.policy.approvalThreshold).toBe(90);
+  });
+
+  it("preserves the previous policy when an atomic policy write is interrupted", async () => {
+    vi.resetModules();
+    const tools = await import("../tools.ts");
+    const policyFile = `${DATA_DIR}/recipients/rosa/policy.json`;
+    const previousPolicy = {
+      dailyLimit: 123,
+      monthlyLimit: 500,
+      medicationMonthlyBudget: 200,
+      billMonthlyBudget: 300,
+      approvalThreshold: 90,
+      holdTimeSeconds: 0,
+      toolFees: {
+        comparePharmacyPrices: 0.002,
+        auditBill: 0.01,
+        checkDrugInteractions: 0.001,
+      },
+      notifications: { email: false, sms: false },
+    };
+    const previousContents = JSON.stringify(previousPolicy, null, 2);
+    fsState.files.set(policyFile, previousContents);
+
+    fsState.failAtomicTempWrites = true;
+    expect(() =>
+      tools.setSpendingPolicy({
+        dailyLimit: 200,
+        monthlyLimit: 600,
+        medicationMonthlyBudget: 250,
+        billMonthlyBudget: 350,
+        approvalThreshold: 100,
+      }),
+    ).toThrow(/interrupted write/);
+
+    expect(fsState.files.get(policyFile)).toBe(previousContents);
+  });
+
+  it("rotates an invalid policy and returns the default policy", async () => {
+    vi.resetModules();
+    const tools = await import("../tools.ts");
+    const policyFile = `${DATA_DIR}/recipients/rosa/policy.json`;
+    fsState.files.set(
+      policyFile,
+      JSON.stringify({
+        dailyLimit: 100,
+        monthlyLimit: 800,
+        billMonthlyBudget: 500,
+        approvalThreshold: 75,
+      }),
+    );
+
+    const { policy } = tools.getSpendingSummary();
+
+    expect(policy.dailyLimit).toBe(100);
+    expect(policy.monthlyLimit).toBe(800);
+    expect(policy.medicationMonthlyBudget).toBe(300);
+    expect(policy.billMonthlyBudget).toBe(500);
+    expect(fsState.files.has(policyFile)).toBe(false);
+    expect(
+      [...fsState.files.keys()].some((file) =>
+        file.startsWith(`${policyFile}.corrupt-`),
+      ),
+    ).toBe(true);
   });
 });
 

@@ -20,6 +20,8 @@
     "policy": "Policy",
     "wallet": "Wallet",
     "activity": "Activity",
+    "tasks": "Tasks",
+    "notes": "Notes",
     "settings": "Settings"
   },
   "overview": {
@@ -33,11 +35,19 @@
     "limit": "limit",
     "bySwitching": "by switching pharmacies",
     "inOvercharges": "in overcharges identified",
-    "queries": "queries via x402"
+    "queries": "queries via x402",
+    "notRunYet": "Not run yet",
+    "runForSavings": "Run a task to see savings",
+    "runForBillingErrors": "Run a bill audit to see errors caught",
+    "runForApiCosts": "Run a task to see agent costs"
   },
   "budget": {
     "medications": "Medications",
     "medicalBills": "Medical Bills"
+  },
+  "policyPreview": {
+    "title": "Budget Preview",
+    "unsaved": "Unsaved"
   },
   "tasks": {
     "comparePrices": "Compare Medication Prices",
@@ -47,11 +57,14 @@
     "overBudget": "Try Over-Budget Payment",
     "demoPayment": "Demo: agent attempts $600 payment (over $500 bill limit)",
     "agentPaused": "Agent is paused",
-    "working": "Agent working..."
+    "working": "Agent working...",
+    "workingStep": "Agent working — running {step}...",
+    "estimatedTime": "Typically takes 30-60 seconds"
   },
   "medications": {
     "title": "Rosa's Medications",
     "downloadPdf": "Download PDF",
+    "downloadPdfHint": "Run a price comparison first to enable the PDF export",
     "best": "Best",
     "notYetCompared": "Not yet compared",
     "save": "Save",
@@ -68,7 +81,11 @@
     "lineItems": "line items",
     "showErrors": "Show errors only",
     "showAll": "Show all items",
-    "notAudited": "No bills audited yet. Run \"Audit Hospital Bill\" from Overview."
+    "sortByOvercharge": "Sort by overcharge",
+    "sortDefault": "Default order",
+    "notAudited": "CareGuard checks hospital bills line by line to catch overcharges and billing errors before you pay.",
+    "runAudit": "Audit a hospital bill",
+    "runAuditHint": "Takes about a minute — runs from the Overview tab."
   },
   "policy": {
     "title": "Spending Policy for Rosa",
@@ -80,15 +97,26 @@
     "approvalThreshold": "Caregiver Approval Threshold ($)",
     "holdTime": "Hold Time Before Auto-Approval (seconds)",
     "refresh": "Refresh from server",
+    "refreshHint": "Reloads the latest policy values from the server",
     "discard": "Discard changes",
+    "discardHint": "Restores the last saved values and discards your edits",
     "updatePolicy": "Update Policy",
     "policySaved": "Policy Saved"
+  },
+  "approvals": {
+    "pending": "Pending Approvals",
+    "noPending": "No pending approvals.",
+    "noPendingReassurance": "This is normal! The agent will create approval requests here for transactions above your approval threshold.",
+    "autoApproveCountdown": "Auto-approve in {seconds}s",
+    "countdownExpired": "Time expired"
   },
   "activity": {
     "title": "Transaction Log",
     "downloadReport": "Download Report",
     "preparingReport": "Preparing report…",
     "reset": "Reset All",
+    "clearLogTitle": "Clear only the on-screen agent log — saved transactions and data stay untouched",
+    "resetTitle": "Permanently delete all transactions, the agent log, and all audit results",
     "noActivity": "No agent activity yet...",
     "noTransactions": "No transactions yet",
     "time": "Time",
@@ -111,7 +139,24 @@
     "networkStellar": "Stellar Testnet",
     "viewExplorer": "View on Stellar Explorer",
     "fund": "Fund with USDC",
-    "howPayments": "How Payments Work"
+    "fundModal": "Get Testnet USDC",
+    "fundModalDesc": "You'll be redirected to Circle's USDC faucet (an external website). Copy your wallet address above, paste it on their site, and they'll send you testnet USDC.",
+    "fundModalNote": "This opens an external website. Make sure you're visiting Circle's official faucet, not a phishing site.",
+    "fundContinue": "Continue to Faucet",
+    "howPayments": "How Payments Work",
+    "balanceUnavailable": "Couldn't load balance. Check your connection or that the agent wallet is set up, then try again.",
+    "spendingByCategory": "Spending by Category",
+    "spendingByCategoryDesc": "Where the agent's money went, from completed payments.",
+    "categoryMedications": "Pharmacy (medications)",
+    "categoryBills": "Bills (after audit adjustments)",
+    "categoryFees": "Service fees (API queries)",
+    "breakdownRange": "Time range",
+    "range7d": "7 days",
+    "range30d": "30 days",
+    "rangeAll": "All time",
+    "breakdownTotal": "Total",
+    "noSpendingInRange": "No completed payments in this period.",
+    "rangeUnavailable": "This agent only reports all-time totals, so the time range can't be changed."
   },
   "settings": {
     "recipient": "Care Recipient",
@@ -140,5 +185,60 @@
     "loading": "Loading...",
     "error": "Error",
     "retry": "Try Again"
+  },
+  "vitals": {
+    "title": "Vitals",
+    "description": "Log readings to see how they track against doses taken or missed.",
+    "typeLabel": "Vital type",
+    "weight": "Weight",
+    "bloodPressure": "Blood pressure",
+    "glucose": "Glucose",
+    "systolic": "Systolic",
+    "diastolic": "Diastolic",
+    "log": "Log reading",
+    "invalid": "Enter a positive number for each reading.",
+    "saveFailed": "Couldn't save the reading — try again.",
+    "empty": "No readings logged yet for this vital.",
+    "recent": "Recent readings",
+    "date": "Date",
+    "reading": "Reading",
+    "doseTaken": "Dose taken",
+    "doseMissed": "Dose missed",
+    "dosePending": "Dose due",
+    "trendAria": "trend",
+    "readings": "readings",
+    "adherenceEvents": "adherence events"
+  },
+  "notes": {
+    "title": "Shift handoff notes",
+    "description": "Leave context for the next caregiver on shift. The agent reads the latest notes before answering care questions.",
+    "label": "New note",
+    "placeholder": "e.g. Gave the 2pm dose late, watch for nausea.",
+    "submit": "Post note",
+    "empty": "No handoff notes yet.",
+    "required": "Write a note before posting.",
+    "saveFailed": "Couldn't post the note — try again.",
+    "loadFailed": "Couldn't load handoff notes.",
+    "forbidden": "Your role can read notes but not post them.",
+    "charactersLeft": "characters left"
+  },
+  "caregivers": {
+    "title": "Linked caregivers",
+    "description": "Everyone who shares care for this recipient and what they are allowed to do.",
+    "empty": "No caregivers linked yet.",
+    "loadFailed": "Couldn't load linked caregivers.",
+    "pending": "Invite pending",
+    "roleOwner": "Owner",
+    "roleCoCaregiver": "Co-caregiver",
+    "roleViewer": "Viewer",
+    "inviteTitle": "Invite a caregiver",
+    "email": "Email",
+    "role": "Role",
+    "invite": "Send invite",
+    "invalidEmail": "Enter a valid email address.",
+    "inviteFailed": "Couldn't send the invite — try again.",
+    "inviteForbidden": "Only owners can invite caregivers.",
+    "alreadyLinked": "That caregiver is already linked to this recipient.",
+    "inviteCode": "Invite code for {email} (shown once — share it with them):"
   }
 }

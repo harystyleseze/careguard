@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
-import BillLineItemsVirtualized from "../app/page#BillLineItemsVirtualized";
+import { BillLineItemsVirtualized } from "../components/primitives/bill-line-items-virtualized";
 
 // Mock the virtualizer
 vi.mock("@tanstack/react-virtual", () => ({
@@ -91,5 +91,22 @@ describe("BillLineItemsVirtualized", () => {
 
     // Should not crash and should render empty container
     expect(screen.queryByText("Test Item")).not.toBeInTheDocument();
+  });
+
+  it("should render CPT: N/A fallback when cptCode is missing (Issue #1118)", () => {
+    const itemsWithoutCpt = [
+      {
+        description: "Missing CPT Item",
+        cptCode: undefined,
+        chargedAmount: 100,
+        status: "valid" as const,
+      },
+    ];
+
+    render(<BillLineItemsVirtualized lineItems={itemsWithoutCpt} />);
+
+    expect(screen.getByText("Missing CPT Item")).toBeInTheDocument();
+    const cptElements = screen.getAllByText("CPT: N/A");
+    expect(cptElements.length).toBeGreaterThanOrEqual(1);
   });
 });

@@ -323,7 +323,7 @@ describe("payBill — Stellar errors", () => {
   });
 });
 
-// --- Concurrent submission (Issue #XXX) ---
+// --- Concurrent submission ---
 
 describe("payBill — concurrent submission", () => {
   beforeEach(() => {

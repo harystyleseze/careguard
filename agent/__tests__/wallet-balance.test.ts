@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Keypair } from "@stellar/stellar-sdk";
-import { checkWalletBalance, fetchWalletBalances } from "../../shared/wallet-balance.ts";
+import {
+  WalletBalanceCache,
+  checkWalletBalance,
+  fetchWalletBalances,
+} from "../../shared/wallet-balance.ts";
 import { resumeAgent, getAgentState, isPaused } from "../../shared/agent-state.ts";
 import { Horizon } from "@stellar/stellar-sdk";
 
@@ -132,5 +136,40 @@ describe("checkWalletBalance", () => {
     } finally {
       loadAccountSpy.mockRestore();
     }
+  });
+});
+
+describe("WalletBalanceCache", () => {
+  it("reuses fresh values and refreshes them after the TTL", async () => {
+    const cache = new WalletBalanceCache();
+    let now = 1_000;
+    let loads = 0;
+    const load = async () => ({ address: "GTEST", usdc: ++loads, xlm: 10 });
+
+    expect((await cache.get("wallet", load, 5_000, () => now)).usdc).toBe(1);
+    expect((await cache.get("wallet", load, 5_000, () => now)).usdc).toBe(1);
+    now += 5_001;
+    expect((await cache.get("wallet", load, 5_000, () => now)).usdc).toBe(2);
+    expect(cache.stats()).toEqual({ hits: 1, misses: 2, coalesced: 0 });
+  });
+
+  it("coalesces concurrent misses into one Horizon-equivalent call", async () => {
+    const cache = new WalletBalanceCache();
+    let loads = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const load = async () => {
+      loads++;
+      await gate;
+      return { address: "GTEST", usdc: 10, xlm: 10 };
+    };
+
+    const first = cache.get("wallet", load, 5_000);
+    const second = cache.get("wallet", load, 5_000);
+    release();
+    await Promise.all([first, second]);
+
+    expect(loads).toBe(1);
+    expect(cache.stats()).toEqual({ hits: 0, misses: 1, coalesced: 1 });
   });
 });

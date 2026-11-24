@@ -241,6 +241,29 @@ describe('SpendingPolicySchema', () => {
   it('rejects negative approvalThreshold', () => {
     expect(SpendingPolicySchema.safeParse({ ...valid, approvalThreshold: -1 }).success).toBe(false);
   });
+
+  it('rejects cross-field rule violations: dailyLimit > monthlyLimit', () => {
+    const res = SpendingPolicySchema.safeParse({ ...valid, dailyLimit: 900, monthlyLimit: 800 });
+    expect(res.success).toBe(false);
+    expect(res.error?.issues.some((i) => i.message.includes('dailyLimit cannot exceed monthlyLimit'))).toBe(true);
+  });
+
+  it('rejects cross-field rule violations: approvalThreshold > dailyLimit', () => {
+    const res = SpendingPolicySchema.safeParse({ ...valid, approvalThreshold: 200, dailyLimit: 100 });
+    expect(res.success).toBe(false);
+    expect(res.error?.issues.some((i) => i.message.includes('approvalThreshold cannot exceed dailyLimit'))).toBe(true);
+  });
+
+  it('rejects cross-field rule violations: budgets sum > monthlyLimit', () => {
+    const res = SpendingPolicySchema.safeParse({
+      ...valid,
+      medicationMonthlyBudget: 500,
+      billMonthlyBudget: 400,
+      monthlyLimit: 800,
+    });
+    expect(res.success).toBe(false);
+    expect(res.error?.issues.some((i) => i.message.includes('medicationMonthlyBudget + billMonthlyBudget cannot exceed monthlyLimit'))).toBe(true);
+  });
 });
 
 // ── TransactionSchema ─────────────────────────────────────────────────────────

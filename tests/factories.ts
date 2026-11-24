@@ -7,6 +7,7 @@ import type {
   SpendingPolicy,
   Transaction,
   AgentAction,
+  CareRecipientProfile,
   CareRecipient,
   Alert,
 } from "../shared/types.ts";
@@ -99,7 +100,7 @@ export function makeBillAuditResult(overrides?: Partial<BillAuditResult>): BillA
 export function makeSpendingPolicy(overrides?: Partial<SpendingPolicy>): SpendingPolicy {
   return {
     dailyLimit: 100,
-    monthlyLimit: 500,
+    monthlyLimit: 800,
     medicationMonthlyBudget: 300,
     billMonthlyBudget: 500,
     approvalThreshold: 75,
@@ -149,7 +150,7 @@ export function makeAgentAction(overrides?: Partial<AgentAction>): AgentAction {
   };
 }
 
-export function makeCareRecipient(overrides?: Partial<CareRecipient>): CareRecipient {
+export function makeCareRecipient(overrides?: Partial<CareRecipientProfile>): CareRecipientProfile {
   return {
     name: "Rosa Garcia",
     walletAddress: "GBQTESTWALLET123",
@@ -165,6 +166,8 @@ export function makeCareRecipient(overrides?: Partial<CareRecipient>): CareRecip
     ...overrides,
   };
 }
+
+export const makeCareRecipientProfile = makeCareRecipient;
 
 export function makeAlert(overrides?: Partial<Alert>): Alert {
   const types = ["approval_needed", "error_found", "refill_due", "budget_warning", "policy_blocked"] as const;

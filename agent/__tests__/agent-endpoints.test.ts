@@ -60,6 +60,7 @@ vi.mock("../../shared/x402-middleware.ts", () => ({
 }));
 
 vi.mock("../../shared/rate-limit.ts", () => ({
+  createRateLimiter: vi.fn(() => (_req: any, _res: any, next: any) => next()),
   rateLimiters: {
     agent: (req: any, res: any, next: any) => next(),
     health: (req: any, res: any, next: any) => next(),

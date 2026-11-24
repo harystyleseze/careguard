@@ -19,6 +19,11 @@ vi.mock("../../../shared/x402-middleware.ts", () => ({
   NETWORK: "stellar:testnet",
   OZ_FACILITATOR_URL: "https://example.invalid/facilitator",
 }));
+vi.mock("../../../shared/x402-verify-middleware.ts", () => ({
+  applyX402Middleware: vi.fn(),
+  NETWORK: "stellar:testnet",
+  OZ_FACILITATOR_URL: "https://example.invalid/facilitator",
+}));
 
 let app: Express;
 let server: Server;

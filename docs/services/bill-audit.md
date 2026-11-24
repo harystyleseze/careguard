@@ -4,6 +4,19 @@
 
 The Bill Audit API (`services/bill-audit-api/server.ts`) audits medical bill line items for overcharges, duplicate charges, and upcoding by comparing charged amounts against CMS Medicare fair-market rates.
 
+For a full request/response example against the live `POST /bill/audit` endpoint, including the x402 payment flow and the `$0.01`/audit price, see [docs/api-examples/bill-audit.md](../api-examples/bill-audit.md).
+## Local sample PDFs
+
+Generate disposable PDF fixtures for the dashboard upload flow with:
+
+```bash
+npm run generate:sample-bill -- --duplicate --upcoded --overcharge
+```
+
+Files are written to `services/bill-audit-api/fixtures/generated/`, which is
+gitignored for local test data. Supported flags are `--duplicate`,
+`--upcoded`, `--overcharge`, `--patient=<name>`, and `--out=<directory>`.
+
 ## Fair Market Rate Lookup
 
 The `auditBill` function looks up each line item's CPT code in `FAIR_MARKET_RATES`. The result is:

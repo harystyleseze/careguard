@@ -9,7 +9,7 @@
  *   const cache = createRedisClient(new IORedisMock());
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createInMemoryClient, createRedisClient } from "../redis.ts";
 import type { CacheClient } from "../redis.ts";
 
@@ -107,6 +107,24 @@ function runSuite(label: string, factory: () => CacheClient) {
 
 // Run against the in-memory implementation
 runSuite("In-memory CacheClient", () => createInMemoryClient());
+
+describe("In-memory cache expiry sweep", () => {
+  it("removes expired entries without looking them up", async () => {
+    vi.useFakeTimers();
+    try {
+      const cache = createInMemoryClient(100);
+      for (let i = 0; i < 100; i++) {
+        await cache.acquireLock(`one-off:${i}`, 50);
+      }
+
+      expect(cache.size).toBe(100);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(cache.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 // Run against the Redis-backed client wired to ioredis-mock.
 // Skip gracefully when ioredis-mock is not installed.

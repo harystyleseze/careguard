@@ -13,18 +13,19 @@ import { BillsTab } from "../components/tabs/bills-tab";
 import { MedicationsTab } from "../components/tabs/medications-tab";
 import { OverviewTab } from "../components/tabs/overview-tab";
 import { ApprovalsTab } from "../components/tabs/approvals-tab";
+import { TasksTab } from "../components/tabs/tasks-tab";
+import { HandoffNotesTab } from "../components/tabs/handoff-notes-tab";
 import { PolicyTab } from "../components/tabs/policy-tab";
 import { SettingsTab } from "../components/tabs/settings-tab";
 import { WalletTab } from "../components/tabs/wallet-tab";
+import { HouseholdTab } from "../components/tabs/household-tab";
 import { DASHBOARD_TABS, type Tab } from "../components/types";
 import { useAgentState } from "../hooks/use-agent-state";
 import { useProfile } from "../lib/useProfile";
-import { useRecipients } from "../lib/use-recipients";
+import { useRecipients } from "../lib/useRecipients";
+import type { RecipientListItem } from "../lib/useRecipients";
 import { ConfigErrorPage } from "../components/config-error-page";
 import { AGENT_URL } from "../lib/agent-url";
-
-
-import { DEFAULT_LOCALE } from "../i18n";
 
 export default function Dashboard() {
   // In production, AGENT_URL is null when NEXT_PUBLIC_API_URL is unset.
@@ -35,12 +36,13 @@ export default function Dashboard() {
   }
 
   const { recipient, caregiver, updateProfile } = useProfile();
-  const { recipients, selectedId, selectRecipient, error: recipientsError } = useRecipients((profile) => {
-    updateProfile({ recipient: profile });
-  });
+  const { recipients, selectedId, selectRecipient } = useRecipients(
+    (profile) => {
+      updateProfile({ recipient: profile });
+    },
+  );
   const pathname = usePathname();
   const searchParams = useSearchParams();
-
 
   const recipientInitials = recipient.name
     .split(" ")
@@ -59,6 +61,27 @@ export default function Dashboard() {
   const localeParam = searchParams.get("locale");
   const locale: Locale = isValidLocale(localeParam || "") ? localeParam as Locale : "en";
   const state = useAgentState({ activeTab });
+
+  const [consentSettings, setConsentSettings] = useState<ConsentSettings>(DEFAULT_CONSENT_SETTINGS);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    let cancelled = false;
+    caregiverFetch(`/recipients/${encodeURIComponent(selectedId)}/consent`)
+      .then(async (res) => {
+        if (cancelled) return;
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.consent) {
+            setConsentSettings(data.consent);
+          }
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, activeTab]);
 
   const ariaLogRef = useRef<number | null>(null);
   const [debouncedAriaLog, setDebouncedAriaLog] = useState<string[]>([]);
@@ -82,12 +105,10 @@ export default function Dashboard() {
         onResume={state.togglePause}
       />
       {state.agentResult?.truncated && (
-        <div
-          role="alert"
-          className="mx-auto max-w-7xl px-4 pt-4"
-        >
+        <div role="alert" className="mx-auto max-w-7xl px-4 pt-4">
           <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 text-sm text-yellow-800">
-            The last agent task was truncated — the result may be incomplete. Consider re-running with a more focused request.
+            The last agent task was truncated — the result may be incomplete.
+            Consider re-running with a more focused request.
           </div>
         </div>
       )}
@@ -108,7 +129,7 @@ export default function Dashboard() {
         recipientsError={recipientsError}
       />
       <div className="max-w-7xl mx-auto px-4 py-6">
-        <DashboardTabsNav activeTab={activeTab} pathname={pathname} locale={locale} />
+        <DashboardTabsNav activeTab={activeTab} pathname={pathname} approvalsCount={state.approvals.length} locale={locale} />
         {activeTab === "overview" && (
           <OverviewTab
             spending={state.spending}
@@ -116,11 +137,11 @@ export default function Dashboard() {
             agentPaused={state.agentPaused}
             loading={state.loading}
             activeTask={state.activeTask}
+            activeTool={state.activeTool}
             onRunTask={state.runAgentTask}
             onCancelTask={state.cancelAgentTask}
             recipient={recipient}
             locale={locale}
-            locale={DEFAULT_LOCALE}
           />
         )}
         {activeTab === "medications" && (
@@ -128,14 +149,12 @@ export default function Dashboard() {
             agentResult={state.agentResult}
             recipient={recipient}
             locale={locale}
+            currentCaregiver={caregiver}
+            consentSettings={consentSettings}
           />
         )}
         {activeTab === "bills" && (
-          <BillsTab
-            agentResult={state.agentResult}
-            recipient={recipient}
-            locale={locale}
-          />
+          <BillsTab agentResult={state.agentResult} recipient={recipient} />
         )}
         {activeTab === "approvals" && (
           <ApprovalsTab
@@ -145,6 +164,7 @@ export default function Dashboard() {
             onApprove={state.approveTransaction}
             onCancel={state.cancelTransaction}
             locale={locale}
+            currentCaregiver={caregiver}
           />
         )}
         {activeTab === "policy" && (
@@ -169,6 +189,11 @@ export default function Dashboard() {
             loadingWalletBalance={state.loadingWalletBalance}
             onRetryWalletBalance={state.retryWalletBalance}
             loadingAgentInfo={state.loadingAgentInfo}
+            spending={state.spending}
+            locale={locale}
+            currentCaregiver={caregiver}
+            consentSettings={consentSettings}
+            recipientId={selectedId}
           />
         )}
         {activeTab === "activity" && (
@@ -191,6 +216,16 @@ export default function Dashboard() {
             locale={locale}
           />
         )}
+        {activeTab === "tasks" && (
+          <TasksTab recipientId={selectedId ?? recipient.id} locale={locale} />
+        )}
+        {activeTab === "notes" && (
+          <HandoffNotesTab
+            recipientId={selectedId}
+            authorName={caregiver.name}
+            locale={locale}
+          />
+        )}
         {activeTab === "settings" && (
           <SettingsTab
             recipient={recipient}
@@ -199,6 +234,13 @@ export default function Dashboard() {
             agentPaused={state.agentPaused}
             onTogglePause={state.togglePause}
             onUpdateProfile={updateProfile}
+            recipients={recipients}
+            selectedRecipientId={selectedId}
+            onSelectRecipient={selectRecipient}
+          />
+        )}
+        {activeTab === "household" && (
+          <HouseholdTab
             recipients={recipients}
             selectedRecipientId={selectedId}
             onSelectRecipient={selectRecipient}

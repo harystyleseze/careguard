@@ -1,6 +1,7 @@
 /// <reference types="@testing-library/jest-dom" />
 import { render, screen, fireEvent } from "@testing-library/react";
-import { describe, it, expect, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { OverviewTab } from "../components/tabs/overview-tab";
 
 // Mock AdherencePrompt since it does fetching
@@ -106,6 +107,40 @@ describe("OverviewTab Component", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows muted placeholder cards before any task has run (#1239)", () => {
+    const { container } = render(
+      <OverviewTab {...mockProps} spending={{ ...mockProps.spending, spending: { ...mockProps.spending.spending, serviceFees: 0 }, transactionCount: 0 }} />,
+    );
+    expect(screen.getByText("Run a task to see savings")).toBeInTheDocument();
+    expect(screen.getByText("Run a bill audit to see errors caught")).toBeInTheDocument();
+    expect(screen.queryByText("$0.00/mo")).not.toBeInTheDocument();
+    // Savings, billing errors, API costs and LLM tokens are all pending.
+    expect(container.querySelectorAll('[data-pending="true"]')).toHaveLength(4);
+  });
+
+  it("keeps showing real API costs before a run when queries were already paid for (#1239)", () => {
+    render(<OverviewTab {...mockProps} />);
+    expect(screen.getByText("5 queries via x402")).toBeInTheDocument();
+    expect(screen.queryByText("Run a task to see agent costs")).toBeTruthy(); // LLM tokens card only
+  });
+
+  it("renders a genuine $0 result with the normal card style after a run (#1239)", () => {
+    const { container } = render(
+      <OverviewTab
+        {...mockProps}
+        agentResult={{
+          response: "No savings found.",
+          spending: { spending: { serviceFees: 0 } } as any,
+          toolCalls: [{ tool: "compare_pharmacy_prices", input: {}, result: { potentialSavings: 0 } }],
+        }}
+      />,
+    );
+    expect(screen.getByText("$0.00/mo")).toBeInTheDocument();
+    expect(screen.getByText("by switching pharmacies")).toBeInTheDocument();
+    expect(screen.queryByText("Run a task to see savings")).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[data-pending="true"]')).toHaveLength(0);
+  });
+
   it("calls onRunTask when task buttons are clicked", () => {
     render(<OverviewTab {...mockProps} />);
 
@@ -135,5 +170,138 @@ describe("OverviewTab Component", () => {
     expect(screen.getByText("Comparar Precios de Medicamentos")).toBeInTheDocument();
     expect(screen.getByText("Auditar Factura Hospitalaria")).toBeInTheDocument();
     expect(screen.getByText("Intentar Pago Excedente")).toBeInTheDocument();
+  });
+
+  it("shows the generic working text while loading without step data (#1253)", () => {
+    render(<OverviewTab {...mockProps} loading activeTask="meds" />);
+    expect(screen.getByText("Agent working...")).toBeInTheDocument();
+  });
+
+  it("shows the in-flight tool name while loading when step data exists (#1253)", () => {
+    render(
+      <OverviewTab
+        {...mockProps}
+        loading
+        activeTask="meds"
+        activeTool="compare_pharmacy_prices"
+      />,
+    );
+    expect(screen.getByText(/running compare_pharmacy_prices/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^Agent working\.\.\.$/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the Cancel button while a task runs with step data (#1253)", () => {
+    const onCancel = vi.fn();
+    render(
+      <OverviewTab
+        {...mockProps}
+        loading
+        activeTask="meds"
+        activeTool="audit_medical_bill"
+        onCancelTask={onCancel}
+      />,
+    );
+    const cancel = screen.getByRole("button", { name: /cancel/i });
+    fireEvent.click(cancel);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("OverviewTab — Medication Adherence Check (Issue #1254)", () => {
+  const adherenceProps = {
+    ...mockProps,
+    agentResult: {
+      response: "Ordered lisinopril.",
+      spending: { spending: { serviceFees: 0.05 } } as any,
+      toolCalls: [
+        { tool: "pay_for_medication", input: {}, result: { success: true } },
+      ],
+    },
+  };
+
+  function mockPending(exported: Array<{ id: string }>) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/agent/adherence/pending")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ pending: exported, count: exported.length }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
+      }) as unknown as typeof fetch,
+    );
+  }
+
+  it("renders the check card after a successful medication payment", () => {
+    mockPending([]);
+    render(<OverviewTab {...adherenceProps} recipient={{ name: "Rosa" } as any} />);
+
+    expect(screen.getByText("Medication Adherence Check")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /yes — taken/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /not yet/i })).toBeInTheDocument();
+  });
+
+  it("records 'taken' and disables both buttons with an inline confirmation", async () => {
+    mockPending([{ id: "adh-1" }]);
+    const user = userEvent.setup();
+    render(<OverviewTab {...adherenceProps} recipient={{ name: "Rosa" } as any} />);
+
+    await user.click(screen.getByRole("button", { name: /yes — taken/i }));
+
+    await screen.findByRole("status");
+    expect(screen.getByText(/recorded/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /yes — taken/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /not yet/i })).not.toBeInTheDocument();
+    expect(
+      vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/agent/adherence/confirm")),
+    ).toBe(true);
+  });
+
+  it("records 'not yet' against the adherence skip endpoint", async () => {
+    mockPending([{ id: "adh-2" }]);
+    const user = userEvent.setup();
+    render(<OverviewTab {...adherenceProps} recipient={{ name: "Rosa" } as any} />);
+
+    await user.click(screen.getByRole("button", { name: /not yet/i }));
+
+    await screen.findByRole("status");
+    expect(
+      vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/agent/adherence/skip")),
+    ).toBe(true);
+  });
+
+  it("still acknowledges the choice when no pending record exists", async () => {
+    mockPending([]);
+    const user = userEvent.setup();
+    render(<OverviewTab {...adherenceProps} recipient={{ name: "Rosa" } as any} />);
+
+    await user.click(screen.getByRole("button", { name: /yes — taken/i }));
+
+    await screen.findByRole("status");
+    expect(
+      vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/agent/adherence/confirm")),
+    ).toBe(false);
+  });
+
+  it("keeps the buttons enabled when recording fails so the caregiver can retry", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))) as unknown as typeof fetch,
+    );
+    const user = userEvent.setup();
+    render(<OverviewTab {...adherenceProps} recipient={{ name: "Rosa" } as any} />);
+
+    await user.click(screen.getByRole("button", { name: /yes — taken/i }));
+
+    // The catch path leaves the card unchanged (retryable).
+    await screen.findByRole("button", { name: /yes — taken/i });
+    expect(screen.getByRole("button", { name: /not yet/i })).toBeInTheDocument();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 });

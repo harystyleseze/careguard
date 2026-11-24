@@ -16,16 +16,21 @@ export function DashboardFooter({ agentWallet, locale = "en" }: DashboardFooterP
         <span>{t.app.title} | {NETWORK_LABEL} | x402 + MPP</span>
         <div className="flex items-center gap-3">
           {agentWallet && (
-            <a
-              href={`${EXPLORER_ACCOUNT_URL}/${agentWallet}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sky-500 hover:text-sky-700 underline"
-            >
-              {t.wallet.viewExplorer}
-            </a>
+            <>
+              <a
+                href={`${EXPLORER_ACCOUNT_URL}/${agentWallet}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sky-500 hover:text-sky-700 underline"
+                title="View public transaction record on blockchain explorer"
+              >
+                {t.wallet.viewExplorer}
+              </a>
+            </>
           )}
-          <span>{t.app.title} Agent 2026</span>
+          <span suppressHydrationWarning>
+            {t.app.title} Agent {new Date().getFullYear()}
+          </span>
         </div>
       </div>
     </footer>

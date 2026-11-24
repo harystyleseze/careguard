@@ -2,38 +2,183 @@ openapi: '3.1.0'
 info:
   title: 'CareGuard API'
   version: '1.0.0'
-  description: 'OpenAPI spec for CareGuard services: agent spending, pharmacy, bill audit, drug interactions, and payments.'
+  description: 'OpenAPI spec for CareGuard services: agent spending, pharmacy, bill audit, drug interactions, and payments. See docs/api-examples/rate-limits.md for rate-limit behavior, response headers, and retry guidance.'
+  externalDocs:
+    description: 'Authentication schemes and endpoint requirements'
+    url: 'api-examples/authentication.md'
 servers:
   - url: 'http://localhost:3000'
     description: 'Development server'
   - url: 'https://api.careguard.xyz'
     description: 'Production server'
-security:
-  - CaregiverBearerAuth:
-[]
+security: []
 components:
   securitySchemes:
     CaregiverBearerAuth:
       type: 'http'
       scheme: 'bearer'
       bearerFormat: 'token'
-      description: 'Bearer token used to authorize caregiver access to /agent/* endpoints. Set CAREGIVER_TOKEN in environment variables.'
+      description: 'Caregiver token used by GET and POST /recipients. Set CAREGIVER_TOKEN in the server environment; this is separate from AGENT_API_KEY and x402 payment.'
+    AgentApiKeyAuth:
+      type: 'http'
+      scheme: 'bearer'
+      bearerFormat: 'token'
+      description: 'Bearer API key for /agent/* routes. Set AGENT_API_KEY in the server environment.'
+    PharmacyAdminAuth:
+      type: 'http'
+      scheme: 'bearer'
+      bearerFormat: 'token'
+      description: 'Bearer admin token for pharmacy administration routes. Set PHARMACY_ADMIN_TOKEN in the server environment.'
+    X402Auth:
+      type: 'apiKey'
+      name: 'X-Payment'
+      in: 'header'
+      description: 'x402 payment proof header for paid endpoints on Stellar.'
+    MPPPaymentAuth:
+      type: 'apiKey'
+      name: 'X-Payment-Authorization'
+      in: 'header'
+      description: 'MPP payment authorization for POST /pharmacy/order; distinct from x402.'
   schemas:
     Error:
       type: 'object'
+      required:
+        - 'error'
+        - 'code'
       properties:
         error:
           type: 'string'
+          description: 'A human-readable description of the error.'
         code:
           type: 'string'
+          description: 'A stable, machine-readable uppercase SNAKE_CASE code identifying the specific type of error.'
         details:
           type: 'object'
+          description: 'Structured metadata or field-level details specific to the error code.'
+    X402PaymentChallenge:
+      type: 'object'
+      description: 'x402 payment challenge returned on 402 responses from paid routes. Shape is defined by the x402 protocol (see docs/setup/x402.md), not the shared Error schema — clients must branch on HTTP status 402, not on a `code` field, to detect this response.'
+      properties:
+        x402Version:
+          type: 'integer'
+        accepts:
+          type: 'array'
+          description: 'Accepted payment schemes, assets, and amounts for this route.'
+          items:
+            type: 'object'
+        error:
+          type: 'string'
+          description: 'Human-readable reason payment is required or was rejected.'
+    ReadinessResponse:
+      type: 'object'
+      description: 'See docs/observability/health-checks.md for the full schema and check semantics.'
+      properties:
+        status:
+          type: 'string'
+          enum:
+            - 'ok'
+            - 'degraded'
+        checks:
+          type: 'object'
+          properties:
+            env:
+              oneOf:
+                - type: 'boolean'
+                - type: 'string'
+            horizon:
+              type: 'boolean'
+            ozFacilitator:
+              oneOf:
+                - type: 'boolean'
+                - type: 'string'
+  responses:
+    BadRequestError:
+      description: 'Bad Request / Validation Error'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnauthorizedError:
+      description: 'Missing or invalid authentication credentials'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ForbiddenError:
+      description: 'Forbidden access (e.g., CSRF token mismatch, invalid admin credentials)'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFoundError:
+      description: 'Requested resource not found'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    PaymentRequiredError:
+      description: 'Payment required (x402 / MPP Challenge)'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ConflictError:
+      description: 'Conflict / State violation (e.g., Agent is paused)'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalServerError:
+      description: 'Internal server error'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
 paths:
+  /health:
+    get:
+      summary: 'Liveness probe — always fast, no dependency checks'
+      tags:
+        - 'Observability'
+      security: []
+      responses:
+        200:
+          description: 'Process is up'
+          content:
+            application/json:
+              schema:
+                type: 'object'
+                properties:
+                  status:
+                    type: 'string'
+                    enum:
+                      - 'ok'
+  /ready:
+    get:
+      summary: 'Readiness probe — checks required env, Horizon, and OZ facilitator status'
+      tags:
+        - 'Observability'
+      security: []
+      responses:
+        200:
+          description: 'All dependency checks passed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        503:
+          description: 'Draining, or at least one dependency check failed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
   /agent/spending:
     get:
-      summary: 'Get agent spending summary'
+      summary: 'Get agent spending summary. See docs/api-examples/agent-spending.md for a full field reference and sample response.'
       tags:
         - 'Agent'
+      security:
+        - AgentApiKeyAuth: []
       responses:
         200:
           description: 'Spending summary'
@@ -42,18 +187,112 @@ paths:
               schema:
                 type: 'object'
                 properties:
-                  totalSpent:
-                    type: 'number'
-                  categories:
+                  policy:
                     type: 'object'
-  /pharmacy:
-    post:
-      summary: 'Query pharmacy API'
+                    description: 'The current spending policy for this care recipient.'
+                  spending:
+                    type: 'object'
+                    description: 'Month-to-date totals by category: medications, bills, serviceFees, total.'
+                  budgetRemaining:
+                    type: 'object'
+                    description: 'Remaining budget for medications and bills, computed from policy minus spending.'
+                  transactionCount:
+                    type: 'number'
+                  recentTransactions:
+                    type: 'array'
+                    description: 'The 5 most recent transactions, newest last.'
+                    items:
+                      type: 'object'
+        401:
+          description: 'Missing or invalid AGENT_API_KEY.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        429:
+          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header. See docs/api-examples/rate-limits.md for per-endpoint limits, response headers, and retry guidance.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        500:
+          description: 'Unhandled server error. `code` is SERVER_INTERNAL_ERROR.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /pharmacy/compare:
+    get:
+      summary: 'Compare pharmacy prices for a drug'
       tags:
         - 'Pharmacy'
       security:
-        - X402Auth:
-[]
+        - X402Auth: []
+      parameters:
+        - in: 'query'
+          name: 'drug'
+          required: true
+          schema:
+            type: 'string'
+            minLength: 1
+            maxLength: 80
+          description: 'Drug name. Maximum length: 80 characters.'
+        - in: 'query'
+          name: 'dosage'
+          required: false
+          schema:
+            type: 'string'
+            minLength: 1
+            maxLength: 80
+          description: 'Optional dosage string. Maximum length: 80 characters.'
+        - in: 'query'
+          name: 'zip'
+          required: false
+          schema:
+            type: 'string'
+            pattern: '^\d{5}$'
+          description: '5-digit ZIP code used for distance adjustments.'
+      responses:
+        200:
+          description: 'Pharmacy query results'
+        400:
+          description: 'Invalid request. `code` is one of VALIDATION_MISSING_FIELD, VALIDATION_INVALID_INPUT.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        402:
+          description: 'Payment required. Response is an x402 payment challenge (not the shared Error schema): the body describes accepted payment schemes/amounts and an X-PAYMENT-related header identifies the facilitator. Retry the request with an X-PAYMENT header containing a valid payment proof for one of the accepted schemes.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/X402PaymentChallenge'
+        404:
+          description: 'Drug or pharmacy not found. `code` is NOT_FOUND_DRUG or NOT_FOUND_PHARMACY.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        429:
+          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header. See docs/api-examples/rate-limits.md for per-endpoint limits, response headers, and retry guidance.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        500:
+          description: 'Unhandled server error. `code` is SERVER_INTERNAL_ERROR.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /pharmacy/prices:
+    post:
+      summary: 'Admin upsert for a drug price at a pharmacy'
+      description: 'Admin-only endpoint to create or update a drug price at a pharmacy. See docs/api-examples/pharmacy-prices-admin.md for detailed authorization rules, sample payloads, and effects on future comparison results.'
+      tags:
+        - 'Pharmacy'
+      security:
+        - PharmacyAdminAuth: []
       requestBody:
         required: true
         content:
@@ -61,23 +300,56 @@ paths:
             schema:
               type: 'object'
               properties:
-                query:
+                drug:
                   type: 'string'
+                  minLength: 1
+                  maxLength: 80
+                pharmacyId:
+                  type: 'string'
+                  minLength: 1
+                  maxLength: 80
+                price:
+                  type: 'number'
+                  exclusiveMinimum: 0
+                  maximum: 10000
               required:
-                - 'query'
+                - 'drug'
+                - 'pharmacyId'
+                - 'price'
       responses:
         200:
-          description: 'Pharmacy query results'
+          description: 'Price created or updated'
         400:
-          description: 'Invalid request'
-  /bill-audit:
+          description: 'Validation error. `code` is one of VALIDATION_MISSING_FIELD, VALIDATION_INVALID_INPUT.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        401:
+          description: 'Missing admin token. `code` is AUTH_TOKEN_MISSING.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        403:
+          description: 'Admin token invalid or insufficient. `code` is AUTH_TOKEN_INVALID or AUTH_ADMIN_REQUIRED.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        500:
+          description: 'Unhandled server error. `code` is SERVER_INTERNAL_ERROR.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /bill/audit:
     post:
       summary: 'Audit medical bills'
       tags:
         - 'Bill Audit'
       security:
-        - X402Auth:
-[]
+        - X402Auth: []
       requestBody:
         required: true
         content:
@@ -85,7 +357,7 @@ paths:
             schema:
               type: 'object'
               properties:
-                items:
+                lineItems:
                   type: 'array'
                   items:
                     type: 'object'
@@ -103,30 +375,205 @@ paths:
                       description:
                         type: 'string'
                         minLength: 1
+                        maxLength: 80
                     required:
                       - 'cptCode'
                       - 'quantity'
                       - 'chargedAmount'
                       - 'description'
               required:
-                - 'items'
+                - 'lineItems'
       responses:
         200:
-          description: 'Audit results'
-        400:
-          description: 'Validation error'
+          description: 'Audit results. See docs/api-examples/bill-audit.md for a full curl example including the x402 payment flow.'
+        402:
+          description: 'Payment required. Response is an x402 payment challenge (not the shared Error schema): the body describes accepted payment schemes/amounts and an X-PAYMENT-related header identifies the facilitator. Retry the request with an X-PAYMENT header containing a valid payment proof for one of the accepted schemes.'
           content:
             application/json:
               schema:
-                type: 'object'
-                properties:
-                  errors:
-                    type: 'array'
+                $ref: '#/components/schemas/X402PaymentChallenge'
+        413:
+          description: 'Request body exceeds the configured size limit. `code` is BODY_TOO_LARGE; `details.limit` reports the configured maximum in bytes.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        429:
+          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header. See docs/api-examples/rate-limits.md for per-endpoint limits, response headers, and retry guidance.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        500:
+          description: 'Unhandled server error. `code` is SERVER_INTERNAL_ERROR.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /drug/interactions:
+    get:
+      summary: 'Check drug interactions for a medication list'
+      tags:
+        - 'Drug Interactions'
+      security:
+        - X402Auth: []
+      parameters:
+        - in: 'query'
+          name: 'meds'
+          required: true
+          schema:
+            type: 'string'
+            minLength: 1
+            maxLength: 1619
+          description: 'Comma-separated medication names. Each medication name is limited to 80 characters.'
+      responses:
+        200:
+          description: 'Drug interaction results. See docs/api-examples/drug-interactions.md for a full curl example including the x402 payment flow.'
+        400:
+          description: 'Validation error. `code` is one of VALIDATION_MISSING_FIELD, VALIDATION_INVALID_INPUT, VALIDATION_INSUFFICIENT_SCORE.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        402:
+          description: 'Payment required. Response is an x402 payment challenge (not the shared Error schema): the body describes accepted payment schemes/amounts and an X-PAYMENT-related header identifies the facilitator. Retry the request with an X-PAYMENT header containing a valid payment proof for one of the accepted schemes.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/X402PaymentChallenge'
+        429:
+          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header. See docs/api-examples/rate-limits.md for per-endpoint limits, response headers, and retry guidance.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        500:
+          description: 'Unhandled server error. `code` is SERVER_INTERNAL_ERROR.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /pharmacy/order:
+    post:
+      summary: 'Submit a paid pharmacy order'
+      tags:
+        - 'Pharmacy Payments'
+      security:
+        - MPPPaymentAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: 'object'
+              properties:
+                drug:
+                  type: 'string'
+                  minLength: 1
+                  maxLength: 80
+                pharmacy:
+                  type: 'string'
+                  minLength: 1
+                  maxLength: 80
+                amount:
+                  oneOf:
+                    - type: 'number'
+                      minimum: 0.01
+                      maximum: 10000
+                    - type: 'string'
+              required:
+                - 'drug'
+                - 'pharmacy'
+                - 'amount'
+      responses:
+        200:
+          description: 'Order confirmed'
+        400:
+          description: 'Validation error. `code` is one of VALIDATION_MISSING_FIELD, VALIDATION_INVALID_INPUT.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        402:
+          description: 'Payment required. Response is an x402 payment challenge (not the shared Error schema): the body describes accepted payment schemes/amounts and an X-PAYMENT-related header identifies the facilitator. Retry the request with an X-PAYMENT header containing a valid payment proof for one of the accepted schemes.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/X402PaymentChallenge'
+        429:
+          description: 'Too many requests for this route''s rate-limit policy. `code` is RATE_LIMIT_EXCEEDED; back off and retry after the `Retry-After` header. See docs/api-examples/rate-limits.md for per-endpoint limits, response headers, and retry guidance.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        500:
+          description: 'Order or payment processing failed. `code` is one of SERVER_INTERNAL_ERROR, PAYMENT_TX_FAILED.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        502:
+          description: 'Stellar transaction timed out or an upstream dependency is unreachable. `code` is one of PAYMENT_TX_TIMEOUT, UPSTREAM_HORIZON_DOWN, UPSTREAM_FACILITATOR_DOWN, UPSTREAM_FACILITATOR_ERROR.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /recipients:
+    get:
+      summary: 'List care recipients'
+      tags:
+        - 'Care Recipients'
+      security:
+        - CaregiverBearerAuth: []
+      responses:
+        200:
+          description: 'Care recipient list'
+        401:
+          description: 'Missing caregiver token'
+        403:
+          description: 'Invalid caregiver token'
+    post:
+      summary: 'Create a care recipient'
+      tags:
+        - 'Care Recipients'
+      security:
+        - CaregiverBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: 'object'
+              required:
+                - 'name'
+              properties:
+                name:
+                  type: 'string'
+                age:
+                  type: 'integer'
+                medications:
+                  type: 'array'
+                  items:
+                    type: 'string'
+                primary_doctor:
+                  type: 'string'
+                insurance:
+                  type: 'string'
+      responses:
+        201:
+          description: 'Care recipient created'
+        400:
+          description: 'Invalid care recipient request'
+        401:
+          description: 'Missing caregiver token'
+        403:
+          description: 'Invalid caregiver token'
   /docs:
     get:
       summary: 'API documentation UI'
       tags:
         - 'Documentation'
+      security: []
       responses:
         200:
           description: 'Scalar UI serving this OpenAPI spec'

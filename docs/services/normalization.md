@@ -21,16 +21,14 @@ private static PRICING_DATABASE = (() => {
 
 ### `services/drug-interaction-api/server.ts`
 
-`INTERACTIONS` pairs are normalized into `NORMALIZED_INTERACTIONS` at module load:
+`INTERACTIONS` pairs are normalized into a canonical, order-independent map at module load:
 
 ```ts
-const NORMALIZED_INTERACTIONS = INTERACTIONS.map(ix => ({
-  ...ix,
-  drugs: [ix.drugs[0].toLowerCase(), ix.drugs[1].toLowerCase()] as [string, string],
-}));
+const INTERACTION_INDEX = buildInteractionIndex(INTERACTIONS);
 ```
 
-`checkInteractions()` then iterates `NORMALIZED_INTERACTIONS` instead of `INTERACTIONS`.
+`checkInteractions()` performs one map lookup per requested medication pair
+instead of scanning the full interaction dataset.
 
 ## Layer 2 — Request time (input normalization)
 

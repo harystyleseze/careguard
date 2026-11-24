@@ -47,7 +47,7 @@ describe('ARIA Tab Semantics and Keyboard Navigation', () => {
     const { container } = render(<Dashboard />);
     
     const tabs = container.querySelectorAll('[role="tab"]');
-    expect(tabs).toHaveLength(8); // overview, medications, bills, approvals, policy, wallet, activity, settings
+    expect(tabs).toHaveLength(9); // overview, medications, bills, approvals, policy, wallet, activity, notes, settings
     
     // Check first tab (overview)
     const firstTab = tabs[0];
@@ -67,7 +67,7 @@ describe('ARIA Tab Semantics and Keyboard Navigation', () => {
     const { container } = render(<Dashboard />);
     
     const tabpanels = container.querySelectorAll('[role="tabpanel"]');
-    expect(tabpanels).toHaveLength(8);
+    expect(tabpanels).toHaveLength(9);
     
     // Check active tabpanel
     const activeTabpanel = container.querySelector('#tabpanel-overview');

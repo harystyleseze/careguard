@@ -6,6 +6,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
+import { appendAuditEntry } from "../../shared/audit-log.ts";
+import { agentToolCallCapExceededTotal } from "../../shared/metrics.ts";
 
 vi.mock("dotenv/config", () => ({}));
 vi.mock("../../shared/audit-log.ts", () => ({
@@ -84,6 +86,7 @@ const auth = (req: any) => req.set("Authorization", "Bearer test-agent-api-key")
 describe("tool call cap", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    agentToolCallCapExceededTotal.reset();
   });
 
   it("stops at cap boundary and returns truncated:true", async () => {
@@ -115,6 +118,15 @@ describe("tool call cap", () => {
     expect(res.body.truncated).toBe(true);
     expect(res.body.toolCalls.length).toBe(3);
     expect(res.body.events).toContainEqual({ kind: "tool_call_cap_reached" });
+    expect(appendAuditEntry).toHaveBeenCalledWith({
+      event: "agent.tool_cap_exceeded",
+      actor: "agent",
+      details: { max: 5, ran: 3 },
+    });
+
+    const metrics = await request(app).get("/metrics");
+    expect(metrics.status).toBe(200);
+    expect(metrics.text).toContain("agent_tool_call_cap_exceeded_total 1");
   });
 
   it("does not truncate when under cap", async () => {

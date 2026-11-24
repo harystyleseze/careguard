@@ -7,7 +7,6 @@ import { Card } from "../primitives/card";
 import type { AgentResult, AgentLlmError, SpendingData } from "../types";
 import type { RecipientProfile } from "../../lib/types";
 import { agentFetch } from "../../lib/agent-fetch";
-import { formatCurrency, getTranslations, type Locale } from "../../i18n";
 import { formatCurrency, formatDate, formatNumber, getTranslations, type Locale } from "../../i18n";
 
 export interface OverviewTabProps {
@@ -16,6 +15,8 @@ export interface OverviewTabProps {
   agentPaused: boolean;
   loading: boolean;
   activeTask: string;
+  /** Tool currently executing inside the running task, when known (#1253). */
+  activeTool?: string | null;
   onRunTask: (task: string, label: string) => void;
   onCancelTask?: () => void;
   recipient?: RecipientProfile;
@@ -28,12 +29,73 @@ const TASKS = {
   block: "Pay a $600 medical bill to General Hospital for Rosa's recent surgery follow-up.",
 };
 
+/** Issue #1267: Format agent response text with better structure and readability. */
+function FormattedResponse({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  // Lines that start with numbers followed by . or ) are likely list items
+  const lines = text.split("\n");
+  const isLikelyList = lines.some((line) => /^\s*\d+[\.)]\s/.test(line));
+
+  // Simple heuristic: if response is very long, truncate it
+  const maxChars = 500;
+  const isTruncated = text.length > maxChars && !expanded;
+  const displayText = isTruncated ? text.slice(0, maxChars) + "…" : text;
+
+  if (isLikelyList) {
+    // Render as list with structure
+    return (
+      <div className="space-y-2">
+        {lines.map((line, idx) => {
+          const trimmed = line.trim();
+          if (!trimmed) return null;
+          return (
+            <div key={idx} className="text-sm text-slate-600">
+              {/^\s*\d+[\.)]\s/.test(trimmed) ? (
+                <div className="ml-2">
+                  <span className="font-medium">{trimmed}</span>
+                </div>
+              ) : (
+                <div className="text-slate-600">{trimmed}</div>
+              )}
+            </div>
+          );
+        })}
+        {isTruncated && (
+          <button
+            onClick={() => setExpanded(true)}
+            className="text-xs text-sky-600 hover:text-sky-700 underline mt-2"
+          >
+            Show more
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // Fall back to paragraph rendering with truncation
+  return (
+    <div>
+      <p className="text-sm text-slate-600 whitespace-pre-wrap">{displayText}</p>
+      {isTruncated && (
+        <button
+          onClick={() => setExpanded(true)}
+          className="text-xs text-sky-600 hover:text-sky-700 underline mt-2"
+        >
+          Show more
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function OverviewTab({
   spending,
   agentResult,
   agentPaused,
   loading,
   activeTask,
+  activeTool,
   onRunTask,
   onCancelTask,
   recipient,
@@ -52,11 +114,15 @@ export function OverviewTab({
         (t) => t.tool === "audit_medical_bill" || t.tool === "fetch_and_audit_bill",
       )
       .reduce((s, t) => s + (t.result?.totalOvercharge || 0), 0)
-        .filter(
-          (t) => t.tool === "audit_medical_bill" || t.tool === "fetch_and_audit_bill",
-        )
-        .reduce((s, t) => s + (t.result?.totalOvercharge || 0), 0)
     : 0;
+
+  // #1239: before any task has run there is no result to show — distinguish
+  // that from a run that genuinely found $0. API costs also come from the
+  // persisted spending tracker, so only treat them as pending when nothing
+  // has been spent on queries either.
+  const hasRun = agentResult !== null;
+  const apiCostsPending =
+    !hasRun && !spending?.spending.serviceFees && !spending?.transactionCount;
 
   const llmTokens = agentResult?.llmUsage
     ? agentResult.llmUsage.promptTokens + agentResult.llmUsage.completionTokens
@@ -84,28 +150,31 @@ export function OverviewTab({
         />
         <Card
           label={t.overview.savingsFound}
-          value={agentResult ? `${formatCurrency(savings, locale)}/mo` : `${formatCurrency(0, locale)}/mo`}
-          sub={t.overview.bySwitching}
+          value={hasRun ? `${formatCurrency(savings, locale)}/mo` : t.overview.notRunYet}
+          sub={hasRun ? t.overview.bySwitching : t.overview.runForSavings}
           color="green"
+          pending={!hasRun}
         />
         <Card
           label={t.overview.billingErrors}
-          value={agentResult ? formatCurrency(overcharges, locale) : formatCurrency(0, locale)}
-          sub={t.overview.inOvercharges}
+          value={hasRun ? formatCurrency(overcharges, locale) : t.overview.notRunYet}
+          sub={hasRun ? t.overview.inOvercharges : t.overview.runForBillingErrors}
           color="amber"
+          pending={!hasRun}
         />
         <Card
           label={t.overview.agentApiCosts}
-          value={formatCurrency(spending?.spending.serviceFees ?? 0, locale, 4)}
-          sub={`${spending?.transactionCount || 0} ${t.overview.queries}`}
-          sub={`${spending?.transactionCount ? formatNumber(spending.transactionCount, locale) : 0} ${t.overview.queries}`}
+          value={apiCostsPending ? t.overview.notRunYet : formatCurrency(spending?.spending.serviceFees ?? 0, locale, 2)}
+          sub={apiCostsPending ? t.overview.runForApiCosts : `${spending?.transactionCount ? formatNumber(spending.transactionCount, locale) : 0} ${t.overview.queries}`}
           color="slate"
+          pending={apiCostsPending}
         />
         <Card
           label="LLM Tokens"
-          value={agentResult ? `${formatNumber(llmTokens, locale)} tokens` : "0 tokens"}
-          sub={`≈ ${formatCurrency(Number(llmCost), locale, 4)} this run`}
+          value={hasRun ? `${formatNumber(llmTokens, locale)} tokens` : t.overview.notRunYet}
+          sub={hasRun ? `≈ ${formatCurrency(Number(llmCost), locale, 4)} this run` : t.overview.runForApiCosts}
           color="sky"
+          pending={!hasRun}
         />
       </div>
 
@@ -137,6 +206,7 @@ export function OverviewTab({
                 ? t.tasks.agentPaused
                 : t.tasks.findCheapest
             }
+            estimatedTime={!agentPaused ? t.tasks.estimatedTime : undefined}
             busy={(loading && activeTask === "meds") || agentPaused}
             onClick={() => onRunTask(TASKS.meds, "meds")}
           />
@@ -147,6 +217,7 @@ export function OverviewTab({
                 ? t.tasks.agentPaused
                 : t.tasks.scanBill
             }
+            estimatedTime={!agentPaused ? t.tasks.estimatedTime : undefined}
             busy={(loading && activeTask === "bill") || agentPaused}
             onClick={() => onRunTask(TASKS.bill, "bill")}
           />
@@ -157,14 +228,19 @@ export function OverviewTab({
                 ? t.tasks.agentPaused
                 : t.tasks.demoPayment
             }
+            estimatedTime={!agentPaused ? t.tasks.estimatedTime : undefined}
             busy={(loading && activeTask === "block") || agentPaused}
             onClick={() => onRunTask(TASKS.block, "block")}
           />
         </div>
         {loading && (
-          <div className="mt-4 flex items-center gap-3 text-sm text-sky-600">
+          <div className="mt-4 flex items-center gap-3 text-sm text-sky-600" aria-live="polite">
             <div className="w-4 h-4 border-2 border-sky-600 border-t-transparent rounded-full animate-spin" />
-            {t.tasks.working}
+            {/* #1253: name the in-flight tool when the agent state has one,
+                fall back to the generic message otherwise. */}
+            {activeTool
+              ? t.tasks.workingStep.replace("{step}", activeTool)
+              : t.tasks.working}
             {onCancelTask && (
               <button
                 onClick={onCancelTask}
@@ -182,7 +258,7 @@ export function OverviewTab({
           role="alert"
           className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 text-sm text-yellow-800"
         >
-          Task may be incomplete — agent ran out of steps
+          This task took longer than expected and may not have finished completely. Try running it again or breaking it into smaller tasks.
         </div>
       )}
 
@@ -199,9 +275,7 @@ export function OverviewTab({
           <h2 className="text-sm font-semibold text-slate-700 mb-3">
             {t.overview.agentResponse}
           </h2>
-          <p className="text-sm text-slate-600 whitespace-pre-wrap">
-            {agentResult.response}
-          </p>
+          <FormattedResponse text={agentResult.response} />
           <div className="mt-4 text-xs text-slate-400">
             {agentResult.toolCalls.length} tool calls | API cost: $
             {agentResult.spending.spending.serviceFees.toFixed(4)}
@@ -211,22 +285,82 @@ export function OverviewTab({
 
       {/* Medication Adherence Prompt (Issue #264) */}
       {agentResult?.toolCalls.some((t) => t.tool === "pay_for_medication" && t.result?.success) && (
-        <div className="bg-white rounded-xl border border-amber-200 p-6">
-          <h2 className="text-sm font-semibold text-amber-800 mb-2">
-            Medication Adherence Check
-          </h2>
+        <MedicationAdherenceCheck recipientName={recipient?.name || "the care recipient"} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Post-payment adherence check (Issue #1254). Distinguishes itself from the
+ * AdherencePrompt list (#264, which has per-record Confirm buttons): this card
+ * records today's dose against the most recent pending adherence record for
+ * the recipient, disables both buttons once a choice is recorded, and shows
+ * an inline confirmation so the action is never a silent no-op.
+ */
+function MedicationAdherenceCheck({ recipientName }: { recipientName: string }) {
+  const [recorded, setRecorded] = useState<"taken" | "not_yet" | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const record = async (choice: "taken" | "not_yet") => {
+    if (recorded || submitting) return;
+    setSubmitting(true);
+    try {
+      const pendingRes = await agentFetch("/agent/adherence/pending?recipient_id=rosa");
+      const pending = pendingRes.ok ? await pendingRes.json() : null;
+      const recordId = pending?.pending?.[0]?.id;
+
+      if (recordId) {
+        await agentFetch(
+          choice === "taken" ? "/agent/adherence/confirm" : "/agent/adherence/skip",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ record_id: recordId }),
+          },
+        );
+      }
+      // Recorded (or nothing pending to record against) — either way the
+      // choice is acknowledged and the buttons lock.
+      setRecorded(choice);
+    } catch {
+      // Leave the buttons enabled so the caregiver can retry the recording.
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-amber-200 p-6">
+      <h2 className="text-sm font-semibold text-amber-800 mb-2">
+        Medication Adherence Check
+      </h2>
+      {recorded ? (
+        <p className="text-sm text-green-700" role="status">
+          ✓ {recorded === "taken" ? `Recorded — ${recipientName} took their medication today.` : "Recorded — dose not yet taken."}
+        </p>
+      ) : (
+        <>
           <p className="text-sm text-amber-700">
-            Did {recipient?.name || "the care recipient"} take their medication today?
+            Did {recipientName} take their medication today?
           </p>
           <div className="mt-3 flex gap-2">
-            <button className="px-4 py-2 bg-green-50 text-green-700 rounded-lg text-xs font-medium hover:bg-green-100 cursor-pointer transition-all">
+            <button
+              onClick={() => record("taken")}
+              disabled={submitting}
+              className="px-4 py-2 bg-green-50 text-green-700 rounded-lg text-xs font-medium hover:bg-green-100 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               Yes — Taken
             </button>
-            <button className="px-4 py-2 bg-red-50 text-red-700 rounded-lg text-xs font-medium hover:bg-red-100 cursor-pointer transition-all">
+            <button
+              onClick={() => record("not_yet")}
+              disabled={submitting}
+              className="px-4 py-2 bg-red-50 text-red-700 rounded-lg text-xs font-medium hover:bg-red-100 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               Not Yet
             </button>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

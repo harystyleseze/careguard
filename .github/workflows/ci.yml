@@ -34,3 +34,9 @@ jobs:
 
       - name: Run tests
         run: npm run test:all
+
+      - name: Verify vitest/@vitest/coverage-v8 are version-locked (#1395)
+        run: npm run check:vitest-lock
+
+      - name: Check for orphaned test files (#994)
+        run: npm run check:orphaned-tests

@@ -63,4 +63,40 @@ describe("Shared Bill Audit Logic (Issue #8)", () => {
     expect(result.lineItems[0].status).toBe("valid");
     expect(result.lineItems[0].suggestedAmount).toBe(500);
   });
+
+  it("surfaces stale rates in the recommendation and result", () => {
+    const result = auditBill(
+      [
+        {
+          description: "Office visit",
+          cptCode: "99213",
+          quantity: 1,
+          chargedAmount: 130,
+        },
+      ],
+      { ratesValidUntil: "2000-01-01" },
+    );
+
+    expect(result.isStale).toBe(true);
+    expect(result.recommendation).toMatch(/rates used are stale/i);
+  });
+
+  it("preserves the recommendation for current rates", () => {
+    const result = auditBill(
+      [
+        {
+          description: "Office visit",
+          cptCode: "99213",
+          quantity: 1,
+          chargedAmount: 130,
+        },
+      ],
+      { ratesValidUntil: "2999-01-01" },
+    );
+
+    expect(result.isStale).toBe(false);
+    expect(result.recommendation).toBe(
+      "No errors detected. This bill appears correct.",
+    );
+  });
 });

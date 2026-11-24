@@ -2,14 +2,38 @@ import { randomUUID } from "crypto";
 
 const DEFAULT_RESULT_SIZE_LIMIT = 8 * 1024;
 const DEFAULT_SAMPLE_SIZE = 10;
+// Hard cap on caller-supplied limit for fetch_tool_result (#1036).
+export const FETCH_TOOL_RESULT_MAX_LIMIT = 100;
+// TTL for stored tool results: 10 minutes. Entries older than this are treated
+// as not found so the store does not grow unbounded under production traffic (#1035).
+const TOOL_RESULT_TTL_MS = 10 * 60 * 1000;
+// Hard cap on store size: once reached, the oldest entry is evicted (#1035).
+const TOOL_RESULT_MAX_ENTRIES = 500;
 
 type StoredToolResult = {
   toolName: string;
   result: unknown;
   createdAt: string;
+  createdAtMs: number;
 };
 
 const toolResultStore = new Map<string, StoredToolResult>();
+
+function evictExpired(): void {
+  const now = Date.now();
+  for (const [key, entry] of toolResultStore) {
+    if (now - entry.createdAtMs > TOOL_RESULT_TTL_MS) {
+      toolResultStore.delete(key);
+    }
+  }
+}
+
+function evictOldestIfOverCap(): void {
+  if (toolResultStore.size <= TOOL_RESULT_MAX_ENTRIES) return;
+  // Map iteration order is insertion order — first key is the oldest.
+  const oldestKey = toolResultStore.keys().next().value;
+  if (oldestKey !== undefined) toolResultStore.delete(oldestKey);
+}
 
 export const TOOL_RESULT_MAX_BYTES: Record<string, number> = {
   default: DEFAULT_RESULT_SIZE_LIMIT,
@@ -74,12 +98,16 @@ export function serializeToolResultForPrompt(toolName: string, result: unknown):
     return serialized;
   }
 
+  evictExpired();
   const resultId = `tool-result-${randomUUID()}`;
+  const now = Date.now();
   toolResultStore.set(resultId, {
     toolName,
     result,
-    createdAt: new Date().toISOString(),
+    createdAt: new Date(now).toISOString(),
+    createdAtMs: now,
   });
+  evictOldestIfOverCap();
 
   if (Array.isArray(result)) {
     return JSON.stringify(summarizeArrayResult(toolName, result, resultId));
@@ -100,8 +128,10 @@ export function fetchToolResult(
   offset = 0,
   limit = DEFAULT_SAMPLE_SIZE,
 ): Record<string, unknown> {
+  limit = Math.min(limit, FETCH_TOOL_RESULT_MAX_LIMIT);
   const stored = toolResultStore.get(resultId);
-  if (!stored) {
+  if (!stored || Date.now() - stored.createdAtMs > TOOL_RESULT_TTL_MS) {
+    if (stored) toolResultStore.delete(resultId);
     return {
       ok: false,
       reason: "RESULT_NOT_FOUND",

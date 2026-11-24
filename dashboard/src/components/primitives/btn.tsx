@@ -3,9 +3,10 @@ export interface BtnProps {
   desc: string;
   busy: boolean;
   onClick: () => void;
+  estimatedTime?: string;
 }
 
-export function Btn({ label, desc, busy, onClick }: BtnProps) {
+export function Btn({ label, desc, busy, onClick, estimatedTime }: BtnProps) {
   return (
     <button
       onClick={onClick}
@@ -14,6 +15,9 @@ export function Btn({ label, desc, busy, onClick }: BtnProps) {
     >
       <div className="text-sm font-medium">{label}</div>
       <div className="text-xs text-slate-500 mt-1">{desc}</div>
+      {estimatedTime && (
+        <div className="text-xs text-slate-400 mt-2">⏱ {estimatedTime}</div>
+      )}
     </button>
   );
 }

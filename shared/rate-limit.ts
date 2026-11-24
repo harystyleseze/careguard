@@ -42,20 +42,26 @@ export function createRateLimiter(
   policyName: string,
   maxRequests: number,
   windowMs: number = DEFAULT_WINDOW_MS,
+  customMessage?: any,
 ): RateLimitRequestHandler {
   return rateLimit({
     windowMs,
     max: maxRequests,
     standardHeaders: true,
     legacyHeaders: false,
+    message: customMessage || { error: `Too many requests for ${policyName}, please try again later.` },
     handler: (_req, res, _next, options) => {
       rateLimitHitsTotal.inc({ policy: policyName });
       // Always terminate the chain with a response — never fall through without
       // one, which would leave the request hanging until the client gives up.
+      const payload =
+        typeof options.message === "object" && options.message !== null
+          ? options.message
+          : { error: String(options.message) };
       res
         .status(options.statusCode)
         .set("Retry-After", String(Math.ceil(options.windowMs / 1000)))
-        .send(options.message);
+        .json(payload);
     },
   });
 }

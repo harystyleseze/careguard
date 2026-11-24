@@ -224,6 +224,12 @@ describe("Drug interaction checks", () => {
     expect(result.reason).toBeUndefined();
     expect(result.interactions).toEqual([]);
   });
+
+  it("respects the configured severity threshold when deciding to block", async () => {
+    const result = await checkDrugInteractions(["warfarin", "ibuprofen"], "major");
+    expect(result.decision).toBe("warn");
+    expect(result.blockingThreshold).toBe("major");
+  });
 });
 
 describe("Spending cache", () => {

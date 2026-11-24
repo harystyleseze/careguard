@@ -12,6 +12,9 @@ export const PharmacyCompareQuerySchema = z
     drug: freeTextSchema("drug"),
     dosage: optionalFreeTextSchema("dosage"),
     zip: zipCodeSchema.optional().default(DEFAULT_ZIP_CODE),
+    recipient: optionalFreeTextSchema("recipient"),
+    recipient_id: optionalFreeTextSchema("recipient_id"),
+    recipientId: optionalFreeTextSchema("recipientId"),
   })
   .strict();
 export type PharmacyCompareQuery = z.infer<typeof PharmacyCompareQuerySchema>;

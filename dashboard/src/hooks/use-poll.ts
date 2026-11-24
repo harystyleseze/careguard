@@ -60,10 +60,8 @@ export function usePoll({ intervalMs, enabled = true, onPoll, onError }: UsePoll
           clearTimeout(pollTimeoutRef.current);
           pollTimeoutRef.current = null;
         }
-        console.log('[usePoll] Poll paused (tab hidden)');
       } else {
         setIsPaused(false);
-        console.log('[usePoll] Resumed');
         // Poll immediately when tab becomes visible
         poll();
       }

@@ -73,9 +73,9 @@ describe("Audit Log Cryptographic Chaining", () => {
   });
 
   describe("appendAuditEntry", () => {
-    it("creates a valid cryptographic hash chain starting with genesis entry", () => {
-      appendAuditEntry({ event: "event.genesis", actor: "test-actor", details: { foo: "bar" } });
-      appendAuditEntry({ event: "event.second", actor: "test-actor-2" });
+    it("creates a valid cryptographic hash chain starting with genesis entry", async () => {
+      await appendAuditEntry({ event: "event.genesis", actor: "test-actor", details: { foo: "bar" } });
+      await appendAuditEntry({ event: "event.second", actor: "test-actor-2" });
 
       const fileContent = readFileSync(TEST_FILE, "utf-8").trim();
       const lines = fileContent.split("\n");
@@ -116,20 +116,20 @@ describe("Audit Log Cryptographic Chaining", () => {
   });
 
   describe("scripts/verify-audit-log.ts", () => {
-    it("succeeds when audit log has a valid hash chain", () => {
-      appendAuditEntry({ event: "event.one", actor: "actor1" });
-      appendAuditEntry({ event: "event.two", actor: "actor2" });
+    it("succeeds when audit log has a valid hash chain", async () => {
+      await appendAuditEntry({ event: "event.one", actor: "actor1" });
+      await appendAuditEntry({ event: "event.two", actor: "actor2" });
 
       const output = execSync("npx tsx scripts/verify-audit-log.ts", {
         env: { ...process.env, DATA_DIR: TEST_DIR },
         encoding: "utf-8",
       });
       expect(output).toContain("Audit log successfully verified. Total entries: 2");
-    });
+    }, 30000);
 
-    it("fails when an entry is tampered with (payload modification)", () => {
-      appendAuditEntry({ event: "event.one", actor: "actor1" });
-      appendAuditEntry({ event: "event.two", actor: "actor2" });
+    it("fails when an entry is tampered with (payload modification)", async () => {
+      await appendAuditEntry({ event: "event.one", actor: "actor1" });
+      await appendAuditEntry({ event: "event.two", actor: "actor2" });
 
       const content = readFileSync(TEST_FILE, "utf-8").trim().split("\n");
       const parsed = JSON.parse(content[1]);
@@ -143,10 +143,10 @@ describe("Audit Log Cryptographic Chaining", () => {
           stdio: "pipe",
         });
       }).toThrow();
-    });
+    }, 30000);
 
-    it("fails when an entry hash is modified", () => {
-      appendAuditEntry({ event: "event.one", actor: "actor1" });
+    it("fails when an entry hash is modified", async () => {
+      await appendAuditEntry({ event: "event.one", actor: "actor1" });
 
       const content = readFileSync(TEST_FILE, "utf-8").trim().split("\n");
       const parsed = JSON.parse(content[0]);
@@ -160,6 +160,6 @@ describe("Audit Log Cryptographic Chaining", () => {
           stdio: "pipe",
         });
       }).toThrow();
-    });
+    }, 30000);
   });
 });

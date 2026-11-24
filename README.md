@@ -33,6 +33,11 @@ CareGuard is an AI agent with a Stellar wallet that acts on behalf of a family c
 
 Every payment is a real Stellar testnet transaction verifiable on [stellar.expert](https://stellar.expert/explorer/testnet).
 
+## Testing
+
+See [load testing prerequisites](load/README.md) for k6 installation, required
+services and environment variables, and how to read load-test results.
+
 ### USE CASE: Maria & Rosa
 
 > Maria lives 800 miles from her 78-year-old mother Rosa. Rosa takes 4 medications from 3 pharmacies. Last month, Rosa's blood pressure medication cost $47 at CVS — $12 at Costco, 2 miles away. Nobody knew.
@@ -92,6 +97,40 @@ For deployment topology (Docker Compose and Render), see [docs/deployment/topolo
 
 ## Quick Start
 
+> Maria lives 800 miles from her 78-year-old mother Rosa. Rosa takes 4 medications from 3 pharmacies. Last month, Rosa's blood pressure medication cost $47 at CVS — $12 at Costco, 2 miles away. Nobody knew.
+>
+> Rosa's hospital sent a $2,500 bill with $1,195 in errors — duplicate charges and upcoded procedures. Rosa would have paid it.
+>
+> **CareGuard found $69.76/month in medication savings and caught $1,195 in billing errors — for $0.03 in agent API costs.**
+
+---
+
+## Quick links
+
+- [Getting started guide for caregivers](docs/guides/getting-started-caregiver.md)
+- [Caregiver FAQ](docs/guides/faq.md)
+- [Approvals tab guide for caregivers](docs/guides/approvals-tab.md)
+- [Quick start setup guide](QUICKSTART.md)
+- [Architecture overview](docs/ARCHITECTURE.md)
+- [Spending policy for caregivers](docs/guides/spending-policy-for-caregivers.md)
+- [Spending policy technical reference](docs/SPENDING-POLICY.md)
+- [Settings tab guide for caregivers](docs/guides/settings-tab.md)
+- [Category budget examples](docs/guides/category-budgets-examples.md)
+- [Testnet explained for caregivers](docs/guides/testnet-explained.md)
+- [Using the /docs API explorer](docs/api-examples/using-the-docs-ui.md)
+- [Drug interaction check API example](docs/api-examples/drug-interactions.md)
+- [OpenAPI spec](docs/openapi.yml)
+
+---
+
+## Developer docs and architecture
+
+The developer-facing setup and runtime details live in these focused guides:
+
+- [QUICKSTART.md](QUICKSTART.md) — local environment setup, wallets, env vars, and starting the stack
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — runtime flow, module boundaries, integrations, and data model
+- [docs/SPENDING-POLICY.md](docs/SPENDING-POLICY.md) — how daily/monthly limits and category budgets are enforced
+- [docs/api-examples/using-the-docs-ui.md](docs/api-examples/using-the-docs-ui.md) — how to browse the `/docs` Scalar API explorer
 **Prerequisites:** Node.js 22 or later, npm.
 
 See [QUICKSTART.md](QUICKSTART.md) for the full setup guide.
@@ -128,7 +167,7 @@ For a single-command boot of the full stack — server, dashboard, redis, promet
 # 1. Configure .env (same as above)
 cp .env.example .env
 
-# 2. Start everything
+# 2. Start everything (server + dashboard + redis + monitoring stack)
 docker compose up
 
 # 3. Open the apps
@@ -137,6 +176,40 @@ docker compose up
 #   Prometheus: http://localhost:9090
 #   Grafana:    http://localhost:3030  (admin / admin by default)
 #   Redis:      localhost:6379
+```
+
+### Seed data scripts
+
+Use these scripts to populate `data/` with synthetic test data for dashboard development:
+
+```bash
+# Generate synthetic care recipients (default: 5)
+npm run seed:recipients -- --count 10
+
+# Generate pharmacy order history (default: 20, add --include-blocked for over-budget orders)
+npm run seed:orders -- --count 50 --include-blocked
+
+# Generate medication adherence records for a specific recipient
+npm run seed:adherence -- --recipient rosa_garcia --days 30
+
+# Reset data/ to a clean state (prompts unless --yes is passed)
+npm run reset:data -- --yes
+```
+
+#### Backend-only development (skip dashboard/monitoring)
+
+To speed up local development when working only on backend services, start just the server and redis:
+
+```bash
+# Server + redis only (no dashboard, prometheus, or grafana)
+docker compose up --profile=
+```
+
+Or explicitly without monitoring:
+
+```bash
+# Server + redis + dashboard, but skip prometheus/grafana
+docker compose up --profile=full
 ```
 
 The default `docker-compose.yml` builds the production-shape multi-stage images. The auto-loaded `docker-compose.override.yml` swaps the `server` and `dashboard` services for hot-reload dev mode (mounts the source tree, runs `npm run dev`).
@@ -150,6 +223,13 @@ docker compose -f docker-compose.yml up
 To tear everything down (including volumes — drops the spending log, redis data, grafana dashboards):
 
 ```bash
+# Safer wrapper — shows what will be deleted and prompts for confirmation
+npm run docker:down:clean
+
+# Skip the prompt in CI or scripted use
+npm run docker:down:clean -- --yes
+
+# Raw command (no confirmation — use with care)
 docker compose down -v
 ```
 
@@ -167,7 +247,7 @@ Boot time on a warm Docker is ~30s (cold first build is much longer due to npm i
 
 See [docs/observability/health-checks.md](docs/observability/health-checks.md) for the `/health` and `/ready` response schemas and what each dependency check means.
 
-For a symptom-to-resolution index (stuck agent spinner, repeated 402s, blank wallet balance, dashboard "Disconnected", startup hangs on Horizon, missing env), see [docs/troubleshooting.md](docs/troubleshooting.md).
+For local Grafana — which dashboards are pre-provisioned, which `prom-client` metric each panel shows, and how to add a dashboard/panel without committing experimental JSON — see [docs/LOCAL-MONITORING.md](docs/LOCAL-MONITORING.md).
 
 ---
 
@@ -191,7 +271,6 @@ hosting setup, CI validation, and how the x402 `X-PAYMENT` auth scheme works.
 ```bash
 # Install dependencies (if not already done)
 npm install --legacy-peer-deps
-cd dashboard && npm install --legacy-peer-deps && cd ..
 
 # Run all tests (root backend + dashboard)
 npm run test:all
@@ -211,6 +290,9 @@ Tests are organized in two workspaces:
 Shared test helpers (environment scrubber, fetch mock, Horizon mock) live in `tests/setup.ts`.
 
 > **Branch protection:** The `main` branch requires the CI check (`ci`) to pass before merging. Ensure all typecheck, lint, and test steps are green on your PR.
+
+For provider development, run `node --import tsx scripts/test-pricing-providers.ts --list`
+to print registered provider names and configuration without making network calls.
 
 ---
 
@@ -278,19 +360,6 @@ careguard/
 ├── .env.example           # Environment variable template
 ├── QUICKSTART.md          # Setup guide
 ```
-
----
-
-## Ops and Reliability
-
-| Doc | What it covers |
-|-----|---------------|
-| [docs/sla.md](docs/sla.md) | Availability targets, downtime definitions, dependency caveats, and maintenance-window policy |
-| [docs/release/production-readiness.md](docs/release/production-readiness.md) | Go-live checklist: security gates, observability, testnet → mainnet cutover, and payment config verification |
-| [docs/release/compatibility-matrix.md](docs/release/compatibility-matrix.md) | Node, SDK, and API contract version requirements per release |
-| [docs/observability/slo.md](docs/observability/slo.md) | SLO targets, error budgets, and alert mappings |
-| [docs/observability/health-checks.md](docs/observability/health-checks.md) | `/health` and `/ready` response schemas |
-| [docs/runbooks/README.md](docs/runbooks/README.md) | Operational runbooks for outages and incidents |
 
 ---
 

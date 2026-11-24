@@ -17,6 +17,9 @@ export type LineItem = z.infer<typeof LineItemSchema>;
 export const BillAuditRequestSchema = z
   .object({
     lineItems: z.array(LineItemSchema).min(1, "lineItems must contain at least one item"),
+    providerId: z.string().optional(),
+    providerName: z.string().optional(),
+    recipientId: z.string().optional(),
   })
   .strict();
 
@@ -25,7 +28,7 @@ export type ValidationIssue = {
   message: string;
 };
 
-function formatIssues(issues: z.ZodIssue[]): ValidationIssue[] {
+function formatIssues(issues: z.ZodError["issues"]): ValidationIssue[] {
   return issues.map((issue) => ({
     path: issue.path.length > 0 ? issue.path.join(".") : "<root>",
     message: issue.message,
@@ -57,7 +60,12 @@ export function validateLineItems(lineItems: unknown): LineItem[] {
   );
 }
 
-export function validateBillAuditRequest(body: unknown): { lineItems: LineItem[] } {
+export function validateBillAuditRequest(body: unknown): {
+  lineItems: LineItem[];
+  providerId?: string;
+  providerName?: string;
+  recipientId?: string;
+} {
   const result = BillAuditRequestSchema.safeParse(body);
   if (result.success) {
     return result.data;
@@ -93,6 +101,21 @@ export const FAIR_MARKET_RATES: Record<string, FairMarketRate> = {
   "97110": { description: "Physical therapy, therapeutic exercises", fairRate: 55 },
 };
 
+export interface ProviderHistoryLookupResult {
+  providerId: string;
+  cptCode: string;
+  priorBillsCount: number;
+  historicalAverage: number;
+  increasePercent: number;
+  isMaterialIncrease: boolean;
+  dateRange: { start: string; end: string };
+}
+
+export type ProviderHistoryLookupFn = (
+  cptCode: string,
+  chargedAmount: number,
+) => ProviderHistoryLookupResult | null;
+
 export interface AuditBillOptions {
   network?: string;
   payTo?: string;
@@ -103,6 +126,9 @@ export interface AuditBillOptions {
   upcodedMultiplier?: number;
   ratesAsOf?: string;
   ratesValidUntil?: string;
+  providerId?: string;
+  providerName?: string;
+  providerHistoryLookup?: ProviderHistoryLookupFn;
 }
 
 export function auditBill(lineItems: any[], options: AuditBillOptions = {}) {
@@ -147,6 +173,9 @@ export function auditBill(lineItems: any[], options: AuditBillOptions = {}) {
       errorCount++;
       const suggestedAmount = +(fairAmount * suggestedMultiplier).toFixed(2);
       totalCorrect += suggestedAmount;
+      const historyComp = options.providerHistoryLookup
+        ? options.providerHistoryLookup(item.cptCode, item.chargedAmount)
+        : null;
       results.push({
         description: item.description,
         cptCode: item.cptCode,
@@ -156,6 +185,30 @@ export function auditBill(lineItems: any[], options: AuditBillOptions = {}) {
         status: item.chargedAmount > fairAmount * upcodedMultiplier ? "upcoded" : "overcharged",
         errorDescription: `Charged $${item.chargedAmount} — CMS fair market rate is $${fairAmount}. Overcharged by $${(item.chargedAmount - fairAmount).toFixed(2)}.`,
         suggestedAmount,
+        historicalComparison: historyComp,
+      });
+      continue;
+    }
+
+    // Historical charges check against provider's past billing (#1217)
+    const historyComp = options.providerHistoryLookup
+      ? options.providerHistoryLookup(item.cptCode, item.chargedAmount)
+      : null;
+
+    if (historyComp && historyComp.isMaterialIncrease) {
+      errorCount++;
+      const suggestedAmount = historyComp.historicalAverage;
+      totalCorrect += suggestedAmount;
+      results.push({
+        description: item.description,
+        cptCode: item.cptCode,
+        quantity: item.quantity,
+        chargedAmount: item.chargedAmount,
+        fairMarketRate: fairAmount,
+        status: "overcharged",
+        errorDescription: `Charged $${item.chargedAmount.toFixed(2)} — provider previously charged average $${historyComp.historicalAverage.toFixed(2)} for this service (+${historyComp.increasePercent}% increase across ${historyComp.priorBillsCount} prior bill(s) between ${historyComp.dateRange.start} and ${historyComp.dateRange.end}).`,
+        suggestedAmount,
+        historicalComparison: historyComp,
       });
       continue;
     }
@@ -173,6 +226,7 @@ export function auditBill(lineItems: any[], options: AuditBillOptions = {}) {
       status: "valid",
       errorDescription: null,
       suggestedAmount: suggested,
+      historicalComparison: historyComp,
     });
   }
 
@@ -181,6 +235,30 @@ export function auditBill(lineItems: any[], options: AuditBillOptions = {}) {
   const now = new Date();
   const validUntil = new Date(ratesValidUntil);
   const isStale = now > validUntil;
+
+  const comparisonItems = results.filter((r) => r.historicalComparison);
+  const comparisonBasis =
+    options.providerId && comparisonItems.length > 0
+      ? {
+          providerId: options.providerId,
+          providerName: options.providerName || options.providerId,
+          priorBillsCount: Math.max(...comparisonItems.map((r) => r.historicalComparison.priorBillsCount)),
+          dateRange: {
+            start: comparisonItems.reduce(
+              (min, r) => (r.historicalComparison.dateRange.start < min ? r.historicalComparison.dateRange.start : min),
+              comparisonItems[0].historicalComparison.dateRange.start,
+            ),
+            end: comparisonItems.reduce(
+              (max, r) => (r.historicalComparison.dateRange.end > max ? r.historicalComparison.dateRange.end : max),
+              comparisonItems[0].historicalComparison.dateRange.end,
+            ),
+          },
+        }
+      : null;
+  const baseRecommendation =
+    errorCount === 0
+      ? "No errors detected. This bill appears correct."
+      : `Found ${errorCount} errors totaling $${totalOvercharge} in overcharges (${savingsPercent}% of total bill). Strongly recommend filing a formal dispute.`;
 
   return {
     auditTimestamp: new Date().toISOString(),
@@ -191,9 +269,11 @@ export function auditBill(lineItems: any[], options: AuditBillOptions = {}) {
     savingsPercent,
     errorCount,
     lineItems: results,
+    isStale,
     dataFreshness: { ratesAsOf, validUntil: ratesValidUntil, isStale },
-    recommendation: errorCount === 0
-      ? "No errors detected. This bill appears correct."
-      : `Found ${errorCount} errors totaling $${totalOvercharge} in overcharges (${savingsPercent}% of total bill). Strongly recommend filing a formal dispute.`,
+    comparisonBasis,
+    recommendation: isStale
+      ? `${baseRecommendation} Warning: the fair-market rates used are stale (valid through ${ratesValidUntil}). Verify against current rates.`
+      : baseRecommendation,
   };
 }

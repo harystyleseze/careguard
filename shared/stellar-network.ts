@@ -5,6 +5,7 @@
  */
 
 import { logger } from './logger.ts';
+import { isMockNetwork, assertMockNetworkAllowed } from './network-mode.ts';
 
 export type StellarNetworkType = 'testnet' | 'public';
 
@@ -12,6 +13,11 @@ export interface StellarNetworkConfig {
   networkType: StellarNetworkType;
   horizonUrl: string;
   networkPassphrase: string;
+}
+
+export interface NetworkConfig extends StellarNetworkConfig {
+  isMock: boolean;
+  networkIdentifier: string;
 }
 
 const STELLAR_NETWORKS: Record<StellarNetworkType, StellarNetworkConfig> = {
@@ -31,8 +37,8 @@ const STELLAR_NETWORKS: Record<StellarNetworkType, StellarNetworkConfig> = {
  * Resolve configured stellar network from environment
  * Defaults to 'testnet' if not specified
  */
-export function resolveStellarNetwork(): StellarNetworkConfig {
-  const networkEnv = (process.env.STELLAR_NETWORK || 'testnet').toLowerCase() as StellarNetworkType;
+export function resolveStellarNetwork(env: NodeJS.ProcessEnv = process.env): StellarNetworkConfig {
+  const networkEnv = (env.STELLAR_NETWORK || 'testnet').toLowerCase() as StellarNetworkType;
   
   if (!STELLAR_NETWORKS[networkEnv]) {
     throw new Error(
@@ -47,6 +53,21 @@ export function resolveStellarNetwork(): StellarNetworkConfig {
   );
   
   return config;
+}
+
+/**
+ * Resolve full NetworkConfig dependency at process boot
+ */
+export function createNetworkConfig(env: NodeJS.ProcessEnv = process.env): NetworkConfig {
+  const stellarConfig = resolveStellarNetwork(env);
+  const isMock = isMockNetwork(env);
+  assertMockNetworkAllowed(env);
+
+  return {
+    ...stellarConfig,
+    isMock,
+    networkIdentifier: `stellar:${stellarConfig.networkType}`,
+  };
 }
 
 /**

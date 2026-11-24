@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AGENT_URL } from "./agent-url";
+import { caregiverFetch } from "./caregiver-fetch";
 import type { RecipientProfile } from "./types";
 
 export interface RecipientListItem {
@@ -25,11 +26,7 @@ export function useRecipients(onSelect: (profile: RecipientProfile) => void) {
 
   useEffect(() => {
     if (!AGENT_URL) return;
-    const token = typeof document !== 'undefined'
-      ? document.cookie.split(';').find(c => c.trim().startsWith('caregiver_token='))?.split('=')[1]
-      : undefined;
-    const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
-    fetch(`${AGENT_URL}/recipients`, { headers })
+    caregiverFetch('/recipients')
       .then((res) => {
         if (!res.ok) throw new Error(`Recipients returned ${res.status}`);
         return res.json();

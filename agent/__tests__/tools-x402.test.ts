@@ -14,28 +14,36 @@
  *     extraction, and upstream HTTP errors.
  */
 
-const { MOCK_HINT, x402FetchMock } = vi.hoisted(() => {
+const { MOCK_HINT, x402FetchMock, policyFile } = vi.hoisted(() => {
   process.env.AGENT_SECRET_KEY = "SBWWZYCAFDDJXNRRMKSFNRB6OTVZHTCMPUCVZ4FBZLSPHFKHYLPRTJCD";
   process.env.MOCK_NETWORK = "1";
   process.env.SPENDING_TIMEZONE = "UTC";
   const MOCK_HINT = Buffer.from([0xca, 0xfe, 0xba, 0xbe]);
   const x402FetchMock = vi.fn();
-  return { MOCK_HINT, x402FetchMock };
+  // In-memory policy.json so setSpendingPolicy round-trips through loadPolicy
+  const policyFile: { content: string | null } = { content: null };
+  return { MOCK_HINT, x402FetchMock, policyFile };
 });
 
 vi.mock("dotenv/config", () => ({}));
 vi.mock("fs", () => ({
   readFileSync: vi.fn((filePath: string) => {
+    if (String(filePath).includes("policy.json") && policyFile.content !== null)
+      return policyFile.content;
     if (String(filePath).includes("spending.snapshot.json"))
       return JSON.stringify({ medications: 0, bills: 0, serviceFees: 0, transactions: [], _snapshotTxCount: 0 });
     if (String(filePath).includes("spending.json"))
       return JSON.stringify({ medications: 0, bills: 0, serviceFees: 0, transactions: [] });
     return "{}";
   }),
-  writeFileSync: vi.fn(),
+  writeFileSync: vi.fn((filePath: string, data: string) => {
+    if (String(filePath).includes("policy.json")) policyFile.content = data;
+  }),
   appendFileSync: vi.fn(),
   existsSync: vi.fn((p: string) =>
-    String(p).includes("spending.snapshot.json") || String(p).includes("spending.json"),
+    String(p).includes("spending.snapshot.json") ||
+    (String(p).includes("recipients") && String(p).includes("spending.json")) ||
+    (String(p).includes("policy.json") && policyFile.content !== null),
   ),
   mkdirSync: vi.fn(),
   renameSync: vi.fn(),
@@ -86,15 +94,58 @@ import {
   fetchAndAuditBill,
   getSpendingTracker,
   resetSpendingTracker,
+  setSpendingPolicy,
+  getToolFee,
+  TOOL_DEFINITIONS,
 } from "../tools.ts";
 import { decodePaymentResponseHeader } from "@x402/fetch";
+import { writeFileSync } from "fs";
 
 const mockedDecodeHeader = vi.mocked(decodePaymentResponseHeader);
 
 beforeEach(() => {
+  policyFile.content = null;
   resetSpendingTracker("rosa");
   x402FetchMock.mockReset();
   mockedDecodeHeader.mockReset();
+});
+
+/** A 200 x402 response with no PAYMENT-RESPONSE header (no settlement wait). */
+function okResponse(body: unknown): Response {
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  } as unknown as Response;
+}
+
+/** The rejection Node's fetch (undici) raises when nothing listens on the port. */
+function connectionRefused(): TypeError {
+  return Object.assign(new TypeError("fetch failed"), {
+    cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3001"), {
+      code: "ECONNREFUSED",
+    }),
+  });
+}
+
+describe("getToolFee", () => {
+  it("returns the default fee when a tool fee is missing", () => {
+    policyFile.content = JSON.stringify({ toolFees: {} });
+    expect(getToolFee("futurePaidTool")).toBe(0.001);
+  });
+
+  it("preserves explicitly configured tool fees", () => {
+    policyFile.content = JSON.stringify({ toolFees: { configuredTool: 0.025 } });
+    expect(getToolFee("configuredTool")).toBe(0.025);
+  });
+});
+
+describe("legacy data migration", () => {
+  it("does not write files when neither legacy file exists", () => {
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
 });
 
 // ── Mock-network happy paths ──────────────────────────────────────────────────
@@ -251,5 +302,109 @@ describe("auditBill — input validation errors", () => {
     const result = await auditBill([{ description: "Visit", cptCode: "99213", quantity: 0, chargedAmount: 100 }] as any);
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("INVALID_LINE_ITEMS");
+  });
+});
+
+// ── Live path (mock network off) ─────────────────────────────────────────────
+
+describe("live path (mock network off)", () => {
+  const validLineItems = [
+    { description: "Office visit", cptCode: "99213", quantity: 1, chargedAmount: 130 },
+  ];
+
+  beforeEach(() => {
+    process.env.MOCK_NETWORK = "0";
+  });
+  afterEach(() => {
+    process.env.MOCK_NETWORK = "1";
+  });
+
+  describe("auditBill service fee (Issue #1061)", () => {
+    it("records the caregiver-configured toolFees.auditBill on the real-network path", async () => {
+      setSpendingPolicy({
+        dailyLimit: 100,
+        monthlyLimit: 800,
+        medicationMonthlyBudget: 300,
+        billMonthlyBudget: 500,
+        approvalThreshold: 75,
+        toolFees: { comparePharmacyPrices: 0.002, auditBill: 0.05, checkDrugInteractions: 0.001 },
+      });
+      x402FetchMock.mockResolvedValue(okResponse({ protocol: { payTo: "bill-audit-payto" } }));
+
+      await auditBill(validLineItems);
+
+      const fee = getSpendingTracker().transactions.find((t: any) => t.type === "service_fee");
+      expect(fee.amount).toBeCloseTo(0.05, 5);
+      expect(fee.recipient).toBe("bill-audit-payto");
+    });
+
+    it("records the default $0.01 fee under the default policy", async () => {
+      x402FetchMock.mockResolvedValue(okResponse({ protocol: { payTo: "bill-audit-payto" } }));
+
+      await auditBill(validLineItems);
+
+      const fee = getSpendingTracker().transactions.find((t: any) => t.type === "service_fee");
+      expect(fee.amount).toBeCloseTo(0.01, 5);
+    });
+  });
+
+  describe("connection-error diagnostics (Issue #1062)", () => {
+    it("comparePharmacyPrices turns ECONNREFUSED into an actionable PHARMACY_API_URL error", async () => {
+      x402FetchMock.mockRejectedValue(connectionRefused());
+
+      await expect(comparePharmacyPrices("lisinopril")).rejects.toThrow(
+        /^Pharmacy API connection refused \(ECONNREFUSED\)\..*Ensure PHARMACY_API_URL points to a running service/,
+      );
+    });
+
+    it("checkDrugInteractions turns ECONNREFUSED into an actionable DRUG_INTERACTION_API_URL error", async () => {
+      x402FetchMock.mockRejectedValue(connectionRefused());
+
+      await expect(checkDrugInteractions(["lisinopril", "metformin"])).rejects.toThrow(
+        /^Drug Interaction API connection refused \(ECONNREFUSED\)\..*Ensure DRUG_INTERACTION_API_URL points to a running service/,
+      );
+    });
+
+    it("auditBill keeps its BILL_AUDIT_API_URL diagnostics", async () => {
+      x402FetchMock.mockRejectedValue(connectionRefused());
+
+      await expect(auditBill(validLineItems)).rejects.toThrow(
+        /^Bill Audit API connection refused \(ECONNREFUSED\)\..*Ensure BILL_AUDIT_API_URL points to a running service/,
+      );
+    });
+
+    it("records no service fee when the upstream is unreachable", async () => {
+      x402FetchMock.mockRejectedValue(connectionRefused());
+
+      await expect(comparePharmacyPrices("lisinopril")).rejects.toThrow();
+      await expect(checkDrugInteractions(["lisinopril", "metformin"])).rejects.toThrow();
+
+      expect(getSpendingTracker().serviceFees).toBe(0);
+    });
+
+    it("returns successful responses unchanged", async () => {
+      const pricesBody = { drug: "Lisinopril", prices: [], protocol: { payTo: "pharmacy-payto" } };
+      x402FetchMock.mockResolvedValueOnce(okResponse(pricesBody));
+      await expect(comparePharmacyPrices("lisinopril")).resolves.toEqual(pricesBody);
+
+      const interactionsBody = { medications: ["lisinopril", "metformin"], interactions: [], protocol: { payTo: "drug-payto" } };
+      x402FetchMock.mockResolvedValueOnce(okResponse(interactionsBody));
+      await expect(checkDrugInteractions(["lisinopril", "metformin"])).resolves.toEqual(interactionsBody);
+    });
+  });
+});
+
+// ── inStock contract (Issue #1063) ───────────────────────────────────────────
+
+describe("compare_pharmacy_prices inStock contract (Issue #1063)", () => {
+  it("does not promise an inStock 'unknown' state the pipeline never produces", () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === "compare_pharmacy_prices");
+    expect(tool?.description).toContain("inStock field that is always true");
+    expect(tool?.description).not.toContain('"unknown"');
+  });
+
+  it("mock network reports inStock: true, consistent with the real pipeline", async () => {
+    const result = await comparePharmacyPrices("lisinopril");
+    expect(result.prices.every((p: any) => p.inStock === true)).toBe(true);
   });
 });

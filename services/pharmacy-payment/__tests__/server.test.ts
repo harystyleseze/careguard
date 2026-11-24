@@ -324,3 +324,53 @@ describe("POST /pharmacy/order — concurrent orders (Issue #31 acceptance crite
     }
   });
 });
+
+describe('POST /pharmacy/order — MPP header allowlist (#938)', () => {
+  beforeEach(() => { orderStore = []; });
+
+  it('forwards allowed headers (x-payment, content-type, accept) to mppCharge', async () => {
+    let capturedHeaders: Headers | null = null;
+    const capturingCharge = async (webReq: Request) => {
+      capturedHeaders = webReq.headers;
+      return {
+        status: 200,
+        withReceipt: (resp: Response) => resp,
+      };
+    };
+
+    const app = createTestApp({ mppCharge: capturingCharge, loadOrders: loadOrdersFn, saveOrder: saveOrderFn });
+    await request(app)
+      .post('/pharmacy/order')
+      .set('X-Payment', 'pay_receipt_xyz')
+      .set('Accept', 'application/json')
+      .send({ drug: 'Metformin', pharmacy: 'CVS', amount: 10 });
+
+    expect(capturedHeaders!.get('x-payment')).toBe('pay_receipt_xyz');
+    expect(capturedHeaders!.get('accept')).toBe('application/json');
+  });
+
+  it('does NOT forward arbitrary caller headers to mppCharge', async () => {
+    let capturedHeaders: Headers | null = null;
+    const capturingCharge = async (webReq: Request) => {
+      capturedHeaders = webReq.headers;
+      return {
+        status: 200,
+        withReceipt: (resp: Response) => resp,
+      };
+    };
+
+    const app = createTestApp({ mppCharge: capturingCharge, loadOrders: loadOrdersFn, saveOrder: saveOrderFn });
+    await request(app)
+      .post('/pharmacy/order')
+      .set('X-Custom-Attack', 'injected')
+      .set('X-Forwarded-For', '1.2.3.4')
+      .set('Authorization', 'Bearer stolen-token')
+      .set('Cookie', 'session=abc')
+      .send({ drug: 'Metformin', pharmacy: 'CVS', amount: 10 });
+
+    expect(capturedHeaders!.get('x-custom-attack')).toBeNull();
+    expect(capturedHeaders!.get('x-forwarded-for')).toBeNull();
+    expect(capturedHeaders!.get('authorization')).toBeNull();
+    expect(capturedHeaders!.get('cookie')).toBeNull();
+  });
+});

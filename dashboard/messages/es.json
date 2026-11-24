@@ -20,6 +20,8 @@
     "policy": "Política",
     "wallet": "Billetera",
     "activity": "Actividad",
+    "tasks": "Tareas",
+    "notes": "Notas",
     "settings": "Ajustes"
   },
   "overview": {
@@ -33,11 +35,19 @@
     "limit": "límite",
     "bySwitching": "cambiando de farmacia",
     "inOvercharges": "en sobrecargos identificados",
-    "queries": "consultas vía x402"
+    "queries": "consultas vía x402",
+    "notRunYet": "Aún no ejecutado",
+    "runForSavings": "Ejecute una tarea para ver ahorros",
+    "runForBillingErrors": "Audite una factura para ver errores detectados",
+    "runForApiCosts": "Ejecute una tarea para ver costos del agente"
   },
   "budget": {
     "medications": "Medicamentos",
     "medicalBills": "Facturas Médicas"
+  },
+  "policyPreview": {
+    "title": "Vista previa del presupuesto",
+    "unsaved": "Sin guardar"
   },
   "tasks": {
     "comparePrices": "Comparar Precios de Medicamentos",
@@ -47,11 +57,14 @@
     "overBudget": "Intentar Pago Excedente",
     "demoPayment": "Demo: agente intenta $600 (sobre límite de $500)",
     "agentPaused": "Agente pausado",
-    "working": "Agente trabajando..."
+    "working": "Agente trabajando...",
+    "workingStep": "Agente trabajando — ejecutando {step}...",
+    "estimatedTime": "Generalmente tarda 30-60 segundos"
   },
   "medications": {
     "title": "Medicamentos de Rosa",
     "downloadPdf": "Descargar PDF",
+    "downloadPdfHint": "Primero ejecute una comparación de precios para habilitar la exportación a PDF",
     "best": "Mejor",
     "notYetCompared": "Aún no comparado",
     "save": "Ahorrar",
@@ -68,7 +81,11 @@
     "lineItems": "líneas",
     "showErrors": "Mostrar solo errores",
     "showAll": "Mostrar todo",
-    "notAudited": "No hay facturas auditadas. Ejecute \"Auditar Factura\" desde Resumen."
+    "sortByOvercharge": "Ordenar por sobrecargo",
+    "sortDefault": "Orden predeterminado",
+    "notAudited": "CareGuard revisa las facturas del hospital línea por línea para detectar cobros excesivos y errores antes de pagar.",
+    "runAudit": "Auditar una factura del hospital",
+    "runAuditHint": "Tarda alrededor de un minuto — se ejecuta desde la pestaña Resumen."
   },
   "policy": {
     "title": "Política de Gastos para Rosa",
@@ -80,15 +97,26 @@
     "approvalThreshold": "Umbral de Aprobación del Cuidador ($)",
     "holdTime": "Tiempo de Espera Antes de Aprobación Automática (segundos)",
     "refresh": "Actualizar del servidor",
+    "refreshHint": "Vuelve a cargar los valores de política más recientes del servidor",
     "discard": "Descartar cambios",
+    "discardHint": "Restaura los últimos valores guardados y descarta sus ediciones",
     "updatePolicy": "Actualizar Política",
     "policySaved": "Política Guardada"
+  },
+  "approvals": {
+    "pending": "Aprobaciones Pendientes",
+    "noPending": "No hay aprobaciones pendientes.",
+    "noPendingReassurance": "¡Esto es normal! El agente creará solicitudes de aprobación aquí para transacciones superiores a su umbral de aprobación.",
+    "autoApproveCountdown": "Aprobar automáticamente en {seconds}s",
+    "countdownExpired": "Tiempo expirado"
   },
   "activity": {
     "title": "Registro de Transacciones",
     "downloadReport": "Descargar Informe",
     "preparingReport": "Preparando informe…",
     "reset": "Reiniciar Todo",
+    "clearLogTitle": "Borra solo el registro del agente en pantalla — las transacciones y datos guardados permanecen intactos",
+    "resetTitle": "Elimina permanentemente todas las transacciones, el registro del agente y todos los resultados de auditoría",
     "noActivity": "Sin actividad del agente...",
     "noTransactions": "Sin transacciones",
     "time": "Hora",
@@ -111,7 +139,24 @@
     "networkStellar": "Stellar Testnet",
     "viewExplorer": "Ver en Stellar Explorer",
     "fund": "Recargar con USDC",
-    "howPayments": "Cómo Funcionan los Pagos"
+    "fundModal": "Obtener USDC de Prueba",
+    "fundModalDesc": "Será redirigido al grifo USDC de Circle (un sitio web externo). Copie su dirección de billetera arriba, péguela en su sitio, y le enviarán USDC de prueba.",
+    "fundModalNote": "Esto abre un sitio web externo. Asegúrese de visitar el grifo oficial de Circle, no un sitio de phishing.",
+    "fundContinue": "Continuar al Grifo",
+    "howPayments": "Cómo Funcionan los Pagos",
+    "balanceUnavailable": "No se pudo cargar el saldo. Verifique su conexión o que la billetera del agente esté configurada, luego intente de nuevo.",
+    "spendingByCategory": "Gastos por Categoría",
+    "spendingByCategoryDesc": "En qué se gastó el dinero del agente, según los pagos completados.",
+    "categoryMedications": "Farmacia (medicamentos)",
+    "categoryBills": "Facturas (tras los ajustes de la auditoría)",
+    "categoryFees": "Tarifas de servicio (consultas de API)",
+    "breakdownRange": "Período",
+    "range7d": "7 días",
+    "range30d": "30 días",
+    "rangeAll": "Todo",
+    "breakdownTotal": "Total",
+    "noSpendingInRange": "No hay pagos completados en este período.",
+    "rangeUnavailable": "Este agente solo informa totales históricos, así que el período no se puede cambiar."
   },
   "settings": {
     "recipient": "Paciente",
@@ -140,5 +185,60 @@
     "loading": "Cargando...",
     "error": "Error",
     "retry": "Intentar de Nuevo"
+  },
+  "vitals": {
+    "title": "Signos vitales",
+    "description": "Registre lecturas para ver cómo se relacionan con las dosis tomadas u omitidas.",
+    "typeLabel": "Tipo de signo vital",
+    "weight": "Peso",
+    "bloodPressure": "Presión arterial",
+    "glucose": "Glucosa",
+    "systolic": "Sistólica",
+    "diastolic": "Diastólica",
+    "log": "Registrar lectura",
+    "invalid": "Ingrese un número positivo para cada lectura.",
+    "saveFailed": "No se pudo guardar la lectura — inténtelo de nuevo.",
+    "empty": "Aún no hay lecturas registradas para este signo vital.",
+    "recent": "Lecturas recientes",
+    "date": "Fecha",
+    "reading": "Lectura",
+    "doseTaken": "Dosis tomada",
+    "doseMissed": "Dosis omitida",
+    "dosePending": "Dosis pendiente",
+    "trendAria": "tendencia",
+    "readings": "lecturas",
+    "adherenceEvents": "eventos de adherencia"
+  },
+  "notes": {
+    "title": "Notas de cambio de turno",
+    "description": "Deja contexto para el siguiente cuidador de turno. El agente lee las notas más recientes antes de responder preguntas de cuidado.",
+    "label": "Nueva nota",
+    "placeholder": "p. ej. Di la dosis de las 2pm tarde, vigilar náuseas.",
+    "submit": "Publicar nota",
+    "empty": "Aún no hay notas de cambio de turno.",
+    "required": "Escribe una nota antes de publicar.",
+    "saveFailed": "No se pudo publicar la nota — inténtalo de nuevo.",
+    "loadFailed": "No se pudieron cargar las notas.",
+    "forbidden": "Tu rol puede leer notas pero no publicarlas.",
+    "charactersLeft": "caracteres restantes"
+  },
+  "caregivers": {
+    "title": "Cuidadores vinculados",
+    "description": "Todas las personas que comparten el cuidado de este paciente y lo que pueden hacer.",
+    "empty": "Aún no hay cuidadores vinculados.",
+    "loadFailed": "No se pudieron cargar los cuidadores vinculados.",
+    "pending": "Invitación pendiente",
+    "roleOwner": "Propietario",
+    "roleCoCaregiver": "Co-cuidador",
+    "roleViewer": "Observador",
+    "inviteTitle": "Invitar a un cuidador",
+    "email": "Correo electrónico",
+    "role": "Rol",
+    "invite": "Enviar invitación",
+    "invalidEmail": "Introduce un correo electrónico válido.",
+    "inviteFailed": "No se pudo enviar la invitación — inténtalo de nuevo.",
+    "inviteForbidden": "Solo los propietarios pueden invitar cuidadores.",
+    "alreadyLinked": "Ese cuidador ya está vinculado a este paciente.",
+    "inviteCode": "Código de invitación para {email} (se muestra una vez — compártelo):"
   }
 }

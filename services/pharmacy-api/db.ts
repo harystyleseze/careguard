@@ -50,6 +50,11 @@ function defaultDbPath() {
     return ":memory:";
   }
 
+  // Fall back to DATA_DIR so a single-volume-mount deployment works (#1043).
+  if (process.env.DATA_DIR) {
+    return path.join(process.env.DATA_DIR, "pharmacy-pricing.sqlite");
+  }
+
   return new URL("../../data/pharmacy-pricing.sqlite", import.meta.url).pathname;
 }
 

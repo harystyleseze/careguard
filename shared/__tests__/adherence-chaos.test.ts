@@ -13,37 +13,50 @@ const { mockFiles, mockFsState } = vi.hoisted(() => {
   return { mockFiles, mockFsState };
 });
 
-vi.mock("fs", () => ({
-  readFileSync: vi.fn((filePath: string) => {
+vi.mock("fs", () => {
+  const readFn = vi.fn((filePath: string) => {
     if (mockFsState.enospc) throw new Error("ENOSPC: No space left on device");
     const content = mockFiles.get(String(filePath));
     if (content === undefined) throw new Error(`ENOENT: ${filePath}`);
     return content;
-  }),
-  writeFileSync: vi.fn((filePath: string, data: string) => {
+  });
+  const writeFn = vi.fn((filePath: string, data: string) => {
     if (mockFsState.enospc) throw new Error("ENOSPC: No space left on device");
     mockFiles.set(String(filePath), String(data));
-  }),
-  appendFileSync: vi.fn((filePath: string, data: string) => {
+  });
+  const appendFn = vi.fn((filePath: string, data: string) => {
     if (mockFsState.enospc) throw new Error("ENOSPC: No space left on device");
     const existing = mockFiles.get(String(filePath)) ?? "";
     mockFiles.set(String(filePath), existing + String(data));
-  }),
-  existsSync: vi.fn((filePath: string) => mockFiles.has(String(filePath))),
-  mkdirSync: vi.fn(),
-  renameSync: vi.fn((from: string, to: string) => {
+  });
+  const renameFn = vi.fn((from: string, to: string) => {
     if (mockFsState.enospc) throw new Error("ENOSPC: No space left on device");
     const data = mockFiles.get(String(from));
     if (data !== undefined) {
       mockFiles.set(String(to), data);
       mockFiles.delete(String(from));
     }
-  }),
-  unlinkSync: vi.fn(),
-}));
+  });
+
+  return {
+    readFileSync: readFn,
+    writeFileSync: writeFn,
+    appendFileSync: appendFn,
+    existsSync: vi.fn((filePath: string) => mockFiles.has(String(filePath))),
+    mkdirSync: vi.fn(),
+    renameSync: renameFn,
+    unlinkSync: vi.fn(),
+    promises: {
+      readFile: vi.fn(async (filePath: string) => readFn(filePath)),
+      writeFile: vi.fn(async (filePath: string, data: string) => writeFn(filePath, data)),
+      appendFile: vi.fn(async (filePath: string, data: string) => appendFn(filePath, data)),
+      rename: vi.fn(async (from: string, to: string) => renameFn(from, to)),
+    },
+  };
+});
 
 vi.mock("url", () => ({
-  fileURLToPath: (url: any) => url.pathname,
+  fileURLToPath: (url: any) => (typeof url === "string" ? new URL(url).pathname : url?.pathname || "/app/shared/adherence.ts"),
 }));
 
 import {
@@ -74,7 +87,7 @@ describe("Adherence — disk-full chaos (Issue #809)", () => {
     };
 
     mockFsState.enospc = true;
-    const result = appendAdherenceRecord(record);
+    const result = await appendAdherenceRecord(record);
     mockFsState.enospc = false;
 
     expect(result).toBeDefined();
@@ -93,12 +106,12 @@ describe("Adherence — disk-full chaos (Issue #809)", () => {
       skippedCount: 0,
     };
 
-    const id = appendAdherenceRecord(record);
-    const recordsBefore = readAdherenceRecords();
+    const id = await appendAdherenceRecord(record);
+    const recordsBefore = await readAdherenceRecords();
     expect(recordsBefore.length).toBeGreaterThan(0);
 
     mockFsState.enospc = true;
-    const confirmed = confirmAdherence(id);
+    const confirmed = await confirmAdherence(id);
     mockFsState.enospc = false;
 
     expect(confirmed).toBe(false);
@@ -117,10 +130,10 @@ describe("Adherence — disk-full chaos (Issue #809)", () => {
       skippedCount: 0,
     };
 
-    const id = appendAdherenceRecord(record);
+    const id = await appendAdherenceRecord(record);
 
     mockFsState.enospc = true;
-    const skipped = skipAdherence(id);
+    const skipped = await skipAdherence(id);
     mockFsState.enospc = false;
 
     expect(skipped).toBe(false);
@@ -152,17 +165,17 @@ describe("Adherence — disk-full chaos (Issue #809)", () => {
       skippedCount: 0,
     };
 
-    appendAdherenceRecord(record1);
-    appendAdherenceRecord(record2);
+    await appendAdherenceRecord(record1);
+    await appendAdherenceRecord(record2);
 
-    const recordsBefore = readAdherenceRecords();
+    const recordsBefore = await readAdherenceRecords();
     expect(recordsBefore.length).toBe(2);
 
     mockFsState.enospc = true;
-    skipAdherence(recordsBefore[1].id);
+    await skipAdherence(recordsBefore[1].id);
     mockFsState.enospc = false;
 
-    const recordsAfter = readAdherenceRecords();
+    const recordsAfter = await readAdherenceRecords();
     expect(recordsAfter.length).toBe(2);
     expect(recordsAfter[0].status).toBe("confirmed");
     expect(recordsAfter[1].status).toBe("pending");
@@ -182,11 +195,11 @@ describe("Adherence — disk-full chaos (Issue #809)", () => {
     };
 
     mockFsState.enospc = true;
-    const id1 = appendAdherenceRecord(record);
+    const id1 = await appendAdherenceRecord(record);
     mockFsState.enospc = false;
 
-    const id2 = appendAdherenceRecord({ ...record, orderId: "ord790" });
-    const records = readAdherenceRecords();
+    const id2 = await appendAdherenceRecord({ ...record, orderId: "ord790" });
+    const records = await readAdherenceRecords();
 
     expect(records.length).toBeGreaterThan(0);
     expect(records.some((r) => r.orderId === "ord790")).toBe(true);
