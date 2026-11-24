@@ -52,6 +52,11 @@ After deploying, confirm the new entry appears in responses:
 curl -sI https://your-app.onrender.com/ | grep -i content-security-policy
 ```
 
+Compare the output with the origin you added. The command prints the header but
+does not fail when an expected origin is missing. The [connect-src omission
+drill](csp-connect-src-drill.md) records a rehearsal of this gap and a proposed
+pre-deploy check.
+
 ## Notes
 
 - The `hsts` option is only active when `NODE_ENV=production`. Ensure this is set in your production environment.
