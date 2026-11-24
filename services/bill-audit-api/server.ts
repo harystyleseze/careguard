@@ -38,7 +38,12 @@ import { logger } from "../../shared/logger.ts";
 import { requestLifecycleMiddleware } from "../../shared/request-lifecycle.ts";
 import { gracefulShutdown } from "../../shared/graceful-shutdown.ts";
 import { sanitizeUserString } from "../../shared/sanitize.ts";
-import { billAuditOversizedRejectionsTotal } from "../../shared/metrics.ts";
+import { MAX_FREE_TEXT_LENGTH } from "../../shared/free-text.ts";
+import {
+  billAuditOversizedRejectionsTotal,
+  billAuditConfigLoadFailureTotal,
+  billAuditConfigLoaded,
+} from "../../shared/metrics.ts";
 import { extractLineItemsFromBillImage } from "../../shared/bill-ocr.ts";
 
 const PORT = parseInt(process.env.BILL_AUDIT_API_PORT || "3002", 10);
@@ -57,9 +62,9 @@ interface DuplicateAllowlistEntry {
 
 let duplicateAllowlist: Set<string> = new Set();
 let allowlistMetadata: Map<string, DuplicateAllowlistEntry> = new Map();
-let allowlistLoaded = false;
+export let allowlistLoaded = false;
 
-function loadDuplicateAllowlist() {
+export function loadDuplicateAllowlist() {
   try {
     const allowlistPath = new URL(
       "./duplicates-allowlist.json",
@@ -72,6 +77,7 @@ function loadDuplicateAllowlist() {
     duplicateAllowlist = new Set(data.map((entry) => entry.code));
     allowlistMetadata = new Map(data.map((entry) => [entry.code, entry]));
     allowlistLoaded = true;
+    billAuditConfigLoaded({ config: "allowlist" }).set(1);
 
     logger.info(
       { count: duplicateAllowlist.size, codes: Array.from(duplicateAllowlist) },
@@ -85,6 +91,8 @@ function loadDuplicateAllowlist() {
     duplicateAllowlist = new Set();
     allowlistMetadata = new Map();
     allowlistLoaded = false;
+    billAuditConfigLoaded({ config: "allowlist" }).set(0);
+    billAuditConfigLoadFailureTotal({ config: "allowlist" }).inc();
   }
 }
 
@@ -128,31 +136,55 @@ interface AuditThresholdConfig {
   byCpt: Record<string, number>;
 }
 
-let auditThresholds: AuditThresholdConfig = {
+export let auditThresholds: AuditThresholdConfig = {
   default: BILL_AUDIT_OVERCHARGE_MULTIPLIER,
   byCpt: {},
 };
-let thresholdsLoaded = false;
+export let thresholdsLoaded = false;
 
-function loadAuditThresholds() {
+export function isValidByCptMultiplier(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value > 1.0 &&
+    value <= BILL_AUDIT_UPCODED_MULTIPLIER
+  );
+}
+
+export function loadAuditThresholds() {
   try {
     const thresholdsPath = new URL("./audit_thresholds.json", import.meta.url)
       .pathname;
-    auditThresholds = JSON.parse(
+    const parsed = JSON.parse(
       readFileSync(thresholdsPath, "utf-8"),
     ) as AuditThresholdConfig;
     if (process.env.BILL_AUDIT_OVERCHARGE_MULTIPLIER) {
-      // Precedence rule: when BILL_AUDIT_OVERCHARGE_MULTIPLIER is set it wins
-      // for every CPT code, overriding both .default and any per-CPT value in
-      // byCpt. This keeps the env override from being silently shadowed by a
-      // hardcoded audit_thresholds.json entry (e.g. byCpt['99213']). When the
-      // env var is unset, per-CPT byCpt values win, falling back to .default.
-      auditThresholds.default = BILL_AUDIT_OVERCHARGE_MULTIPLIER;
-      for (const cptCode of Object.keys(auditThresholds.byCpt)) {
-        auditThresholds.byCpt[cptCode] = BILL_AUDIT_OVERCHARGE_MULTIPLIER;
-      }
+      parsed.default = BILL_AUDIT_OVERCHARGE_MULTIPLIER;
     }
+
+    // #919: re-validate each byCpt override against the same ordering invariant
+    // before accepting it. An invalid override is rejected and the previous
+    // valid thresholds are retained.
+    const badEntry = Object.entries(parsed.byCpt ?? {}).find(
+      ([, value]) => !isValidByCptMultiplier(value),
+    );
+    if (badEntry) {
+      const [cptCode, value] = badEntry;
+      billAuditConfigLoadFailureTotal({ config: "thresholds" }).inc();
+      logger.error(
+        {
+          cptCode,
+          value,
+          validRange: `> 1.0 and <= ${BILL_AUDIT_UPCODED_MULTIPLIER}`,
+        },
+        "Rejected invalid byCpt threshold override; retaining previous thresholds",
+      );
+      return;
+    }
+
+    auditThresholds = parsed;
     thresholdsLoaded = true;
+    billAuditConfigLoaded({ config: "thresholds" }).set(1);
     logger.info(
       {
         default: auditThresholds.default,
@@ -167,10 +199,12 @@ function loadAuditThresholds() {
     );
     auditThresholds = { default: BILL_AUDIT_OVERCHARGE_MULTIPLIER, byCpt: {} };
     thresholdsLoaded = false;
+    billAuditConfigLoaded({ config: "thresholds" }).set(0);
+    billAuditConfigLoadFailureTotal({ config: "thresholds" }).inc();
   }
 }
 
-function getAuditThreshold(cptCode: string): number {
+export function getAuditThreshold(cptCode: string): number {
   return auditThresholds.byCpt[cptCode] ?? auditThresholds.default;
 }
 
@@ -371,6 +405,25 @@ app.post("/bill/audit", (req, res, next) => {
       code: "VALIDATION_ERROR",
     });
     return;
+  }
+  // #920: reject per-item fields that exceed the validation schema's limits
+  // before the x402 payment step, so a real payment is never charged on a
+  // request that will fail post-payment validation.
+  if (Array.isArray(items)) {
+    for (const item of items) {
+      if (
+        item &&
+        typeof item.description === "string" &&
+        item.description.length > MAX_FREE_TEXT_LENGTH
+      ) {
+        billAuditOversizedRejectionsTotal.inc();
+        res.status(400).json({
+          error: `line item description exceeds ${MAX_FREE_TEXT_LENGTH} characters`,
+          code: "VALIDATION_ERROR",
+        });
+        return;
+      }
+    }
   }
   next();
 });

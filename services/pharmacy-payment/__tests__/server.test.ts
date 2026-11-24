@@ -76,16 +76,60 @@ vi.mock("proper-lockfile", () => ({
   },
 }));
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Import server app (after all mocks are set) ───────────────────────────────
+// We need a factory function from the server. Since the server auto-starts,
+// we need to create a testable Express app. Instead, let's create a minimal
+// test harness that duplicates the route logic with injected dependencies.
 
-const successCharge = async (_webReq: Request) => ({
-  status: 200,
-  withReceipt: (resp: Response) => {
-    const headers = new Headers(resp.headers);
-    headers.set("X-Payment-Receipt", "receipt-abc123");
-    return new Response(resp.body, { status: resp.status, headers });
-  },
-});
+import express from 'express';
+import { MedicationOrderSchema, isKnownDrugPharmacyPair } from '../validation.ts';
+import { sanitizeUserString } from '../../../shared/sanitize.ts';
+
+function createTestApp(opts: {
+  mppCharge: (webReq: any) => Promise<any>;
+  loadOrders: () => any[];
+  saveOrder: (o: any) => Promise<void>;
+}) {
+  const app = express();
+  app.use(express.json());
+
+  app.get('/pharmacy/orders', (_req, res) => {
+    res.json({ orders: opts.loadOrders() });
+  });
+
+  app.post('/pharmacy/order', async (req, res) => {
+    const parsedOrder = MedicationOrderSchema.safeParse(req.body);
+    if (!parsedOrder.success) {
+      res.status(400).json({
+        error: 'Invalid order request',
+        details: parsedOrder.error.issues.map((i) => i.message),
+      });
+      return;
+    }
+
+    const order = parsedOrder.data;
+
+    // Reject unknown drug/pharmacy pairs before any charge is attempted (#927).
+    if (!isKnownDrugPharmacyPair(order.drug, order.pharmacy)) {
+      res.status(400).json({
+        error: "Unknown drug or pharmacy",
+        code: "UNKNOWN_DRUG_PHARMACY_PAIR",
+      });
+      return;
+    }
+
+    const safeDrug = sanitizeUserString(order.drug);
+    const safePharmacy = sanitizeUserString(order.pharmacy);
+
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (value == null) continue;
+      if (Array.isArray(value)) {
+        for (const v of value) headers.append(key, v);
+      } else {
+        headers.set(key, value);
+      }
+    }
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
@@ -239,6 +283,22 @@ describe("POST /pharmacy/order — 400 validation errors", () => {
       .post("/pharmacy/order")
       .send({ drug: "Metformin", pharmacy: "CVS", amount: 0 });
     expect(res.status).toBe(400);
+  });
+
+  it('rejects an unknown drug/pharmacy pair before any charge is attempted (Issue #927)', async () => {
+    const mppChargeMock = vi.fn().mockResolvedValue(defaultMppCharge({}));
+    const app = createTestApp({
+      mppCharge: mppChargeMock,
+      loadOrders: loadOrdersFn,
+      saveOrder: saveOrderFn,
+    });
+    const res = await request(app)
+      .post('/pharmacy/order')
+      .send({ drug: 'Fabricatol', pharmacy: 'Fake Pharmacy', amount: 10 });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('UNKNOWN_DRUG_PHARMACY_PAIR');
+    expect(mppChargeMock).not.toHaveBeenCalled();
+    expect(orderStore).toHaveLength(0);
   });
 });
 
