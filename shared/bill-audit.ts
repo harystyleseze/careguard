@@ -131,15 +131,23 @@ export interface AuditBillOptions {
   providerHistoryLookup?: ProviderHistoryLookupFn;
 }
 
+// Single source of truth for the multiplier defaults and rate-validity dates.
+// Imported by server.ts (and any other caller of auditBill) so the literals
+// exist in exactly one place and cannot silently drift between copies.
+export const DEFAULT_SUGGESTED_MULTIPLIER = 1.2;
+export const DEFAULT_UPCODED_MULTIPLIER = 3.0;
+export const DEFAULT_RATES_AS_OF = "2026-01-01";
+export const DEFAULT_RATES_VALID_UNTIL = "2026-12-31";
+
 export function auditBill(lineItems: any[], options: AuditBillOptions = {}) {
   const network = options.network ?? "stellar:testnet";
   const payTo = options.payTo ?? process.env.BILL_PROVIDER_PUBLIC_KEY ?? "";
   const allowlist = options.duplicateAllowlist ?? new Set(["96372", "97110"]);
   const getThreshold = options.getAuditThreshold ?? ((_cptCode?: string) => options.overchargeMultiplier ?? 1.5);
-  const suggestedMultiplier = options.suggestedMultiplier ?? 1.2;
-  const upcodedMultiplier = options.upcodedMultiplier ?? 3.0;
-  const ratesAsOf = options.ratesAsOf ?? "2026-01-01";
-  const ratesValidUntil = options.ratesValidUntil ?? "2026-12-31";
+  const suggestedMultiplier = options.suggestedMultiplier ?? DEFAULT_SUGGESTED_MULTIPLIER;
+  const upcodedMultiplier = options.upcodedMultiplier ?? DEFAULT_UPCODED_MULTIPLIER;
+  const ratesAsOf = options.ratesAsOf ?? DEFAULT_RATES_AS_OF;
+  const ratesValidUntil = options.ratesValidUntil ?? DEFAULT_RATES_VALID_UNTIL;
 
   const results: any[] = [];
   let totalCharged = 0;

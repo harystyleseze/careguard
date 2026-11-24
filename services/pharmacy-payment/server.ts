@@ -189,14 +189,19 @@ app.post(
     const safeDrug = sanitizeUserString(order.drug);
     const safePharmacy = sanitizeUserString(order.pharmacy);
 
-    // Convert Express request to Web Request for mppx. Never forward the
-    // caller's own auth/session headers into the upstream MPP charge call —
-    // mppx only needs the payment-protocol headers (e.g. X-Payment).
-    const FORWARD_HEADER_BLOCKLIST = new Set(["authorization", "cookie"]);
+    // Convert Express request to Web Request for mppx.
+    // Only forward the headers mppx.charge() actually requires:
+    //   X-Payment  — the signed payment receipt from the client's x402 wallet
+    //   Content-Type — needed so mppx can decode the request body
+    //   Accept       — lets mppx negotiate the response format
+    // Every other caller header (Host, Authorization, Cookie, X-Forwarded-*,
+    // custom headers) is intentionally excluded to prevent header injection
+    // into the internal charge call.
+    const MPP_FORWARD_HEADER_ALLOWLIST = new Set(["x-payment", "content-type", "accept"]);
     const headers = new Headers();
     for (const [key, value] of Object.entries(req.headers)) {
       if (value == null) continue;
-      if (FORWARD_HEADER_BLOCKLIST.has(key.toLowerCase())) continue;
+      if (!MPP_FORWARD_HEADER_ALLOWLIST.has(key.toLowerCase())) continue;
       if (Array.isArray(value)) {
         for (const entry of value) headers.append(key, entry);
       } else {

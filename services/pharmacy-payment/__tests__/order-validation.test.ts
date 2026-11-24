@@ -38,6 +38,12 @@ describe("OrderAmountSchema", () => {
     expect(() => OrderAmountSchema.parse("Infinity")).toThrow();
   });
 
+  it("rejects string amounts with trailing garbage", () => {
+    expect(() => OrderAmountSchema.parse("10abc")).toThrow();
+    expect(() => OrderAmountSchema.parse("5.00x")).toThrow();
+    expect(() => OrderAmountSchema.parse("10 ")).toThrow();
+  });
+
   it("rejects overlong drug names", () => {
     expect(() =>
       MedicationOrderSchema.parse({

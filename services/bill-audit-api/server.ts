@@ -17,6 +17,10 @@ import express from "express";
 import { readFileSync } from "fs";
 import {
   BillAuditValidationError,
+  DEFAULT_RATES_AS_OF,
+  DEFAULT_RATES_VALID_UNTIL,
+  DEFAULT_SUGGESTED_MULTIPLIER,
+  DEFAULT_UPCODED_MULTIPLIER,
   FAIR_MARKET_RATES,
   auditBill as sharedAuditBill,
   type LineItem,
@@ -106,10 +110,10 @@ export const BILL_AUDIT_OVERCHARGE_MULTIPLIER = parseFloat(
   process.env.BILL_AUDIT_OVERCHARGE_MULTIPLIER || "1.5",
 );
 export const BILL_AUDIT_SUGGESTED_MULTIPLIER = parseFloat(
-  process.env.BILL_AUDIT_SUGGESTED_MULTIPLIER || "1.2",
+  process.env.BILL_AUDIT_SUGGESTED_MULTIPLIER || String(DEFAULT_SUGGESTED_MULTIPLIER),
 );
 export const BILL_AUDIT_UPCODED_MULTIPLIER = parseFloat(
-  process.env.BILL_AUDIT_UPCODED_MULTIPLIER || "3.0",
+  process.env.BILL_AUDIT_UPCODED_MULTIPLIER || String(DEFAULT_UPCODED_MULTIPLIER),
 );
 
 if (
@@ -214,8 +218,8 @@ process.on("SIGHUP", () => {
 });
 
 // Rates valid dates
-const RATES_AS_OF = "2026-01-01";
-const RATES_VALID_UNTIL = "2026-12-31";
+const RATES_AS_OF = DEFAULT_RATES_AS_OF;
+const RATES_VALID_UNTIL = DEFAULT_RATES_VALID_UNTIL;
 
 export { FAIR_MARKET_RATES };
 

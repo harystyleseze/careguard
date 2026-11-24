@@ -5,8 +5,18 @@ import { PRICING_DATABASE } from "../../shared/pharmacy-pricing.ts";
 export const OrderAmountSchema = z
   .union([z.number(), z.string()])
   .transform<number>((value, ctx) => {
-    const parsed =
-      typeof value === "number" ? value : parseFloat(value);
+    let parsed: number;
+    if (typeof value === "number") {
+      parsed = value;
+    } else if (/^-?\d+(\.\d+)?$/.test(value)) {
+      parsed = Number(value);
+    } else {
+      ctx.addIssue({
+        code: "custom",
+        message: "amount must be a valid number",
+      });
+      return z.NEVER;
+    }
     if (!Number.isFinite(parsed)) {
       ctx.addIssue({
         code: "custom",
