@@ -29,6 +29,17 @@ Operational runbooks for on-call engineers. Each runbook follows the template:
 
 ---
 
+## Game-Day Drills
+
+| Drill | Issue | Summary |
+|---|---|---|
+| [962-oz-facilitator-outage.md](../drills/962-oz-facilitator-outage.md) | #962 | Block outbound OZ facilitator egress and verify fail-closed behaviour & recovery |
+| [964-sighup-key-rotation.md](../drills/964-sighup-key-rotation.md) | #964 | Rehearse SIGHUP-based `AGENT_SECRET_KEY` rotation under live traffic & 60s TTL fallback |
+| [965-render-secret-rotation.md](../drills/965-render-secret-rotation.md) | #965 | Rehearse Render `sync:false` secret update, SIGHUP reload, and manual restart timing |
+| [967-network-switch.md](../drills/967-network-switch.md) | #967 | Rehearse runtime `STELLAR_NETWORK` switch via SIGHUP and verify startup guards |
+
+---
+
 ## Runbook template
 
 Use this structure when authoring a new runbook:
