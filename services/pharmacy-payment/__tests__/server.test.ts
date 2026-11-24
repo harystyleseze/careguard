@@ -181,9 +181,11 @@ function createTestApp(opts: {
     const safeDrug = sanitizeUserString(order.drug);
     const safePharmacy = sanitizeUserString(order.pharmacy);
 
+    const MPP_FORWARD_HEADER_ALLOWLIST = new Set(["x-payment", "content-type", "accept"]);
     const headers = new Headers();
     for (const [key, value] of Object.entries(req.headers)) {
       if (value == null) continue;
+      if (!MPP_FORWARD_HEADER_ALLOWLIST.has(key.toLowerCase())) continue;
       if (Array.isArray(value)) {
         for (const v of value) headers.append(key, v);
       } else {
@@ -397,5 +399,55 @@ describe('POST /pharmacy/order — concurrent orders (Issue #31 acceptance crite
     expect(orderStore).toHaveLength(50);
     const orderIds = new Set(orderStore.map((o) => o.id));
     expect(orderIds.size).toBe(50);
+  });
+});
+
+describe('POST /pharmacy/order — MPP header allowlist (#938)', () => {
+  beforeEach(() => { orderStore = []; });
+
+  it('forwards allowed headers (x-payment, content-type, accept) to mppCharge', async () => {
+    let capturedHeaders: Headers | null = null;
+    const capturingCharge = async (webReq: Request) => {
+      capturedHeaders = webReq.headers;
+      return {
+        status: 200,
+        withReceipt: (resp: Response) => resp,
+      };
+    };
+
+    const app = createTestApp({ mppCharge: capturingCharge, loadOrders: loadOrdersFn, saveOrder: saveOrderFn });
+    await request(app)
+      .post('/pharmacy/order')
+      .set('X-Payment', 'pay_receipt_xyz')
+      .set('Accept', 'application/json')
+      .send({ drug: 'Metformin', pharmacy: 'CVS', amount: 10 });
+
+    expect(capturedHeaders!.get('x-payment')).toBe('pay_receipt_xyz');
+    expect(capturedHeaders!.get('accept')).toBe('application/json');
+  });
+
+  it('does NOT forward arbitrary caller headers to mppCharge', async () => {
+    let capturedHeaders: Headers | null = null;
+    const capturingCharge = async (webReq: Request) => {
+      capturedHeaders = webReq.headers;
+      return {
+        status: 200,
+        withReceipt: (resp: Response) => resp,
+      };
+    };
+
+    const app = createTestApp({ mppCharge: capturingCharge, loadOrders: loadOrdersFn, saveOrder: saveOrderFn });
+    await request(app)
+      .post('/pharmacy/order')
+      .set('X-Custom-Attack', 'injected')
+      .set('X-Forwarded-For', '1.2.3.4')
+      .set('Authorization', 'Bearer stolen-token')
+      .set('Cookie', 'session=abc')
+      .send({ drug: 'Metformin', pharmacy: 'CVS', amount: 10 });
+
+    expect(capturedHeaders!.get('x-custom-attack')).toBeNull();
+    expect(capturedHeaders!.get('x-forwarded-for')).toBeNull();
+    expect(capturedHeaders!.get('authorization')).toBeNull();
+    expect(capturedHeaders!.get('cookie')).toBeNull();
   });
 });
