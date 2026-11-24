@@ -95,7 +95,7 @@ describe("POST /pharmacy/order (Issue #790)", () => {
 
     const postRes = await request(app)
       .post("/pharmacy/order")
-      .send({ drug: "Amoxicillin", pharmacy: "Test Pharmacy", amount: 12.5 });
+      .send({ drug: "Lisinopril", pharmacy: "Costco Pharmacy", amount: 12.5 });
 
     expect(postRes.status).toBe(200);
     expect(postRes.body.order.id).toMatch(/^order-/);
@@ -104,7 +104,8 @@ describe("POST /pharmacy/order (Issue #790)", () => {
     expect(listRes.status).toBe(200);
     const found = listRes.body.orders.find((o: any) => o.id === postRes.body.order.id);
     expect(found).toBeDefined();
-    expect(found.drug).toBe("Amoxicillin");
+    expect(found.drug).toBe("Lisinopril 10mg");
+    expect(found.pharmacy).toBe("Costco Pharmacy");
   });
 
   it("rejects a negative amount with 4xx before any charge is attempted", async () => {
@@ -113,7 +114,7 @@ describe("POST /pharmacy/order (Issue #790)", () => {
 
     const res = await request(app)
       .post("/pharmacy/order")
-      .send({ drug: "Amoxicillin", pharmacy: "Test Pharmacy", amount: -5 });
+      .send({ drug: "Lisinopril", pharmacy: "Costco Pharmacy", amount: -5 });
 
     expect(res.status).toBe(400);
     expect(chargeSpy).not.toHaveBeenCalled();
@@ -125,7 +126,7 @@ describe("POST /pharmacy/order (Issue #790)", () => {
 
     const res = await request(app)
       .post("/pharmacy/order")
-      .send({ drug: "Amoxicillin", pharmacy: "Test Pharmacy", amount: "Infinity" });
+      .send({ drug: "Lisinopril", pharmacy: "Costco Pharmacy", amount: "Infinity" });
 
     expect(res.status).toBe(400);
     expect(chargeSpy).not.toHaveBeenCalled();
@@ -137,7 +138,7 @@ describe("POST /pharmacy/order (Issue #790)", () => {
 
     const res = await request(app)
       .post("/pharmacy/order")
-      .send({ drug: "Amoxicillin", pharmacy: "Test Pharmacy", amount: 999999 });
+      .send({ drug: "Lisinopril", pharmacy: "Costco Pharmacy", amount: 999999 });
 
     expect(res.status).toBe(400);
     expect(chargeSpy).not.toHaveBeenCalled();
@@ -153,7 +154,7 @@ describe("POST /pharmacy/order (Issue #790)", () => {
 
     const res = await request(app)
       .post("/pharmacy/order")
-      .send({ drug: "Ibuprofen", pharmacy: "Test Pharmacy", amount: 5 });
+      .send({ drug: "Lisinopril", pharmacy: "Costco Pharmacy", amount: 5 });
 
     expect(res.status).toBe(503);
 
@@ -168,11 +169,24 @@ describe("POST /pharmacy/order (Issue #790)", () => {
       .post("/pharmacy/order")
       .set("Authorization", "Bearer super-secret-caller-token")
       .set("Cookie", "session=super-secret-session")
-      .send({ drug: "Amoxicillin", pharmacy: "Test Pharmacy", amount: 8 });
+      .send({ drug: "Lisinopril", pharmacy: "Costco Pharmacy", amount: 8 });
 
     expect(lastWebReqHeaders).toBeDefined();
     expect(lastWebReqHeaders!.get("authorization")).toBeNull();
     expect(lastWebReqHeaders!.get("cookie")).toBeNull();
+  });
+
+  it("rejects fabricated drug/pharmacy pair before any charge is attempted", async () => {
+    const chargeSpy = vi.fn(successCharge);
+    mppChargeImpl = chargeSpy;
+
+    const res = await request(app)
+      .post("/pharmacy/order")
+      .send({ drug: "FakeDrug", pharmacy: "Fake Pharmacy", amount: 12.5 });
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe("DRUG_PHARMACY_PAIR_NOT_FOUND");
+    expect(chargeSpy).not.toHaveBeenCalled();
   });
 });
 

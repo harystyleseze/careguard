@@ -919,7 +919,7 @@ app.get("/bill/sample", (req, res) => {
   });
 });
 
-// Reject oversized bill audit requests BEFORE x402 payment is charged (issue #13)
+// Reject oversized or schema-invalid bill audit requests BEFORE x402 payment is charged
 const BILL_AUDIT_MAX_ITEMS = parseInt(
   process.env.BILL_AUDIT_MAX_ITEMS || "500",
   10,
@@ -928,9 +928,29 @@ app.post("/bill/audit", (req, res, next) => {
   const items = req.body?.lineItems;
   if (Array.isArray(items) && items.length > BILL_AUDIT_MAX_ITEMS) {
     billAuditOversizedRejectionsTotal.inc();
-    res
-      .status(400)
-      .json({ error: `lineItems exceeds max (${BILL_AUDIT_MAX_ITEMS})` });
+    res.status(400).json({
+      error: `lineItems exceeds max (${BILL_AUDIT_MAX_ITEMS})`,
+      code: "VALIDATION_ERROR",
+    });
+    return;
+  }
+  try {
+    validateBillAuditRequest(req.body);
+  } catch (error: any) {
+    if (error?.name === "BillAuditValidationError") {
+      billAuditOversizedRejectionsTotal.inc();
+      res.status(400).json({
+        error: error.message,
+        code: error.code,
+        details: { issues: error.issues },
+      });
+      return;
+    }
+    billAuditOversizedRejectionsTotal.inc();
+    res.status(400).json({
+      error: "Invalid request body",
+      code: "INVALID_REQUEST_BODY",
+    });
     return;
   }
   next();
@@ -1156,6 +1176,23 @@ app.post(
     const parsedOrderData = parsedOrder.data as MedicationOrderInput;
     const safeDrug = sanitizeUserString(parsedOrderData.drug);
     const safePharmacy = sanitizeUserString(parsedOrderData.pharmacy);
+
+    let catalogPair;
+    try {
+      catalogPair = pharmacyStore.getDrugPharmacyPair(safeDrug, safePharmacy);
+    } catch (err: any) {
+      logger.error({ err: err?.message, drug: safeDrug, pharmacy: safePharmacy }, "Failed to validate pharmacy catalog before charge");
+      res.status(503).json({ error: "Pharmacy catalog unavailable, try again shortly" });
+      return;
+    }
+    if (!catalogPair) {
+      res.status(404).json({
+        error: "Drug/pharmacy pair not found in catalog",
+        code: "DRUG_PHARMACY_PAIR_NOT_FOUND",
+      });
+      return;
+    }
+
     const headers = new Headers();
     for (const [key, value] of Object.entries(req.headers)) {
       if (value == null) continue;
@@ -1171,7 +1208,7 @@ app.post(
     });
     const result = await mppx.charge({
       amount: parsedOrderData.amount.toFixed(2),
-      description: `Medication: ${safeDrug} from ${safePharmacy}`,
+      description: `Medication: ${catalogPair.displayName} from ${catalogPair.pharmacy}`,
     })(webReq);
     if (result.status === 402) {
       result.challenge.headers.forEach((v: string, k: string) =>
@@ -1182,8 +1219,8 @@ app.post(
     }
     const order = {
       id: `order-${Date.now()}`,
-      drug: safeDrug,
-      pharmacy: safePharmacy,
+      drug: catalogPair.displayName,
+      pharmacy: catalogPair.pharmacy,
       amount: parsedOrderData.amount,
       status: "confirmed",
       timestamp: new Date().toISOString(),
@@ -1203,7 +1240,7 @@ app.post(
       Response.json({
         success: true,
         order,
-        message: `Payment settled. ${safeDrug} from ${safePharmacy} confirmed.`,
+        message: `Payment settled. ${catalogPair.displayName} from ${catalogPair.pharmacy} confirmed.`,
       }),
     );
     response.headers.forEach((v: string, k: string) => res.setHeader(k, v));

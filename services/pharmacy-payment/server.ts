@@ -38,11 +38,24 @@ import {
   paymentsUsdcTotal,
   stellarTxSubmittedTotal,
 } from "../../shared/metrics.ts";
+import { createPharmacyPricingStore } from "../pharmacy-api/db.ts";
 
 const PORT = parseInt(process.env.PHARMACY_PAYMENT_PORT || "3005", 10);
 const RECIPIENT = process.env.PHARMACY_1_PUBLIC_KEY;
 const MPP_SECRET_KEY = process.env.MPP_SECRET_KEY;
 const NETWORK = "stellar:testnet";
+let pricingStore: ReturnType<typeof createPharmacyPricingStore> | null = null;
+
+function getPricingStore() {
+  if (!pricingStore) {
+    pricingStore = createPharmacyPricingStore();
+  }
+  return pricingStore;
+}
+
+export function __setPricingStoreForTests(store: ReturnType<typeof createPharmacyPricingStore> | null) {
+  pricingStore = store;
+}
 
 if (!RECIPIENT) throw new Error("PHARMACY_1_PUBLIC_KEY required in .env");
 if (!MPP_SECRET_KEY) throw new Error("MPP_SECRET_KEY required in .env");
@@ -177,6 +190,22 @@ app.post(
     const safeDrug = sanitizeUserString(order.drug);
     const safePharmacy = sanitizeUserString(order.pharmacy);
 
+    let catalogPair;
+    try {
+      catalogPair = getPricingStore().getDrugPharmacyPair(safeDrug, safePharmacy);
+    } catch (err: any) {
+      logger.error({ err: err?.message, drug: safeDrug, pharmacy: safePharmacy }, "Failed to validate pharmacy catalog before charge");
+      res.status(503).json({ error: "Pharmacy catalog unavailable, try again shortly" });
+      return;
+    }
+    if (!catalogPair) {
+      res.status(404).json({
+        error: "Drug/pharmacy pair not found in catalog",
+        code: "DRUG_PHARMACY_PAIR_NOT_FOUND",
+      });
+      return;
+    }
+
     // Convert Express request to Web Request for mppx. Never forward the
     // caller's own auth/session headers into the upstream MPP charge call —
     // mppx only needs the payment-protocol headers (e.g. X-Payment).
@@ -202,7 +231,7 @@ app.post(
     try {
       result = await mppx.charge({
         amount: Number(order.amount).toFixed(2),
-        description: `Medication: ${safeDrug} from ${safePharmacy}`,
+        description: `Medication: ${catalogPair.displayName} from ${catalogPair.pharmacy}`,
       })(webReq);
     } catch (err: any) {
       logger.error({ err: err?.message }, "MPP charge flow failed — facilitator unavailable");
@@ -222,8 +251,8 @@ app.post(
     // Payment verified and settled on Stellar — create order
     const newOrder = {
       id: `order-${Date.now()}`,
-      drug: safeDrug,
-      pharmacy: safePharmacy,
+      drug: catalogPair.displayName,
+      pharmacy: catalogPair.pharmacy,
       amount: Number(order.amount),
       status: "confirmed",
       timestamp: new Date().toISOString(),
@@ -237,7 +266,7 @@ app.post(
       Response.json({
         success: true,
         order: newOrder,
-        message: `Payment of $${newOrder.amount} USDC settled on Stellar. ${safeDrug} order from ${safePharmacy} confirmed.`,
+        message: `Payment of $${newOrder.amount} USDC settled on Stellar. ${catalogPair.displayName} order from ${catalogPair.pharmacy} confirmed.`,
       })
     );
 

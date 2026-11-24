@@ -154,7 +154,21 @@ export const stellarTxBadSeqRetriesTotal = new Counter({
 
 export const billAuditOversizedRejectionsTotal = new Counter({
   name: "bill_audit_oversized_rejections_total",
-  help: "Total bill audit requests rejected for exceeding BILL_AUDIT_MAX_ITEMS",
+  help: "Total bill audit requests rejected before payment (oversized or invalid)",
+  registers: [registry],
+});
+
+export const billAuditConfigLoaded = new Gauge({
+  name: "bill_audit_config_loaded",
+  help: "Whether bill-audit config is loaded (1) or not (0)",
+  labelNames: ["config"] as const,
+  registers: [registry],
+});
+
+export const billAuditConfigReloadFailuresTotal = new Counter({
+  name: "bill_audit_config_reload_failures_total",
+  help: "Total bill-audit config reload failures",
+  labelNames: ["config"] as const,
   registers: [registry],
 });
 

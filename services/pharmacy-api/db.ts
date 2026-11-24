@@ -297,6 +297,48 @@ export class PharmacyPricingStore {
     }));
   }
 
+  getDrugPharmacyPair(
+    drugName: string,
+    pharmacy: string,
+  ): PharmacyPriceRecord | null {
+    const normalizedDrugName = normalizeDrugName(drugName);
+    const normalizedPharmacy = pharmacy.trim().toLowerCase();
+    if (!normalizedPharmacy) return null;
+
+    const row = this.db
+      .prepare(`
+        SELECT
+          d.name AS drug,
+          d.display_name AS displayName,
+          p.id AS pharmacyId,
+          p.name AS pharmacy,
+          p.distance_miles AS distanceMiles,
+          pr.price AS price
+        FROM prices pr
+        INNER JOIN drugs d ON d.name = pr.drug_name
+        INNER JOIN pharmacies p ON p.id = pr.pharmacy_id
+        WHERE d.name = ?
+          AND (LOWER(p.id) = ? OR LOWER(p.name) = ?)
+        LIMIT 1
+      `)
+      .get(
+        normalizedDrugName,
+        normalizedPharmacy,
+        normalizedPharmacy,
+      ) as PharmacyPriceRecord | undefined;
+
+    if (!row) return null;
+
+    return {
+      drug: row.drug,
+      displayName: row.displayName,
+      pharmacyId: row.pharmacyId,
+      pharmacy: row.pharmacy,
+      price: Number(row.price),
+      distanceMiles: Number(row.distanceMiles),
+    };
+  }
+
   upsertPrice(input: {
     drug: string;
     pharmacyId: string;

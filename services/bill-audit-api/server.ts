@@ -22,6 +22,7 @@ import {
   type LineItem,
   validateBillAuditRequest,
 } from "../../shared/bill-audit.ts";
+import { metricsHandler } from "../../shared/metrics.ts";
 import { getProviderBillHistoryStore } from "./history.ts";
 import {
   applyX402Middleware,
@@ -34,7 +35,11 @@ import { logger } from "../../shared/logger.ts";
 import { requestLifecycleMiddleware } from "../../shared/request-lifecycle.ts";
 import { gracefulShutdown } from "../../shared/graceful-shutdown.ts";
 import { sanitizeUserString } from "../../shared/sanitize.ts";
-import { billAuditOversizedRejectionsTotal } from "../../shared/metrics.ts";
+import {
+  billAuditConfigLoaded,
+  billAuditConfigReloadFailuresTotal,
+  billAuditOversizedRejectionsTotal,
+} from "../../shared/metrics.ts";
 import { extractLineItemsFromBillImage } from "../../shared/bill-ocr.ts";
 
 const PORT = parseInt(process.env.BILL_AUDIT_API_PORT || "3002", 10);
@@ -68,6 +73,7 @@ function loadDuplicateAllowlist() {
     duplicateAllowlist = new Set(data.map((entry) => entry.code));
     allowlistMetadata = new Map(data.map((entry) => [entry.code, entry]));
     allowlistLoaded = true;
+    billAuditConfigLoaded.set({ config: "allowlist" }, 1);
 
     logger.info(
       { count: duplicateAllowlist.size, codes: Array.from(duplicateAllowlist) },
@@ -78,9 +84,11 @@ function loadDuplicateAllowlist() {
       { err: err.message },
       "Failed to load duplicates-allowlist.json, using empty allowlist",
     );
+    billAuditConfigReloadFailuresTotal.inc({ config: "allowlist" });
     duplicateAllowlist = new Set();
     allowlistMetadata = new Map();
     allowlistLoaded = false;
+    billAuditConfigLoaded.set({ config: "allowlist" }, 0);
   }
 }
 
@@ -130,17 +138,70 @@ let auditThresholds: AuditThresholdConfig = {
 };
 let thresholdsLoaded = false;
 
+function isValidOverchargeThreshold(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value > BILL_AUDIT_SUGGESTED_MULTIPLIER &&
+    value < BILL_AUDIT_UPCODED_MULTIPLIER &&
+    value > 1.0
+  );
+}
+
+function validateAuditThresholdConfig(config: AuditThresholdConfig): string | null {
+  const defaultThreshold = config?.default;
+  if (!isValidOverchargeThreshold(defaultThreshold)) {
+    return `invalid default threshold ${String(defaultThreshold)}; must satisfy UPCODED > threshold > SUGGESTED > 1.0`;
+  }
+  const byCpt = config?.byCpt;
+  if (!byCpt || typeof byCpt !== "object" || Array.isArray(byCpt)) {
+    return "invalid byCpt: must be an object mapping CPT codes to thresholds";
+  }
+  for (const [cptCode, threshold] of Object.entries(byCpt)) {
+    if (!isValidOverchargeThreshold(threshold)) {
+      return `invalid byCpt threshold for ${cptCode}: ${String(threshold)}; must satisfy UPCODED > threshold > SUGGESTED > 1.0`;
+    }
+  }
+  return null;
+}
+
 function loadAuditThresholds() {
+  const previousThresholds = auditThresholds;
+  const previousLoaded = thresholdsLoaded;
   try {
     const thresholdsPath = new URL("./audit_thresholds.json", import.meta.url)
       .pathname;
-    auditThresholds = JSON.parse(
+    const parsed = JSON.parse(
       readFileSync(thresholdsPath, "utf-8"),
     ) as AuditThresholdConfig;
     if (process.env.BILL_AUDIT_OVERCHARGE_MULTIPLIER) {
-      auditThresholds.default = BILL_AUDIT_OVERCHARGE_MULTIPLIER;
+      parsed.default = BILL_AUDIT_OVERCHARGE_MULTIPLIER;
     }
+    const validationError = validateAuditThresholdConfig(parsed);
+    if (validationError) {
+      logger.error(
+        {
+          validationError,
+          default: parsed?.default,
+          byCptKeys: Object.keys(parsed?.byCpt ?? {}),
+        },
+        "Rejected audit thresholds reload; retaining previous valid thresholds",
+      );
+      billAuditConfigReloadFailuresTotal.inc({ config: "thresholds" });
+      if (previousLoaded) {
+        auditThresholds = previousThresholds;
+        thresholdsLoaded = true;
+        billAuditConfigLoaded.set({ config: "thresholds" }, 1);
+      } else {
+        thresholdsLoaded = false;
+        billAuditConfigLoaded.set({ config: "thresholds" }, 0);
+      }
+      return;
+    }
+
+    auditThresholds = parsed;
     thresholdsLoaded = true;
+    billAuditConfigLoaded.set({ config: "thresholds" }, 1);
     logger.info(
       {
         default: auditThresholds.default,
@@ -153,8 +214,10 @@ function loadAuditThresholds() {
       { err: err.message },
       `Failed to load audit_thresholds.json, using default threshold of ${BILL_AUDIT_OVERCHARGE_MULTIPLIER}`,
     );
+    billAuditConfigReloadFailuresTotal.inc({ config: "thresholds" });
     auditThresholds = { default: BILL_AUDIT_OVERCHARGE_MULTIPLIER, byCpt: {} };
     thresholdsLoaded = false;
+    billAuditConfigLoaded.set({ config: "thresholds" }, 0);
   }
 }
 
@@ -345,7 +408,7 @@ app.get("/bill/sample", (req, res) => {
   });
 });
 
-// Reject oversized bill audit requests BEFORE x402 payment is charged (issue #13)
+// Reject oversized or schema-invalid bill audit requests BEFORE x402 payment is charged
 const BILL_AUDIT_MAX_ITEMS = parseInt(
   process.env.BILL_AUDIT_MAX_ITEMS || "500",
   10,
@@ -357,6 +420,25 @@ app.post("/bill/audit", (req, res, next) => {
     res.status(400).json({
       error: `lineItems exceeds max (${BILL_AUDIT_MAX_ITEMS})`,
       code: "VALIDATION_ERROR",
+    });
+    return;
+  }
+  try {
+    validateBillAuditRequest(req.body);
+  } catch (error) {
+    if (error instanceof BillAuditValidationError) {
+      billAuditOversizedRejectionsTotal.inc();
+      res.status(400).json({
+        error: error.message,
+        code: error.code,
+        details: { issues: error.issues },
+      });
+      return;
+    }
+    billAuditOversizedRejectionsTotal.inc();
+    res.status(400).json({
+      error: "Invalid request body",
+      code: "INVALID_REQUEST_BODY",
     });
     return;
   }
@@ -424,6 +506,9 @@ app.use(
     next(err);
   },
 );
+
+// Prometheus metrics
+app.get("/metrics", metricsHandler());
 
 // --- Bill OCR endpoint (#1229) ---
 app.post("/bill/ocr", async (req, res) => {

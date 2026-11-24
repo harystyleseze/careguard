@@ -112,6 +112,22 @@ describe("POST /bill/audit (Issue #788)", () => {
     expect(res.body.code).toBe("VALIDATION_ERROR");
   });
 
+  it("rejects oversized per-item fields before payment with structured 4xx", async () => {
+    const res = await request(app).post("/bill/audit").send({
+      lineItems: [
+        {
+          description: "A".repeat(81),
+          cptCode: "99213",
+          quantity: 1,
+          chargedAmount: 50,
+        },
+      ],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("INVALID_BILL_AUDIT_REQUEST");
+    expect(res.body.details?.issues?.some((i: any) => String(i.path).includes("description"))).toBe(true);
+  });
+
   it("rejects a payload that exceeds the body size limit with a 413 and standardized shape", async () => {
     const hugeBody = {
       lineItems: Array.from({ length: 3000 }, () => ({
