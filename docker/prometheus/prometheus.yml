@@ -8,12 +8,14 @@ global:
 # recording-rules.yml — pre-aggregated SLI ratio series (multi-window pairs)
 #   used by Grafana dashboards and by the alert expressions below so they can
 #   reference cheap, stable series instead of recomputing raw counter rates.
+# alert-rules.yml — multi-window, multi-burn-rate SLO alerts (Issue #958).
 # rules.yml — alerting rules for key failure conditions (Issue #774).
 #
-# Validate both files with:
+# Validate all files with:
 #   promtool check config docker/prometheus/prometheus.yml
 rule_files:
   - "recording-rules.yml"
+  - "alert-rules.yml"
   - "rules.yml"
 
 # ---------------------------------------------------------------------------
