@@ -15,6 +15,7 @@ if (!process.stdout.isTTY) {
 import "dotenv/config";
 import express from "express";
 import { readFileSync } from "fs";
+import { z } from "zod";
 import {
   BillAuditValidationError,
   DEFAULT_RATES_AS_OF,
@@ -60,6 +61,23 @@ interface DuplicateAllowlistEntry {
   facilityId?: string; // Optional: per-facility override
 }
 
+// Runtime schema validation for config files (Issue #918).
+const DuplicateAllowlistEntrySchema = z.object({
+  code: z.string(),
+  reason: z.string(),
+  addedBy: z.string(),
+  addedAt: z.string(),
+  facilityId: z.string().optional(),
+});
+const DuplicateAllowlistSchema = z.array(DuplicateAllowlistEntrySchema);
+
+const AuditThresholdsSchema = z
+  .object({
+    default: z.number().finite(),
+    byCpt: z.record(z.string(), z.number().finite()),
+  })
+  .strict();
+
 let duplicateAllowlist: Set<string> = new Set();
 let allowlistMetadata: Map<string, DuplicateAllowlistEntry> = new Map();
 export let allowlistLoaded = false;
@@ -70,10 +88,24 @@ export function loadDuplicateAllowlist() {
       "./duplicates-allowlist.json",
       import.meta.url,
     ).pathname;
-    const data = JSON.parse(
-      readFileSync(allowlistPath, "utf-8"),
-    ) as DuplicateAllowlistEntry[];
-
+    const raw = JSON.parse(readFileSync(allowlistPath, "utf-8"));
+    const parsed = DuplicateAllowlistSchema.safeParse(raw);
+    if (!parsed.success) {
+      const issues = parsed.error.issues
+        .map((i) => `${String(i.path.join("."))}: ${i.message}`)
+        .join("; ");
+      logger.error(
+        { issues, file: allowlistPath },
+        "duplicates-allowlist.json failed schema validation; using empty allowlist",
+      );
+      duplicateAllowlist = new Set();
+      allowlistMetadata = new Map();
+      allowlistLoaded = false;
+      billAuditConfigLoaded({ config: "allowlist" }).set(0);
+      billAuditConfigLoadFailureTotal({ config: "allowlist" }).inc();
+      return;
+    }
+    const data = parsed.data;
     duplicateAllowlist = new Set(data.map((entry) => entry.code));
     allowlistMetadata = new Map(data.map((entry) => [entry.code, entry]));
     allowlistLoaded = true;
@@ -155,17 +187,31 @@ export function loadAuditThresholds() {
   try {
     const thresholdsPath = new URL("./audit_thresholds.json", import.meta.url)
       .pathname;
-    const parsed = JSON.parse(
-      readFileSync(thresholdsPath, "utf-8"),
-    ) as AuditThresholdConfig;
+    const raw = JSON.parse(readFileSync(thresholdsPath, "utf-8"));
+    const parsed = AuditThresholdsSchema.safeParse(raw);
+    if (!parsed.success) {
+      const issues = parsed.error.issues
+        .map((i) => `${String(i.path.join("."))}: ${i.message}`)
+        .join("; ");
+      logger.error(
+        { issues, file: thresholdsPath },
+        "audit_thresholds.json failed schema validation; using default threshold",
+      );
+      auditThresholds = { default: BILL_AUDIT_OVERCHARGE_MULTIPLIER, byCpt: {} };
+      thresholdsLoaded = false;
+      billAuditConfigLoaded({ config: "thresholds" }).set(0);
+      billAuditConfigLoadFailureTotal({ config: "thresholds" }).inc();
+      return;
+    }
+    const data = parsed.data;
     if (process.env.BILL_AUDIT_OVERCHARGE_MULTIPLIER) {
-      parsed.default = BILL_AUDIT_OVERCHARGE_MULTIPLIER;
+      data.default = BILL_AUDIT_OVERCHARGE_MULTIPLIER;
     }
 
     // #919: re-validate each byCpt override against the same ordering invariant
     // before accepting it. An invalid override is rejected and the previous
     // valid thresholds are retained.
-    const badEntry = Object.entries(parsed.byCpt ?? {}).find(
+    const badEntry = Object.entries(data.byCpt ?? {}).find(
       ([, value]) => !isValidByCptMultiplier(value),
     );
     if (badEntry) {
@@ -182,7 +228,7 @@ export function loadAuditThresholds() {
       return;
     }
 
-    auditThresholds = parsed;
+    auditThresholds = data;
     thresholdsLoaded = true;
     billAuditConfigLoaded({ config: "thresholds" }).set(1);
     logger.info(
