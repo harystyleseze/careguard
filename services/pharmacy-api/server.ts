@@ -17,6 +17,7 @@ import path from "path";
 import express, { type Express } from "express";
 import { pathToFileURL } from "url";
 import { applyX402Middleware, NETWORK, OZ_FACILITATOR_URL } from "../../shared/x402-middleware.ts";
+import { sanitizeUserString } from "../../shared/sanitize.ts";
 import { createCorsMiddleware } from "../../shared/cors.ts";
 import { applySecurityMiddleware } from "../../shared/security-middleware.ts";
 import { createPharmacyAdminAuth } from "../../shared/pharmacy-admin-auth.ts";
@@ -127,7 +128,25 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
       return;
     }
 
-    const drug = pricingStore.upsertDrug(parsedBody.data as DrugRecordInput);
+    const payload = parsedBody.data as DrugRecordInput;
+    const sanitizedName = sanitizeUserString(payload.name);
+    const sanitizedDisplayName = payload.displayName !== undefined
+      ? sanitizeUserString(payload.displayName)
+      : undefined;
+
+    if (!sanitizedName) {
+      res.status(400).json({
+        error: "Drug name must contain safe characters",
+        code: "VALIDATION_INVALID_INPUT",
+      });
+      return;
+    }
+
+    const drug = pricingStore.upsertDrug({
+      ...payload,
+      name: sanitizedName,
+      displayName: sanitizedDisplayName,
+    });
     res.status(201).json({ drug });
   });
 
@@ -147,7 +166,25 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
       return;
     }
 
-    const drug = pricingStore.upsertDrug(parsedBody.data as DrugRecordInput);
+    const payload = parsedBody.data as DrugRecordInput;
+    const sanitizedName = sanitizeUserString(payload.name);
+    const sanitizedDisplayName = payload.displayName !== undefined
+      ? sanitizeUserString(payload.displayName)
+      : undefined;
+
+    if (!sanitizedName) {
+      res.status(400).json({
+        error: "Drug name must contain safe characters",
+        code: "VALIDATION_INVALID_INPUT",
+      });
+      return;
+    }
+
+    const drug = pricingStore.upsertDrug({
+      ...payload,
+      name: sanitizedName,
+      displayName: sanitizedDisplayName,
+    });
     res.json({ drug });
   });
 
@@ -174,9 +211,20 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
       return;
     }
 
-    const pharmacy = pricingStore.upsertPharmacy(
-      parsedBody.data as PharmacyRecordInput,
-    );
+    const payload = parsedBody.data as PharmacyRecordInput;
+    const sanitizedName = sanitizeUserString(payload.name);
+    if (!sanitizedName) {
+      res.status(400).json({
+        error: "Pharmacy name must contain safe characters",
+        code: "VALIDATION_INVALID_INPUT",
+      });
+      return;
+    }
+
+    const pharmacy = pricingStore.upsertPharmacy({
+      ...payload,
+      name: sanitizedName,
+    });
     res.status(201).json({ pharmacy });
   });
 
@@ -197,9 +245,20 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
       return;
     }
 
-    const pharmacy = pricingStore.upsertPharmacy(
-      parsedBody.data as PharmacyRecordInput,
-    );
+    const payload = parsedBody.data as PharmacyRecordInput;
+    const sanitizedName = sanitizeUserString(payload.name);
+    if (!sanitizedName) {
+      res.status(400).json({
+        error: "Pharmacy name must contain safe characters",
+        code: "VALIDATION_INVALID_INPUT",
+      });
+      return;
+    }
+
+    const pharmacy = pricingStore.upsertPharmacy({
+      ...payload,
+      name: sanitizedName,
+    });
     res.json({ pharmacy });
   });
 
@@ -227,9 +286,11 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
     }
 
     try {
-      const price = pricingStore.upsertPrice(
-        parsedBody.data as PharmacyPriceInput,
-      );
+      const payload = parsedBody.data as PharmacyPriceInput;
+      const price = pricingStore.upsertPrice({
+        ...payload,
+        drug: sanitizeUserString(payload.drug),
+      });
       res.json({ price });
     } catch (error) {
       const message =

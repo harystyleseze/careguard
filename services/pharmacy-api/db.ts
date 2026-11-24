@@ -34,11 +34,11 @@ export interface PharmacyPricingStoreOptions {
   seedData?: PharmacySeedData;
 }
 
-function normalizeDrugName(drugName: string) {
+export function normalizeDrugName(drugName: string) {
   return drugName.trim().toLowerCase();
 }
 
-function normalizePharmacyId(pharmacyId: string) {
+export function normalizePharmacyId(pharmacyId: string) {
   return pharmacyId.trim().toLowerCase();
 }
 
