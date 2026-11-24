@@ -193,3 +193,62 @@ describe("handoff notes (#1180)", () => {
     expect(() => store.addHandoffNote({ recipient_id: "nobody", author: "Maria", text: "x" })).toThrow(/FOREIGN KEY/);
   });
 });
+
+describe("multi-tenant data isolation and CRUD in store (#930, #931)", () => {
+  let store: CareRecipientsStore;
+
+  beforeEach(() => {
+    store = new CareRecipientsStore(":memory:");
+  });
+
+  it("links creating caregiver as owner and isolates list/getById per caregiver (#930)", () => {
+    const r1 = store.create({ name: "Alice Patient", age: 65, medications: ["M1"], primary_doctor: null, insurance: null }, "caregiver_1");
+    const r2 = store.create({ name: "Bob Patient", age: 72, medications: ["M2"], primary_doctor: null, insurance: null }, "caregiver_2");
+
+    // Caregiver 1 sees only Alice
+    const list1 = store.list("caregiver_1");
+    expect(list1.map((r) => r.id)).toEqual([r1.id]);
+    expect(store.getById(r1.id, "caregiver_1")).toBeDefined();
+    expect(store.getById(r2.id, "caregiver_1")).toBeUndefined();
+
+    // Caregiver 2 sees only Bob
+    const list2 = store.list("caregiver_2");
+    expect(list2.map((r) => r.id)).toEqual([r2.id]);
+    expect(store.getById(r2.id, "caregiver_2")).toBeDefined();
+    expect(store.getById(r1.id, "caregiver_2")).toBeUndefined();
+
+    // Default / unscoped list returns all recipients
+    const all = store.list();
+    const allIds = all.map((r) => r.id);
+    expect(allIds).toContain(r1.id);
+    expect(allIds).toContain(r2.id);
+  });
+
+  it("updates mutable fields via store.update (#931)", () => {
+    const created = store.create({ name: "Original", age: 50, medications: ["Med1"], primary_doctor: "Dr. A", insurance: "Ins A" });
+    const updated = store.update(created.id, {
+      name: "Renamed",
+      age: 52,
+      medications: ["Med1", "Med2"],
+      primary_doctor: "Dr. B",
+      insurance: "Ins B",
+    });
+
+    expect(updated).toBeDefined();
+    expect(updated?.name).toBe("Renamed");
+    expect(updated?.age).toBe(52);
+    expect(updated?.medications).toEqual(["Med1", "Med2"]);
+    expect(updated?.primary_doctor).toBe("Dr. B");
+    expect(updated?.insurance).toBe("Ins B");
+  });
+
+  it("deletes recipient via store.delete (#931)", () => {
+    const created = store.create({ name: "Deletable", age: 40, medications: [], primary_doctor: null, insurance: null });
+    expect(store.getById(created.id)).toBeDefined();
+
+    const deleted = store.delete(created.id);
+    expect(deleted).toBe(true);
+    expect(store.getById(created.id)).toBeUndefined();
+    expect(store.delete(created.id)).toBe(false);
+  });
+});

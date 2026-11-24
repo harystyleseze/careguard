@@ -87,6 +87,35 @@ function principalOf(res: Response): CaregiverPrincipal {
   return res.locals.principal as CaregiverPrincipal;
 }
 
+export function getCaregiverUserId(req: Request, res: Response): string | undefined {
+  const principal = res.locals.principal as CaregiverPrincipal | undefined;
+  if (principal && principal.kind === "caregiver") {
+    return principal.link.caregiver_user_id;
+  }
+  const header = req.headers["x-caregiver-user-id"] || req.headers["x-caregiver-id"];
+  if (typeof header === "string" && header.trim()) {
+    return header.trim();
+  }
+  if (typeof req.query.caregiver_user_id === "string" && req.query.caregiver_user_id.trim()) {
+    return req.query.caregiver_user_id.trim();
+  }
+  if (typeof req.query.caregiver_id === "string" && req.query.caregiver_id.trim()) {
+    return req.query.caregiver_id.trim();
+  }
+  if (req.body && typeof req.body === "object") {
+    if (typeof req.body.caregiver_user_id === "string" && req.body.caregiver_user_id.trim()) {
+      return req.body.caregiver_user_id.trim();
+    }
+    if (typeof req.body.caregiverUserId === "string" && req.body.caregiverUserId.trim()) {
+      return req.body.caregiverUserId.trim();
+    }
+    if (typeof req.body.caregiver_id === "string" && req.body.caregiver_id.trim()) {
+      return req.body.caregiver_id.trim();
+    }
+  }
+  return undefined;
+}
+
 export function authenticateCaregiver(store: CareRecipientsStore, caregiverToken: string) {
   return function (req: Request, res: Response, next: NextFunction) {
     const { token, error } = extractCaregiverToken(req);
@@ -122,9 +151,10 @@ function requirePermission(store: CareRecipientsStore, permission: CaregiverPerm
   return function (req: Request<Record<string, string>>, res: Response, next: NextFunction) {
     const principal = principalOf(res);
     const recipientId = req.params.id;
+    const caregiverUserId = getCaregiverUserId(req, res);
     const linked =
       principal.kind === "admin"
-        ? store.getById(recipientId) !== undefined
+        ? (caregiverUserId ? store.getById(recipientId, caregiverUserId) !== undefined : store.getById(recipientId) !== undefined)
         : principal.link.recipient_id === recipientId;
     if (!linked) {
       res.status(404).json({ error: "Care recipient not found" });
@@ -209,10 +239,15 @@ export function createCareRecipientsRouter(store: CareRecipientsStore, caregiver
     { error: "Too many export requests, please try again later." },
   );
 
-  router.get("/recipients", auth, (_req, res) => {
+  router.get("/recipients", auth, (req, res) => {
     const principal = principalOf(res);
+    const caregiverUserId = getCaregiverUserId(req, res);
     if (principal.kind === "admin") {
-      res.json(store.list());
+      res.json(store.list(caregiverUserId));
+      return;
+    }
+    if (caregiverUserId) {
+      res.json(store.list(caregiverUserId));
       return;
     }
     const recipient = store.getById(principal.link.recipient_id);
@@ -220,7 +255,9 @@ export function createCareRecipientsRouter(store: CareRecipientsStore, caregiver
   });
 
   router.post("/recipients", auth, (req, res) => {
-    if (principalOf(res).kind !== "admin") {
+    const principal = principalOf(res);
+    const caregiverUserId = getCaregiverUserId(req, res);
+    if (principal.kind !== "admin" && !caregiverUserId) {
       res.status(403).json({ error: "Caregiver accounts cannot create care recipients" });
       return;
     }
@@ -229,13 +266,29 @@ export function createCareRecipientsRouter(store: CareRecipientsStore, caregiver
       res.status(400).json({ error: "name is required" });
       return;
     }
+    if (body.age !== undefined && body.age !== null && (typeof body.age !== "number" || isNaN(body.age) || body.age < 0)) {
+      res.status(400).json({ error: "age must be a non-negative number" });
+      return;
+    }
+    if (body.medications !== undefined && (!Array.isArray(body.medications) || body.medications.some((m: unknown) => typeof m !== "string"))) {
+      res.status(400).json({ error: "medications must be an array of strings" });
+      return;
+    }
+    if (body.primary_doctor !== undefined && body.primary_doctor !== null && typeof body.primary_doctor !== "string") {
+      res.status(400).json({ error: "primary_doctor must be a string or null" });
+      return;
+    }
+    if (body.insurance !== undefined && body.insurance !== null && typeof body.insurance !== "string") {
+      res.status(400).json({ error: "insurance must be a string or null" });
+      return;
+    }
     const created = store.create({
       name: body.name.trim(),
       age: typeof body.age === "number" ? body.age : null,
       medications: Array.isArray(body.medications) ? body.medications : [],
       primary_doctor: typeof body.primary_doctor === "string" ? body.primary_doctor : null,
       insurance: typeof body.insurance === "string" ? body.insurance : null,
-    });
+    }, caregiverUserId);
     registerKnownNames([created.name]);
     res.status(201).json(created);
   });
@@ -463,6 +516,81 @@ export function createCareRecipientsRouter(store: CareRecipientsStore, caregiver
 
   router.get("/recipients/export", auth, exportRateLimiter, handleExport);
   router.get("/recipients/:id/export", auth, exportRateLimiter, handleExport);
+
+  // ── Care Recipient CRUD (#931) ──────────────────────────────────────────
+
+  router.get("/recipients/:id", auth, canView, (req, res, next) => {
+    if (req.params.id === "export") {
+      next();
+      return;
+    }
+    const caregiverUserId = getCaregiverUserId(req, res);
+    const recipient = store.getById(req.params.id, caregiverUserId);
+    if (!recipient) {
+      res.status(404).json({ error: "Care recipient not found" });
+      return;
+    }
+    res.json(recipient);
+  });
+
+  const handleUpdateRecipient = (req: Request<{ id: string }>, res: Response) => {
+    const body = req.body;
+    if (!body || typeof body !== "object") {
+      res.status(400).json({ error: "Request body is required" });
+      return;
+    }
+    if (body.name !== undefined && (typeof body.name !== "string" || !body.name.trim())) {
+      res.status(400).json({ error: "name must not be empty" });
+      return;
+    }
+    if (body.age !== undefined && body.age !== null && (typeof body.age !== "number" || isNaN(body.age) || body.age < 0)) {
+      res.status(400).json({ error: "age must be a non-negative number" });
+      return;
+    }
+    if (body.medications !== undefined && (!Array.isArray(body.medications) || body.medications.some((m: unknown) => typeof m !== "string"))) {
+      res.status(400).json({ error: "medications must be an array of strings" });
+      return;
+    }
+    if (body.primary_doctor !== undefined && body.primary_doctor !== null && typeof body.primary_doctor !== "string") {
+      res.status(400).json({ error: "primary_doctor must be a string or null" });
+      return;
+    }
+    if (body.insurance !== undefined && body.insurance !== null && typeof body.insurance !== "string") {
+      res.status(400).json({ error: "insurance must be a string or null" });
+      return;
+    }
+
+    const caregiverUserId = getCaregiverUserId(req, res);
+    const updateInput: Partial<CareRecipientInput> = {};
+    if (body.name !== undefined) updateInput.name = body.name.trim();
+    if (body.age !== undefined) updateInput.age = body.age;
+    if (body.medications !== undefined) updateInput.medications = body.medications;
+    if (body.primary_doctor !== undefined) updateInput.primary_doctor = body.primary_doctor;
+    if (body.insurance !== undefined) updateInput.insurance = body.insurance;
+
+    const updated = store.update(req.params.id, updateInput, caregiverUserId);
+    if (!updated) {
+      res.status(404).json({ error: "Care recipient not found" });
+      return;
+    }
+    if (updated.name) {
+      registerKnownNames([updated.name]);
+    }
+    res.json(updated);
+  };
+
+  router.patch("/recipients/:id", auth, canAct, handleUpdateRecipient);
+  router.put("/recipients/:id", auth, canAct, handleUpdateRecipient);
+
+  router.delete("/recipients/:id", auth, canManage, (req, res) => {
+    const caregiverUserId = getCaregiverUserId(req, res);
+    const success = store.delete(req.params.id, caregiverUserId);
+    if (!success) {
+      res.status(404).json({ error: "Care recipient not found" });
+      return;
+    }
+    res.json({ success: true, id: req.params.id });
+  });
   // ── Shared caregiver task checklist (Issue #1200) ──────────────────────────
 
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
