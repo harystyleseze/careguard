@@ -10,6 +10,12 @@ import { loadRecipientAllergies } from "../../shared/allergies.ts";
 import { readAdherenceRecords } from "../../shared/adherence.ts";
 import { getMedicationHistory } from "../../shared/medication-history.ts";
 import { logger } from "../../shared/logger.ts";
+import {
+  parseCookies,
+  requireCaregiverToken,
+  extractCaregiverToken,
+  safeCompare,
+} from "../../shared/auth.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -65,15 +71,7 @@ export const SettleCostSplitShareBodySchema = z.object({
   contributorId: z.string().min(1),
 });
 
-function parseCookies(cookieHeader: string | undefined): Record<string, string> {
-  const list: Record<string, string> = {};
-  if (!cookieHeader) return list;
-  cookieHeader.split(";").forEach((cookie) => {
-    const parts = cookie.split("=");
-    list[parts.shift()!.trim()] = decodeURIComponent(parts.join("="));
-  });
-  return list;
-}
+export { parseCookies, requireCaregiverToken };
 
 /**
  * Who is calling (#1179). The operator holding CAREGIVER_TOKEN keeps full
@@ -91,30 +89,17 @@ function principalOf(res: Response): CaregiverPrincipal {
 
 export function authenticateCaregiver(store: CareRecipientsStore, caregiverToken: string) {
   return function (req: Request, res: Response, next: NextFunction) {
-    const auth = req.headers.authorization;
-    let token: string | undefined;
-
-    if (auth?.startsWith("Bearer ")) {
-      token = auth.slice("Bearer ".length);
-    } else {
-      const cookies = parseCookies(req.headers.cookie);
-      token = cookies["caregiver_token"];
-
-      if (token) {
-        const csrfHeader = req.headers["x-csrf-token"];
-        const csrfCookie = cookies["csrf_token"];
-        if (!csrfHeader || !csrfCookie || csrfHeader !== csrfCookie) {
-          res.status(403).json({ error: "CSRF token mismatch or missing" });
-          return;
-        }
-      }
+    const { token, error } = extractCaregiverToken(req);
+    if (error) {
+      res.status(error.status).json({ error: error.message });
+      return;
     }
 
     if (!token) {
       res.status(401).setHeader("WWW-Authenticate", "Bearer").json({ error: "Missing caregiver token" });
       return;
     }
-    if (token === caregiverToken) {
+    if (safeCompare(token, caregiverToken)) {
       res.locals.principal = { kind: "admin" } satisfies CaregiverPrincipal;
       next();
       return;
