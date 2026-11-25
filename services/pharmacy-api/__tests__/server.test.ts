@@ -15,7 +15,7 @@ process.env.PHARMACY_1_PUBLIC_KEY = "GBQTESTPHARMACY1";
 process.env.PHARMACY_ADMIN_TOKEN = "admin-secret";
 
 const { createPharmacyPricingStore } = await import("../db.ts");
-const { PharmacyCompareQuerySchema } = await import("../logic.ts");
+const { buildNoPricesFoundResponse, PharmacyCompareQuerySchema } = await import("../logic.ts");
 const { createPharmacyApp, registerSigterm } = await import("../server.ts");
 
 describe("pharmacy API persistence", () => {
@@ -125,16 +125,13 @@ describe("pharmacy API persistence", () => {
     expect(response.body.error).toContain("80 characters");
   });
 
-  it("returns 404 and NO_PRICES_FOUND for an unknown drug", async () => {
+  it("returns the canonical 404 response for an unknown drug", async () => {
     const response = await request(app)
       .get("/pharmacy/compare")
       .query({ drug: "UnknownDrug", zip: "90210" });
 
     expect(response.status).toBe(404);
-    expect(response.body).toEqual({
-      error: "No pricing records found for drug: unknowndrug",
-      code: "NOT_FOUND_DRUG"
-    });
+    expect(response.body).toEqual(buildNoPricesFoundResponse("unknowndrug"));
   });
 });
 
