@@ -44,9 +44,12 @@ import type {
 } from "./logic.ts";
 
 const PORT = parseInt(process.env.PHARMACY_API_PORT || "3001", 10);
-const PAY_TO = process.env.PHARMACY_1_PUBLIC_KEY;
 
-if (!PAY_TO) throw new Error("PHARMACY_1_PUBLIC_KEY required in .env");
+function validateStartup() {
+  const payTo = process.env.PHARMACY_1_PUBLIC_KEY;
+  if (!payTo) throw new Error("PHARMACY_1_PUBLIC_KEY required in .env");
+  return payTo;
+}
 
 export interface PharmacyAppOptions {
   payTo: string;
@@ -378,13 +381,18 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
   };
 }
 
-export const defaultPharmacyApp: ReturnType<typeof createPharmacyApp> = createPharmacyApp({
-  payTo: PAY_TO,
-});
-
 const entrypointUrl = process.argv[1]
   ? pathToFileURL(path.resolve(process.argv[1])).href
   : "";
+
+let defaultPharmacyApp: ReturnType<typeof createPharmacyApp> | undefined;
+
+export function getDefaultPharmacyApp(): ReturnType<typeof createPharmacyApp> {
+  if (defaultPharmacyApp === undefined) {
+    throw new Error("Pharmacy app not initialized. Must call from entrypoint.");
+  }
+  return defaultPharmacyApp;
+}
 
 /**
  * Wire up a SIGTERM handler that:
@@ -416,6 +424,8 @@ export function registerSigterm(
 }
 
 if (import.meta.url === entrypointUrl) {
+  const payTo = validateStartup();
+  defaultPharmacyApp = createPharmacyApp({ payTo });
   const startedApp = defaultPharmacyApp;
   const server = startedApp.app.listen(PORT, () => {
     logger.info(
@@ -423,7 +433,7 @@ if (import.meta.url === entrypointUrl) {
         port: PORT,
         network: NETWORK,
         facilitator: OZ_FACILITATOR_URL,
-        payTo: PAY_TO,
+        payTo,
         provider: "sqlite",
         drugCount: startedApp.pricingStore.getDrugCount(),
         availableDrugs: getAvailableDrugs(),

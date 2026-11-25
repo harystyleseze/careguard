@@ -57,6 +57,15 @@ function defaultDbPath() {
 export class PharmacyPricingStore {
   private readonly db: any;
 
+  /**
+   * Synchronous SQLite operations (prepare().all(), .get(), .run()) block the Node.js event loop
+   * for their full duration. Under concurrent requests or large datasets, this serializes all
+   * pharmacy-api routes and can impact latency for unrelated endpoints in the same process.
+   *
+   * shortcut: Synchronous DatabaseSync API for now. Upgrade path: offload to worker thread or
+   * switch to async binding (e.g. better-sqlite3 worker pool, or sqlite3 async) when load
+   * testing shows blocking overhead under concurrent load.
+   */
   constructor(options: PharmacyPricingStoreOptions = {}) {
     const configuredPath = options.dbPath ?? defaultDbPath();
     const dbPath = configuredPath === ":memory:" ? configuredPath : path.resolve(configuredPath);
