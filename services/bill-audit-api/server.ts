@@ -13,6 +13,8 @@ if (!process.stdout.isTTY) {
 }
 
 import "dotenv/config";
+import path from "path";
+import { pathToFileURL } from "url";
 import express from "express";
 import { readFileSync } from "fs";
 import { z } from "zod";
@@ -48,9 +50,12 @@ import {
 import { extractLineItemsFromBillImage } from "../../shared/bill-ocr.ts";
 
 const PORT = parseInt(process.env.BILL_AUDIT_API_PORT || "3002", 10);
-const PAY_TO = process.env.BILL_PROVIDER_PUBLIC_KEY;
 
-if (!PAY_TO) throw new Error("BILL_PROVIDER_PUBLIC_KEY required in .env");
+function validateStartup() {
+  const payTo = process.env.BILL_PROVIDER_PUBLIC_KEY;
+  if (!payTo) throw new Error("BILL_PROVIDER_PUBLIC_KEY required in .env");
+  return payTo;
+}
 
 // Duplicate detection allowlist configuration
 interface DuplicateAllowlistEntry {
@@ -344,243 +349,266 @@ export function auditBill(
   return result;
 }
 
-export const app = express();
-applySecurityMiddleware(app);
-app.use(createCorsMiddleware());
-app.use(express.json({ limit: process.env.BILL_AUDIT_BODY_LIMIT ?? "256kb" }));
-app.use(requestLifecycleMiddleware());
+function createBillAuditApp(payTo: string) {
+  const app = express();
+  applySecurityMiddleware(app);
+  app.use(createCorsMiddleware());
+  app.use(express.json({ limit: process.env.BILL_AUDIT_BODY_LIMIT ?? "256kb" }));
+  app.use(requestLifecycleMiddleware());
 
-app.get("/", (_req, res) => {
-  res.json({
-    service: "CareGuard Medical Bill Audit API",
-    version: "1.0.0",
-    protocol: "x402 on Stellar",
-    network: NETWORK,
-    payTo: PAY_TO,
-    price: "$0.01 per audit",
-  });
-});
-
-app.get("/bill/sample", (req, res) => {
-  // In standalone mode the recipient DB is unavailable; accept a patientName hint from the caller.
-  // In unified mode, server.ts intercepts this route and resolves the name from the recipients DB.
-  const patientName =
-    typeof req.query.patientName === "string"
-      ? req.query.patientName
-      : "Rosa Garcia";
-  res.json({
-    patientName,
-    facilityName: "General Hospital",
-    dateOfService: "2026-03-15",
-    lineItems: [
-      {
-        description: "Hospital care, high complexity",
-        cptCode: "99233",
-        quantity: 3,
-        chargedAmount: 630,
-      },
-      {
-        description: "Comprehensive metabolic panel",
-        cptCode: "80053",
-        quantity: 1,
-        chargedAmount: 95,
-      },
-      {
-        description: "Complete blood count (CBC)",
-        cptCode: "85025",
-        quantity: 1,
-        chargedAmount: 45,
-      },
-      {
-        description: "Complete blood count (CBC)",
-        cptCode: "85025",
-        quantity: 1,
-        chargedAmount: 45,
-      },
-      {
-        description: "Venipuncture (blood draw)",
-        cptCode: "36415",
-        quantity: 1,
-        chargedAmount: 10,
-      },
-      {
-        description: "Chest X-ray, 2 views",
-        cptCode: "71046",
-        quantity: 1,
-        chargedAmount: 180,
-      },
-      {
-        description: "Electrocardiogram (ECG)",
-        cptCode: "93000",
-        quantity: 1,
-        chargedAmount: 35,
-      },
-      {
-        description: "Office visit, complex",
-        cptCode: "99215",
-        quantity: 1,
-        chargedAmount: 1250,
-      },
-      {
-        description: "Hospital discharge day",
-        cptCode: "99238",
-        quantity: 1,
-        chargedAmount: 160,
-      },
-      {
-        description: "Injection, subcutaneous",
-        cptCode: "96372",
-        quantity: 2,
-        chargedAmount: 50,
-      },
-    ],
-  });
-});
-
-// Reject oversized bill audit requests BEFORE x402 payment is charged (issue #13)
-const BILL_AUDIT_MAX_ITEMS = parseInt(
-  process.env.BILL_AUDIT_MAX_ITEMS || "500",
-  10,
-);
-app.post("/bill/audit", (req, res, next) => {
-  const items = req.body?.lineItems;
-  if (Array.isArray(items) && items.length > BILL_AUDIT_MAX_ITEMS) {
-    billAuditOversizedRejectionsTotal.inc();
-    res.status(400).json({
-      error: `lineItems exceeds max (${BILL_AUDIT_MAX_ITEMS})`,
-      code: "VALIDATION_ERROR",
+  app.get("/", (_req, res) => {
+    res.json({
+      service: "CareGuard Medical Bill Audit API",
+      version: "1.0.0",
+      protocol: "x402 on Stellar",
+      network: NETWORK,
+      payTo,
+      price: "$0.01 per audit",
     });
-    return;
-  }
-  // #920: reject per-item fields that exceed the validation schema's limits
-  // before the x402 payment step, so a real payment is never charged on a
-  // request that will fail post-payment validation.
-  if (Array.isArray(items)) {
-    for (const item of items) {
-      if (
-        item &&
-        typeof item.description === "string" &&
-        item.description.length > MAX_FREE_TEXT_LENGTH
-      ) {
-        billAuditOversizedRejectionsTotal.inc();
-        res.status(400).json({
-          error: `line item description exceeds ${MAX_FREE_TEXT_LENGTH} characters`,
-          code: "VALIDATION_ERROR",
-        });
-        return;
+  });
+
+  app.get("/bill/sample", (req, res) => {
+    // In standalone mode the recipient DB is unavailable; accept a patientName hint from the caller.
+    // In unified mode, server.ts intercepts this route and resolves the name from the recipients DB.
+    const patientName =
+      typeof req.query.patientName === "string"
+        ? req.query.patientName
+        : "Rosa Garcia";
+    res.json({
+      patientName,
+      facilityName: "General Hospital",
+      dateOfService: "2026-03-15",
+      lineItems: [
+        {
+          description: "Hospital care, high complexity",
+          cptCode: "99233",
+          quantity: 3,
+          chargedAmount: 630,
+        },
+        {
+          description: "Comprehensive metabolic panel",
+          cptCode: "80053",
+          quantity: 1,
+          chargedAmount: 95,
+        },
+        {
+          description: "Complete blood count (CBC)",
+          cptCode: "85025",
+          quantity: 1,
+          chargedAmount: 45,
+        },
+        {
+          description: "Complete blood count (CBC)",
+          cptCode: "85025",
+          quantity: 1,
+          chargedAmount: 45,
+        },
+        {
+          description: "Venipuncture (blood draw)",
+          cptCode: "36415",
+          quantity: 1,
+          chargedAmount: 10,
+        },
+        {
+          description: "Chest X-ray, 2 views",
+          cptCode: "71046",
+          quantity: 1,
+          chargedAmount: 180,
+        },
+        {
+          description: "Electrocardiogram (ECG)",
+          cptCode: "93000",
+          quantity: 1,
+          chargedAmount: 35,
+        },
+        {
+          description: "Office visit, complex",
+          cptCode: "99215",
+          quantity: 1,
+          chargedAmount: 1250,
+        },
+        {
+          description: "Hospital discharge day",
+          cptCode: "99238",
+          quantity: 1,
+          chargedAmount: 160,
+        },
+        {
+          description: "Injection, subcutaneous",
+          cptCode: "96372",
+          quantity: 2,
+          chargedAmount: 50,
+        },
+      ],
+    });
+  });
+
+  // Reject oversized bill audit requests BEFORE x402 payment is charged (issue #13)
+  const BILL_AUDIT_MAX_ITEMS = parseInt(
+    process.env.BILL_AUDIT_MAX_ITEMS || "500",
+    10,
+  );
+  app.post("/bill/audit", (req, res, next) => {
+    const items = req.body?.lineItems;
+    if (Array.isArray(items) && items.length > BILL_AUDIT_MAX_ITEMS) {
+      billAuditOversizedRejectionsTotal.inc();
+      res.status(400).json({
+        error: `lineItems exceeds max (${BILL_AUDIT_MAX_ITEMS})`,
+        code: "VALIDATION_ERROR",
+      });
+      return;
+    }
+    // #920: reject per-item fields that exceed the validation schema's limits
+    // before the x402 payment step, so a real payment is never charged on a
+    // request that will fail post-payment validation.
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        if (
+          item &&
+          typeof item.description === "string" &&
+          item.description.length > MAX_FREE_TEXT_LENGTH
+        ) {
+          billAuditOversizedRejectionsTotal.inc();
+          res.status(400).json({
+            error: `line item description exceeds ${MAX_FREE_TEXT_LENGTH} characters`,
+            code: "VALIDATION_ERROR",
+          });
+          return;
+        }
       }
     }
-  }
-  next();
-});
+    next();
+  });
 
-// x402 payment middleware
-applyX402Middleware(app, {
-  "POST /bill/audit": {
-    accepts: {
-      scheme: "exact",
-      network: NETWORK,
-      payTo: PAY_TO,
-      price: "$0.01",
+  // x402 payment middleware
+  applyX402Middleware(app, {
+    "POST /bill/audit": {
+      accepts: {
+        scheme: "exact",
+        network: NETWORK,
+        payTo,
+        price: "$0.01",
+      },
+      description: "Medical bill audit — $0.01 USDC",
     },
-    description: "Medical bill audit — $0.01 USDC",
-  },
-});
+  });
 
-app.post("/bill/audit", (req, res) => {
-  try {
-    const validatedData = validateBillAuditRequest(req.body);
-    const sanitizedLineItems = validatedData.lineItems.map((item) => ({
-      ...item,
-      description: sanitizeUserString(item.description),
-    }));
-    res.json(
-      auditBill(sanitizedLineItems, {
-        providerId: validatedData.providerId,
-        providerName: validatedData.providerName,
-        recipientId: validatedData.recipientId,
-      }),
-    );
-  } catch (error) {
-    if (error instanceof BillAuditValidationError) {
-      const validationError = error as BillAuditValidationError;
-      res.status(400).json({
-        error: validationError.message,
-        code: validationError.code,
-        details: { issues: validationError.issues },
-      });
-    } else {
-      res.status(400).json({
-        error: "Invalid request body",
-        code: "INVALID_REQUEST_BODY",
-      });
+  app.post("/bill/audit", (req, res) => {
+    try {
+      const validatedData = validateBillAuditRequest(req.body);
+      const sanitizedLineItems = validatedData.lineItems.map((item) => ({
+        ...item,
+        description: sanitizeUserString(item.description),
+      }));
+      res.json(
+        auditBill(sanitizedLineItems, {
+          providerId: validatedData.providerId,
+          providerName: validatedData.providerName,
+          recipientId: validatedData.recipientId,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof BillAuditValidationError) {
+        const validationError = error as BillAuditValidationError;
+        res.status(400).json({
+          error: validationError.message,
+          code: validationError.code,
+          details: { issues: validationError.issues },
+        });
+      } else {
+        res.status(400).json({
+          error: "Invalid request body",
+          code: "INVALID_REQUEST_BODY",
+        });
+      }
     }
-  }
-});
+  });
 
-app.use(
-  (
-    err: any,
-    _req: express.Request,
-    res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    if (err.type === "entity.too.large") {
-      return res.status(413).json({
-        error: "Request body too large",
-        code: "BODY_TOO_LARGE",
-        details: { limit: err.limit },
-      });
-    }
-    next(err);
-  },
-);
-
-// --- Bill OCR endpoint (#1229) ---
-app.post("/bill/ocr", async (req, res) => {
-  const { image } = req.body ?? {};
-  if (!image || typeof image !== "string") {
-    return res.status(400).json({ error: "image (base64) is required" });
-  }
-  try {
-    const result = await extractLineItemsFromBillImage(image);
-    res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || "OCR extraction failed" });
-  }
-});
-
-let isDraining = false;
-app.get("/ready", (_req, res) => {
-  if (isDraining) {
-    res.status(503).send("Service Unavailable");
-    return;
-  }
-  if (!thresholdsLoaded || !allowlistLoaded) {
-    res.status(503).json({
-      status: "degraded",
-      checks: { thresholdsLoaded, allowlistLoaded },
-    });
-    return;
-  }
-  res.send("OK");
-});
-
-export const server = app.listen(PORT, () => {
-  logger.info(
-    {
-      port: PORT,
-      network: NETWORK,
-      facilitator: OZ_FACILITATOR_URL,
-      payTo: PAY_TO,
+  app.use(
+    (
+      err: any,
+      _req: express.Request,
+      res: express.Response,
+      next: express.NextFunction,
+    ) => {
+      if (err.type === "entity.too.large") {
+        return res.status(413).json({
+          error: "Request body too large",
+          code: "BODY_TOO_LARGE",
+          details: { limit: err.limit },
+        });
+      }
+      next(err);
     },
-    "Bill Audit API started",
   );
-});
 
-gracefulShutdown({
-  server,
-  onDrainStart: () => {
-    isDraining = true;
-  },
-});
+  // --- Bill OCR endpoint (#1229) ---
+  app.post("/bill/ocr", async (req, res) => {
+    const { image } = req.body ?? {};
+    if (!image || typeof image !== "string") {
+      return res.status(400).json({ error: "image (base64) is required" });
+    }
+    try {
+      const result = await extractLineItemsFromBillImage(image);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "OCR extraction failed" });
+    }
+  });
+
+  let isDraining = false;
+  app.get("/ready", (_req, res) => {
+    if (isDraining) {
+      res.status(503).send("Service Unavailable");
+      return;
+    }
+    if (!thresholdsLoaded || !allowlistLoaded) {
+      res.status(503).json({
+        status: "degraded",
+        checks: { thresholdsLoaded, allowlistLoaded },
+      });
+      return;
+    }
+    res.send("OK");
+  });
+
+  return { app, setDraining: (draining: boolean) => { isDraining = draining; } };
+}
+
+const entrypointUrl = process.argv[1]
+  ? pathToFileURL(path.resolve(process.argv[1])).href
+  : "";
+
+let appInstance: ReturnType<typeof createBillAuditApp> | undefined;
+
+export function getApp() {
+  if (appInstance === undefined) {
+    throw new Error("Bill Audit app not initialized. Must call from entrypoint.");
+  }
+  return appInstance.app;
+}
+
+export let server: ReturnType<typeof express().listen> | undefined;
+
+if (import.meta.url === entrypointUrl) {
+  const payTo = validateStartup();
+  appInstance = createBillAuditApp(payTo);
+  server = appInstance.app.listen(PORT, () => {
+    logger.info(
+      {
+        port: PORT,
+        network: NETWORK,
+        facilitator: OZ_FACILITATOR_URL,
+        payTo,
+      },
+      "Bill Audit API started",
+    );
+  });
+
+  gracefulShutdown({
+    server,
+    onDrainStart: () => {
+      appInstance?.setDraining(true);
+    },
+  });
+}

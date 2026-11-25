@@ -13,6 +13,8 @@ if (!process.stdout.isTTY) {
 }
 
 import "dotenv/config";
+import path from "path";
+import { pathToFileURL } from "url";
 import express from "express";
 import { Mppx, Store } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
@@ -41,12 +43,15 @@ import {
 } from "../../shared/metrics.ts";
 
 const PORT = parseInt(process.env.PHARMACY_PAYMENT_PORT || "3005", 10);
-const RECIPIENT = process.env.PHARMACY_1_PUBLIC_KEY;
-const MPP_SECRET_KEY = process.env.MPP_SECRET_KEY;
 const NETWORK = "stellar:testnet";
 
-if (!RECIPIENT) throw new Error("PHARMACY_1_PUBLIC_KEY required in .env");
-if (!MPP_SECRET_KEY) throw new Error("MPP_SECRET_KEY required in .env");
+function validateStartup() {
+  const recipient = process.env.PHARMACY_1_PUBLIC_KEY;
+  const mppSecretKey = process.env.MPP_SECRET_KEY;
+  if (!recipient) throw new Error("PHARMACY_1_PUBLIC_KEY required in .env");
+  if (!mppSecretKey) throw new Error("MPP_SECRET_KEY required in .env");
+  return { recipient, mppSecretKey };
+}
 
 // Order storage (persisted to file)
 import { existsSync, mkdirSync, accessSync, constants as fsConstants } from "fs";
@@ -119,176 +124,199 @@ export async function saveOrder(order: any) {
   }
 }
 
-export const app = express();
-applySecurityMiddleware(app);
-app.use(createCorsMiddleware());
-app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "20kb" }));
-app.use(requestLifecycleMiddleware());
+function createPharmacyPaymentApp(recipient: string, mppSecretKey: string) {
+  const app = express();
+  applySecurityMiddleware(app);
+  app.use(createCorsMiddleware());
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "20kb" }));
+  app.use(requestLifecycleMiddleware());
 
-app.get("/", (_req, res) => {
-  res.json({
-    service: "CareGuard Pharmacy Payment Service",
-    version: "1.0.0",
-    protocol: "MPP Charge on Stellar",
-    network: NETWORK,
-    recipient: RECIPIENT,
-    currency: USDC_SAC_TESTNET,
-  });
-});
-
-app.get("/pharmacy/orders", async (_req, res, next) => {
-  try {
-    res.json({ orders: await loadOrders() });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /metrics endpoint for Prometheus instrumentation (Issue #1015)
-app.get("/metrics", metricsHandler());
-
-// MPP charge server
-const mppx = Mppx.create({
-  secretKey: MPP_SECRET_KEY,
-  methods: [
-    stellar.charge({
-      recipient: RECIPIENT,
+  app.get("/", (_req, res) => {
+    res.json({
+      service: "CareGuard Pharmacy Payment Service",
+      version: "1.0.0",
+      protocol: "MPP Charge on Stellar",
+      network: NETWORK,
+      recipient,
       currency: USDC_SAC_TESTNET,
-      network: NETWORK,
-      store: createMppStore(MPP_STORE_FILE),
-    }),
-  ],
-});
-
-// MPP-protected medication order endpoint
-app.post(
-  "/pharmacy/order",
-  perRouteLimiters.pharmacyOrder,
-  concurrentRequestsMiddleware("pharmacy_order"),
-  async (req, res) => {
-    const parsedOrder = MedicationOrderSchema.safeParse(req.body);
-    if (!parsedOrder.success) {
-      res.status(400).json({
-        error: "Invalid order request",
-        details: parsedOrder.error.issues.map((issue) => issue.message),
-      });
-      return;
-    }
-
-    const order = parsedOrder.data as MedicationOrderInput;
-
-    // Reject orders for drugs/pharmacies that do not exist in the catalog
-    // before any payment flow is initiated (Issue #927).
-    if (!isKnownDrugPharmacyPair(order.drug, order.pharmacy)) {
-      res.status(400).json({
-        error: "Unknown drug or pharmacy",
-        code: "UNKNOWN_DRUG_PHARMACY_PAIR",
-      });
-      return;
-    }
-
-    const safeDrug = sanitizeUserString(order.drug);
-    const safePharmacy = sanitizeUserString(order.pharmacy);
-
-    // Convert Express request to Web Request for mppx.
-    // Only forward the headers mppx.charge() actually requires:
-    //   X-Payment  — the signed payment receipt from the client's x402 wallet
-    //   Content-Type — needed so mppx can decode the request body
-    //   Accept       — lets mppx negotiate the response format
-    // Every other caller header (Host, Authorization, Cookie, X-Forwarded-*,
-    // custom headers) is intentionally excluded to prevent header injection
-    // into the internal charge call.
-    const MPP_FORWARD_HEADER_ALLOWLIST = new Set(["x-payment", "content-type", "accept"]);
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(req.headers)) {
-      if (value == null) continue;
-      if (!MPP_FORWARD_HEADER_ALLOWLIST.has(key.toLowerCase())) continue;
-      if (Array.isArray(value)) {
-        for (const entry of value) headers.append(key, entry);
-      } else {
-        headers.set(key, value);
-      }
-    }
-
-    const webReq = new Request(`http://localhost:${PORT}${req.url}`, {
-      method: req.method,
-      headers,
     });
+  });
 
-    // Run MPP charge flow
-    let result;
+  app.get("/pharmacy/orders", async (_req, res, next) => {
     try {
-      result = await mppx.charge({
-        amount: Number(order.amount).toFixed(2),
-        description: `Medication: ${safeDrug} from ${safePharmacy}`,
-      })(webReq);
-    } catch (err: any) {
-      logger.error({ err: err?.message }, "MPP charge flow failed — facilitator unavailable");
-      res.status(503).json({ error: "Payment facilitator unavailable, try again shortly" });
+      res.json({ orders: await loadOrders() });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // GET /metrics endpoint for Prometheus instrumentation (Issue #1015)
+  app.get("/metrics", metricsHandler());
+
+  // MPP charge server
+  const mppx = Mppx.create({
+    secretKey: mppSecretKey,
+    methods: [
+      stellar.charge({
+        recipient,
+        currency: USDC_SAC_TESTNET,
+        network: NETWORK,
+        store: createMppStore(MPP_STORE_FILE),
+      }),
+    ],
+  });
+
+  // MPP-protected medication order endpoint
+  app.post(
+    "/pharmacy/order",
+    perRouteLimiters.pharmacyOrder,
+    concurrentRequestsMiddleware("pharmacy_order"),
+    async (req, res) => {
+      const parsedOrder = MedicationOrderSchema.safeParse(req.body);
+      if (!parsedOrder.success) {
+        res.status(400).json({
+          error: "Invalid order request",
+          details: parsedOrder.error.issues.map((issue) => issue.message),
+        });
+        return;
+      }
+
+      const order = parsedOrder.data as MedicationOrderInput;
+
+      // Reject orders for drugs/pharmacies that do not exist in the catalog
+      // before any payment flow is initiated (Issue #927).
+      if (!isKnownDrugPharmacyPair(order.drug, order.pharmacy)) {
+        res.status(400).json({
+          error: "Unknown drug or pharmacy",
+          code: "UNKNOWN_DRUG_PHARMACY_PAIR",
+        });
+        return;
+      }
+
+      const safeDrug = sanitizeUserString(order.drug);
+      const safePharmacy = sanitizeUserString(order.pharmacy);
+
+      // Convert Express request to Web Request for mppx.
+      // Only forward the headers mppx.charge() actually requires:
+      //   X-Payment  — the signed payment receipt from the client's x402 wallet
+      //   Content-Type — needed so mppx can decode the request body
+      //   Accept       — lets mppx negotiate the response format
+      // Every other caller header (Host, Authorization, Cookie, X-Forwarded-*,
+      // custom headers) is intentionally excluded to prevent header injection
+      // into the internal charge call.
+      const MPP_FORWARD_HEADER_ALLOWLIST = new Set(["x-payment", "content-type", "accept"]);
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(req.headers)) {
+        if (value == null) continue;
+        if (!MPP_FORWARD_HEADER_ALLOWLIST.has(key.toLowerCase())) continue;
+        if (Array.isArray(value)) {
+          for (const entry of value) headers.append(key, entry);
+        } else {
+          headers.set(key, value);
+        }
+      }
+
+      const webReq = new Request(`http://localhost:${PORT}${req.url}`, {
+        method: req.method,
+        headers,
+      });
+
+      // Run MPP charge flow
+      let result;
+      try {
+        result = await mppx.charge({
+          amount: Number(order.amount).toFixed(2),
+          description: `Medication: ${safeDrug} from ${safePharmacy}`,
+        })(webReq);
+      } catch (err: any) {
+        logger.error({ err: err?.message }, "MPP charge flow failed — facilitator unavailable");
+        res.status(503).json({ error: "Payment facilitator unavailable, try again shortly" });
+        return;
+      }
+
+      // 402 = client needs to sign and pay
+      if (result.status === 402) {
+        const challenge = result.challenge;
+        challenge.headers.forEach((value: string, key: string) => res.setHeader(key, value));
+        const body = await challenge.text();
+        res.status(402).send(body);
+        return;
+      }
+
+      // Payment verified and settled on Stellar — create order
+      const newOrder = {
+        id: `order-${Date.now()}`,
+        drug: safeDrug,
+        pharmacy: safePharmacy,
+        amount: Number(order.amount),
+        status: "confirmed",
+        timestamp: new Date().toISOString(),
+        network: NETWORK,
+        protocol: "MPP Charge",
+      };
+      await saveOrder(newOrder);
+
+      // Return response with payment receipt headers
+      const response = result.withReceipt(
+        Response.json({
+          success: true,
+          order: newOrder,
+          message: `Payment of $${newOrder.amount} USDC settled on Stellar. ${safeDrug} order from ${safePharmacy} confirmed.`,
+        })
+      );
+
+      response.headers.forEach((value: string, key: string) => res.setHeader(key, value));
+      const responseBody = await response.json();
+      res.status(response.status).json(responseBody);
+    },
+  );
+
+  app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err.type === "entity.too.large") {
+      return res.status(413).json({ error: "Request body too large", limit: err.limit });
+    }
+    next(err);
+  });
+
+  let isDraining = false;
+  app.get("/ready", (_req, res) => {
+    if (isDraining) {
+      res.status(503).send("Service Unavailable");
       return;
     }
-
-    // 402 = client needs to sign and pay
-    if (result.status === 402) {
-      const challenge = result.challenge;
-      challenge.headers.forEach((value: string, key: string) => res.setHeader(key, value));
-      const body = await challenge.text();
-      res.status(402).send(body);
+    try {
+      accessSync(DATA_DIR, fsConstants.W_OK);
+    } catch {
+      res.status(503).json({ error: "Order store is not writable" });
       return;
     }
+    res.send("OK");
+  });
 
-    // Payment verified and settled on Stellar — create order
-    const newOrder = {
-      id: `order-${Date.now()}`,
-      drug: safeDrug,
-      pharmacy: safePharmacy,
-      amount: Number(order.amount),
-      status: "confirmed",
-      timestamp: new Date().toISOString(),
-      network: NETWORK,
-      protocol: "MPP Charge",
-    };
-    await saveOrder(newOrder);
+  return { app, setDraining: (draining: boolean) => { isDraining = draining; } };
+}
 
-    // Return response with payment receipt headers
-    const response = result.withReceipt(
-      Response.json({
-        success: true,
-        order: newOrder,
-        message: `Payment of $${newOrder.amount} USDC settled on Stellar. ${safeDrug} order from ${safePharmacy} confirmed.`,
-      })
-    );
+const entrypointUrl = process.argv[1]
+  ? pathToFileURL(path.resolve(process.argv[1])).href
+  : "";
 
-    response.headers.forEach((value: string, key: string) => res.setHeader(key, value));
-    const responseBody = await response.json();
-    res.status(response.status).json(responseBody);
-  },
-);
+let appInstance: ReturnType<typeof createPharmacyPaymentApp> | undefined;
 
-app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (err.type === "entity.too.large") {
-    return res.status(413).json({ error: "Request body too large", limit: err.limit });
+export function getApp() {
+  if (appInstance === undefined) {
+    throw new Error("Pharmacy Payment app not initialized. Must call from entrypoint.");
   }
-  next(err);
-});
+  return appInstance.app;
+}
 
-let isDraining = false;
-app.get("/ready", (_req, res) => {
-  if (isDraining) {
-    res.status(503).send("Service Unavailable");
-    return;
-  }
-  try {
-    accessSync(DATA_DIR, fsConstants.W_OK);
-  } catch {
-    res.status(503).json({ error: "Order store is not writable" });
-    return;
-  }
-  res.send("OK");
-});
+export let server: ReturnType<typeof express().listen> | undefined;
 
-export const server = app.listen(PORT, () => {
-  logger.info({ port: PORT, network: NETWORK, recipient: RECIPIENT, currency: USDC_SAC_TESTNET }, "Pharmacy Payment Service (MPP Charge) started");
-});
+if (import.meta.url === entrypointUrl) {
+  const { recipient, mppSecretKey } = validateStartup();
+  appInstance = createPharmacyPaymentApp(recipient, mppSecretKey);
+  server = appInstance.app.listen(PORT, () => {
+    logger.info({ port: PORT, network: NETWORK, recipient, currency: USDC_SAC_TESTNET }, "Pharmacy Payment Service (MPP Charge) started");
+  });
 
-gracefulShutdown({ server, onDrainStart: () => { isDraining = true; } });
+  gracefulShutdown({ server, onDrainStart: () => { appInstance?.setDraining(true); } });
+}

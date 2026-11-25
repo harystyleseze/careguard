@@ -1,4 +1,5 @@
 import { PRICING_DATABASE, DEFAULT_ZIP_CODE } from "../../shared/pharmacy-pricing.ts";
+import { toDisplayName } from "./db.ts";
 
 export interface PharmacySeedData {
   pharmacies: Array<{
@@ -26,7 +27,7 @@ const pricesList: Array<{ drug: string; pharmacyId: string; price: number }> = [
 for (const [drugName, zipMap] of Object.entries(PRICING_DATABASE)) {
   drugsList.push({
     name: drugName,
-    displayName: drugName.charAt(0).toUpperCase() + drugName.slice(1),
+    displayName: toDisplayName(drugName),
   });
 
   const plist = zipMap[DEFAULT_ZIP_CODE] || zipMap["default"] || Object.values(zipMap)[0];
