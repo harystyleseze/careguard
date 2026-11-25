@@ -29,6 +29,7 @@ import {
 } from "../../shared/rate-limit.ts";
 import {
   MedicationOrderSchema,
+  isKnownDrugPharmacyPair,
   type MedicationOrderInput,
 } from "./validation.ts";
 import {
@@ -51,8 +52,9 @@ if (!MPP_SECRET_KEY) throw new Error("MPP_SECRET_KEY required in .env");
 import { existsSync, mkdirSync, accessSync, constants as fsConstants } from "fs";
 import { readFile, writeFile, rename, unlink } from "fs/promises";
 import lock from "proper-lockfile";
+import { getDataDir } from "../../shared/paths.ts";
 
-const DATA_DIR = process.env.DATA_DIR || new URL("../../data", import.meta.url).pathname;
+const DATA_DIR = getDataDir();
 const ORDERS_FILE = `${DATA_DIR}/orders.json`;
 const MPP_STORE_FILE = `${DATA_DIR}/mpp-store.json`;
 
@@ -65,7 +67,7 @@ function createMppStore(filePath: string) {
   return storeFactory.fileSystem?.(filePath) ?? Store.memory();
 }
 
-async function loadOrders(): Promise<any[]> {
+export async function loadOrders(): Promise<any[]> {
   if (!existsSync(ORDERS_FILE)) return [];
   try {
     return JSON.parse(await readFile(ORDERS_FILE, "utf-8"));
@@ -83,7 +85,7 @@ async function loadOrders(): Promise<any[]> {
  * Trade-off: File-based locking is slower than in-memory storage but is sufficient for the demo.
  * For production, consider switching to SQLite (#168) or a proper database.
  */
-async function saveOrder(order: any) {
+export async function saveOrder(order: any) {
   let release: any;
   try {
     // Acquire exclusive lock on the orders file
@@ -174,17 +176,33 @@ app.post(
     }
 
     const order = parsedOrder.data as MedicationOrderInput;
+
+    // Reject orders for drugs/pharmacies that do not exist in the catalog
+    // before any payment flow is initiated (Issue #927).
+    if (!isKnownDrugPharmacyPair(order.drug, order.pharmacy)) {
+      res.status(400).json({
+        error: "Unknown drug or pharmacy",
+        code: "UNKNOWN_DRUG_PHARMACY_PAIR",
+      });
+      return;
+    }
+
     const safeDrug = sanitizeUserString(order.drug);
     const safePharmacy = sanitizeUserString(order.pharmacy);
 
-    // Convert Express request to Web Request for mppx. Never forward the
-    // caller's own auth/session headers into the upstream MPP charge call —
-    // mppx only needs the payment-protocol headers (e.g. X-Payment).
-    const FORWARD_HEADER_BLOCKLIST = new Set(["authorization", "cookie"]);
+    // Convert Express request to Web Request for mppx.
+    // Only forward the headers mppx.charge() actually requires:
+    //   X-Payment  — the signed payment receipt from the client's x402 wallet
+    //   Content-Type — needed so mppx can decode the request body
+    //   Accept       — lets mppx negotiate the response format
+    // Every other caller header (Host, Authorization, Cookie, X-Forwarded-*,
+    // custom headers) is intentionally excluded to prevent header injection
+    // into the internal charge call.
+    const MPP_FORWARD_HEADER_ALLOWLIST = new Set(["x-payment", "content-type", "accept"]);
     const headers = new Headers();
     for (const [key, value] of Object.entries(req.headers)) {
       if (value == null) continue;
-      if (FORWARD_HEADER_BLOCKLIST.has(key.toLowerCase())) continue;
+      if (!MPP_FORWARD_HEADER_ALLOWLIST.has(key.toLowerCase())) continue;
       if (Array.isArray(value)) {
         for (const entry of value) headers.append(key, entry);
       } else {

@@ -24,12 +24,7 @@ groups:
         # error rate burns the monthly error budget in ~6 hours, so fast detection
         # is warranted. Pair with the 1-hour window (below) to avoid paging on
         # short spikes.
-        expr: |
-          (
-            sum(rate(agent_runs_total{status="error"}[5m]))
-            /
-            sum(rate(agent_runs_total[5m]))
-          ) > 0.05
+        expr: careguard:agent_run_error:ratio_rate5m > 0.05
         for: 5m
         labels:
           severity: warning
@@ -43,12 +38,7 @@ groups:
       - alert: AgentRunErrorRateCritical
         # Fire when more than 10 % of agent runs fail over the last 1 hour.
         # At 10 % the monthly SLO error budget is exhausted in ~3 hours.
-        expr: |
-          (
-            sum(rate(agent_runs_total{status="error"}[1h]))
-            /
-            sum(rate(agent_runs_total[1h]))
-          ) > 0.10
+        expr: careguard:agent_run_error:ratio_rate1h > 0.10
         for: 10m
         labels:
           severity: critical
@@ -83,12 +73,7 @@ groups:
         # Fire when more than 2 % of submitted Stellar transactions fail over 5 min.
         # Threshold rationale: SLO target is ≥ 99.5 % success. At 2 % the monthly
         # budget is exhausted in ~10 hours — fast page.
-        expr: |
-          (
-            sum(rate(stellar_tx_submitted_total{result!="success"}[5m]))
-            /
-            sum(rate(stellar_tx_submitted_total[5m]))
-          ) > 0.02
+        expr: careguard:stellar_tx_error:ratio_rate5m > 0.02
         for: 5m
         labels:
           severity: warning
@@ -100,19 +85,14 @@ groups:
           runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/oz-facilitator-outage.md"
 
       - alert: StellarTxFailureRateCritical
-        # Fire when more than 5 % of Stellar txs fail over 15 min. At this rate
-        # payments to pharmacies and bill payments are broadly broken.
-        expr: |
-          (
-            sum(rate(stellar_tx_submitted_total{result!="success"}[15m]))
-            /
-            sum(rate(stellar_tx_submitted_total[15m]))
-          ) > 0.05
+        # Fire when more than 5 % of Stellar txs fail over 5 min sustained for 10 min.
+        # At this rate payments to pharmacies and bill payments are broadly broken.
+        expr: careguard:stellar_tx_error:ratio_rate5m > 0.05
         for: 10m
         labels:
           severity: critical
         annotations:
-          summary: "Stellar transaction failure rate above 5 % (15 m window)"
+          summary: "Stellar transaction failure rate above 5 % (5 m window)"
           description: >
             {{ $value | humanizePercentage }} of Stellar transactions are failing
             over the past 15 min. Payments are broadly degraded.
@@ -278,12 +258,7 @@ groups:
         # Fire when > 1 % of agent runs hit an LLM API error over 5 min.
         # Threshold rationale: SLO target is ≤ 1 % LLM error rate (slo.md).
         # Breaching this even briefly means the SLO target is at risk.
-        expr: |
-          (
-            sum(rate(agent_llm_error_total[5m]))
-            /
-            sum(rate(agent_runs_total[5m]))
-          ) > 0.01
+        expr: careguard:agent_llm_error:ratio_rate5m > 0.01
         for: 5m
         labels:
           severity: warning
@@ -310,77 +285,90 @@ groups:
             leading to missed context and incorrect decisions.
           runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/README.md"
 
-      - alert: AgentLlmLatencyHigh
-        # Fire when the p95 LLM call latency exceeds 10 000 ms (10 s) sustained
-        # for 5 min.  Threshold rationale: dashboard-guide.md documents the
-        # normal range as 500 ms–5 s; 10 s is 2× the upper bound and indicates
-        # provider throttling or network degradation.
-        #
-        # NOTE: agent_llm_latency_ms was originally a point-in-time Gauge
-        # (latest observation only) with no distributional data.  It has since
-        # been converted to a Histogram (issue #1034) with buckets
-        # [100, 250, 500, 1000, 2000, 5000, 10000, 20000, 30000].  This alert
-        # uses histogram_quantile() to compute the p95 from the bucket data,
-        # which was not possible with the original Gauge.
-        #
-        # Cross-reference: docs/observability/dashboard-guide.md "LLM Latency"
-        # panel documents this threshold as the anomaly boundary.
-        expr: |
-          histogram_quantile(0.95, sum(rate(agent_llm_latency_ms_bucket[5m])) by (le, model)) > 10000
+  # -------------------------------------------------------------------------
+  # Bill audit guardrails
+  # -------------------------------------------------------------------------
+  - name: careguard-bill-audit
+    rules:
+      - alert: BillAuditOversizedRejectionsSustained
+        # Fire when oversized-bill rejections exceed 1 per minute over 5 min,
+        # sustained for 10 min. Isolated 400s are normal input-size guardrails;
+        # a sustained rate points to either real caregiver bills exceeding
+        # BILL_AUDIT_MAX_ITEMS (default 500) or abuse probing the cap.
+        expr: rate(bill_audit_oversized_rejections_total[5m]) * 60 > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sustained oversized bill-audit rejections (> 1/min)"
+          description: >
+            {{ $value | humanize }} bill-audit requests per minute are being
+            rejected for exceeding BILL_AUDIT_MAX_ITEMS (default 500). Distinguish
+            between legitimate complex caregiver bills (requiring a higher
+            BILL_AUDIT_MAX_ITEMS) and abuse probing the limit (requiring rate
+            limiting) per the runbook.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/tune-audit-thresholds.md"
+
+  # -------------------------------------------------------------------------
+  # Node.js process health (default prom-client metrics)
+  # -------------------------------------------------------------------------
+  - name: careguard-process-health
+    rules:
+      - alert: NodejsEventLoopLagHigh
+        # Fire when mean event-loop lag exceeds 100 ms for 5 min.
+        # Threshold rationale: CPU-bound bill audits or synchronous JSON/crypto
+        # work block the single-threaded event loop and degrade all API routes.
+        expr: nodejs_eventloop_lag_seconds > 0.1
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "LLM p95 latency above 10 s for model {{ $labels.model }}"
+          summary: "Node.js event-loop lag exceeds 100 ms"
           description: >
-            The 95th-percentile LLM call latency for model {{ $labels.model }}
-            is {{ $value }} ms.  Sustained high latency may indicate LLM
-            provider throttling or network issues.
-          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/llm-rate-limit.md"
+            Event-loop lag is {{ $value | humanizeDuration }}. Investigate
+            CPU-heavy handlers, synchronous I/O, or GC pauses stalling requests.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/process-health.md"
 
-  # -------------------------------------------------------------------------
-  # Pharmacy catalog gaps and label-cardinality abuse (#953)
-  # -------------------------------------------------------------------------
-  - name: careguard-pharmacy
-    rules:
-      - alert: PharmacyUnknownDrugRateHigh
-        # Fire when unknown-drug lookups exceed 5/min sustained for 10 min.
-        # Threshold rationale: under normal operation the pharmacy catalog
-        # covers all requested drugs.  A sustained rate of unknown-drug
-        # lookups indicates either a catalog gap (a drug that should be listed
-        # is missing) or label-cardinality abuse (a client sending arbitrary
-        # strings).  5/min is well above the near-zero baseline.
-        expr: rate(pharmacy_unknown_drug_total[5m]) * 60 > 5
+      - alert: NodejsHeapUsageHigh
+        # Fire when V8 heap used exceeds 85 % of allocated heap total for 10 min.
+        # Sustained > 85 % indicates rising memory pressure or a leak ahead of
+        # V8 OOM / heavy mark-sweep GC thrashing.
+        expr: (nodejs_heap_size_used_bytes / nodejs_heap_size_total_bytes) > 0.85
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "Pharmacy unknown-drug lookup rate is elevated"
+          summary: "Node.js heap usage is above 85 %"
           description: >
-            {{ $value | humanize }} unknown-drug lookups per minute over the
-            last 5 min.  Check whether a legitimate drug is missing from the
-            catalog or a client is sending arbitrary drug strings.
-          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/pharmacy-catalog-gap.md"
+            V8 heap utilisation is {{ $value | humanizePercentage }}. Check for
+            in-memory cache growth, unclosed streams, or retained closures.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/process-health.md"
 
-      - alert: PharmacyUnknownDrugCardinalityHigh
-        # Fire when the number of distinct drug labels exceeds 100, sustained
-        # for 10 min.  Threshold rationale: metrics-naming.md §2.1 caps label
-        # cardinality at ~20 unique values per label.  100 distinct drug labels
-        # is 5× that limit and a clear cardinality-abuse signal — each unique
-        # drug string creates a new time series in Prometheus.
-        #
-        # This rule detects label-cardinality growth directly via
-        # count(count by (drug) (pharmacy_unknown_drug_total)), which counts
-        # the number of distinct drug label values.
-        expr: count(count by (drug) (pharmacy_unknown_drug_total)) > 100
+      - alert: NodejsResidentMemoryHigh
+        # Fire when process RSS exceeds 512 MiB sustained for 10 min.
+        # Threshold rationale: typical CareGuard container footprint is ~150-250 MiB;
+        # > 512 MiB risks OOMKill on standard 512 MiB-1 GiB Render/Docker tiers.
+        expr: process_resident_memory_bytes > 536870912
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "Pharmacy unknown-drug label cardinality is above 100 distinct values"
+          summary: "Node.js process RSS exceeds 512 MiB"
           description: >
-            {{ $value }} distinct drug labels exist for
-            pharmacy_unknown_drug_total.  This is a cardinality risk — each
-            unique drug string creates a new Prometheus time series.  Consider
-            capping the label to a safe set or dropping it entirely.
-          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/pharmacy-catalog-gap.md"
+            Resident set size is {{ $value | humanize1024 }}B. Inspect heap
+            snapshots and native buffers for memory leaks before OOMKill occurs.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/process-health.md"
+
+      - alert: NodejsGcDurationHigh
+        # Fire when GC consumes > 100 ms/s (10 % of wall-clock time) over 5 min.
+        # Sustained > 10 % GC time causes tail-latency spikes and event-loop stalls.
+        expr: rate(nodejs_gc_duration_seconds_sum[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node.js garbage collection pause rate is high (> 10 %)"
+          description: >
+            GC is consuming {{ $value | humanizePercentage }} of CPU time over
+            the last 5 min. Check allocation rates and heap pressure.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/process-health.md"

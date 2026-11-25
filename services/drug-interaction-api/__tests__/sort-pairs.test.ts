@@ -1,21 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import { sortPairsBySeverity } from '../logic.ts';
 
 /**
  * Sort drug interaction pairs by severity (severe > moderate > mild)
  * and alphabetically by drug name for equal severities.
  * Severity order: severe (0) > moderate (1) > mild (2)
  */
-function sortPairsBySeverity(pairs: any[]): any[] {
-  const severityOrder: Record<string, number> = { severe: 0, moderate: 1, mild: 2 };
-  return pairs.sort((a, b) => {
-    const severityDiff = (severityOrder[a.severity] ?? 3) - (severityOrder[b.severity] ?? 3);
-    if (severityDiff !== 0) return severityDiff;
-    // Equal severity: sort alphabetically by drug names
-    const aKey = [a.drug1, a.drug2].sort().join('|');
-    const bKey = [b.drug1, b.drug2].sort().join('|');
-    return aKey.localeCompare(bKey);
-  });
-}
 
 describe('sortPairsBySeverity', () => {
   it('should sort by severity: severe > moderate > mild', () => {

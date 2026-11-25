@@ -6,66 +6,14 @@
  * formatTxHashDisplay helper from pdf.ts.
  *
  * All tests are pure-logic — no HTTP server is started.
+ *
+ * (Issue #922) This suite now imports and tests the real auditBill from
+ * shared/bill-audit.ts instead of a self-documented, drifted local
+ * reimplementation.
  */
 
 import { describe, it, expect } from 'vitest';
-
-// ── Re-implement testable logic inline (server.ts exports are wrapped in
-// express setup that requires env vars). Extract pure functions for testing.
-// In a follow-up refactor these should be moved to a separate module. ──────
-
-const FAIR_MARKET_RATES: Record<string, { description: string; fairRate: number }> = {
-  "99213": { description: "Office visit, established patient, moderate", fairRate: 130 },
-  "99214": { description: "Office visit, established patient, high", fairRate: 195 },
-  "99215": { description: "Office visit, established patient, complex", fairRate: 265 },
-  "70553": { description: "MRI brain with and without contrast", fairRate: 450 },
-  "71046": { description: "Chest X-ray, 2 views", fairRate: 45 },
-  "80053": { description: "Comprehensive metabolic panel", fairRate: 25 },
-  "85025": { description: "Complete blood count (CBC)", fairRate: 15 },
-  "36415": { description: "Venipuncture (blood draw)", fairRate: 10 },
-  "93000": { description: "Electrocardiogram (ECG)", fairRate: 35 },
-  "99232": { description: "Hospital care, moderate complexity", fairRate: 145 },
-  "97110": { description: "Physical therapy, therapeutic exercises", fairRate: 55 },
-};
-
-interface BillItem { description: string; cptCode: string; quantity: number; chargedAmount: number; }
-
-function auditBill(lineItems: BillItem[]) {
-  const results: any[] = [];
-  let totalCharged = 0, totalCorrect = 0, errorCount = 0;
-  const seenCodes: Record<string, number> = {};
-
-  for (const item of lineItems) {
-    totalCharged += item.chargedAmount;
-    const fairRate = FAIR_MARKET_RATES[item.cptCode];
-    const fairAmount = fairRate !== undefined ? fairRate.fairRate * item.quantity : null;
-
-    seenCodes[item.cptCode] = (seenCodes[item.cptCode] || 0) + 1;
-    if (seenCodes[item.cptCode] > 1 && !["96372", "97110"].includes(item.cptCode)) {
-      errorCount++;
-      results.push({ ...item, fairMarketRate: fairAmount, status: "duplicate", suggestedAmount: 0 });
-      continue;
-    }
-
-    if (fairAmount !== null && item.chargedAmount > fairAmount * 1.5) {
-      errorCount++;
-      const suggestedAmount = +(fairAmount * 1.2).toFixed(2);
-      totalCorrect += suggestedAmount;
-      const status = item.chargedAmount > fairAmount * 3 ? "upcoded" : "overcharged";
-      results.push({ ...item, fairMarketRate: fairAmount, status, suggestedAmount });
-      continue;
-    }
-
-    const suggested = fairAmount !== null ? Math.min(item.chargedAmount, +(fairAmount * 1.2).toFixed(2)) : item.chargedAmount;
-    totalCorrect += suggested;
-    results.push({ ...item, fairMarketRate: fairAmount, status: "valid", suggestedAmount: suggested });
-  }
-
-  const totalOvercharge = +(totalCharged - totalCorrect).toFixed(2);
-  const savingsPercent = totalCharged > 0 ? +((totalOvercharge / totalCharged) * 100).toFixed(1) : 0;
-
-  return { totalCharged: +totalCharged.toFixed(2), totalCorrect: +totalCorrect.toFixed(2), totalOvercharge, savingsPercent, errorCount, lineItems: results };
-}
+import { auditBill } from '../../../shared/bill-audit.ts';
 
 // ── tx-hash helper (mirrors pdf.ts logic) ────────────────────────────────────
 
@@ -90,7 +38,7 @@ function formatTxHashDisplay(hash?: string): { display: string; decodeFailed: bo
   return { display: `${hash.slice(0, 16)}... ?`, decodeFailed: true };
 }
 
-// ── auditBill: valid items ────────────────────────────────────────────────────
+// ── auditBill: valid items ───────────────────────────────────────────────────
 
 describe('auditBill — valid items', () => {
   it('marks an item within 1.5x fair rate as valid', () => {
@@ -114,26 +62,6 @@ describe('auditBill — valid items', () => {
       { description: 'ECG', cptCode: '93000', quantity: 1, chargedAmount: 35 },
     ]);
     expect(result.totalOvercharge).toBe(0);
-  });
-});
-
-// ── auditBill: zero fairAmount (e.g., preventive services covered by insurance) ─
-
-describe('auditBill — zero fairAmount handling', () => {
-  it('flags a $50 charge above $0 fair rate as overcharge of $50', () => {
-    FAIR_MARKET_RATES["00000"] = { description: "Preventive service", fairRate: 0 };
-    try {
-      const result = auditBill([
-        { description: 'Preventive screening', cptCode: '00000', quantity: 1, chargedAmount: 50 },
-      ]);
-      // With !== null check: fairAmount=0 → 0 !== null → enters overcharge logic
-      // Since 50 > 0 * 3, it's "upcoded" — but the overcharge amount is $50
-      expect(result.lineItems[0].status).toBe('upcoded');
-      expect(result.totalOvercharge).toBeCloseTo(50, 1);
-      expect(result.errorCount).toBe(1);
-    } finally {
-      delete FAIR_MARKET_RATES["00000"];
-    }
   });
 
   it('does not flag items with unknown CPT code (fairAmount = null)', () => {
@@ -211,7 +139,7 @@ describe('auditBill — duplicate detection', () => {
   });
 });
 
-// ── formatTxHashDisplay ───────────────────────────────────────────────────────
+// ── formatTxHashDisplay ──────────────────────────────────────────────────────
 
 describe('formatTxHashDisplay — tx hash extraction', () => {
   it('returns "-" for missing hash', () => {

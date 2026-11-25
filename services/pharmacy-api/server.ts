@@ -17,6 +17,7 @@ import path from "path";
 import express, { type Express } from "express";
 import { pathToFileURL } from "url";
 import { applyX402Middleware, NETWORK, OZ_FACILITATOR_URL } from "../../shared/x402-middleware.ts";
+import { sanitizeUserString } from "../../shared/sanitize.ts";
 import { createCorsMiddleware } from "../../shared/cors.ts";
 import { applySecurityMiddleware } from "../../shared/security-middleware.ts";
 import { createPharmacyAdminAuth } from "../../shared/pharmacy-admin-auth.ts";
@@ -28,6 +29,7 @@ import { createPharmacyPricingStore } from "./db.ts";
 import { resolveRequestedDosage } from "./dosage.ts";
 import { PRICING_DATABASE, getPharmacyPrices, getAvailableDrugs, DEFAULT_ZIP_CODE } from "../../shared/pharmacy-pricing.ts";
 import {
+  buildNoPricesFoundResponse,
   buildCompareResponse,
   DrugRecordSchema,
   PharmacyCompareQuerySchema,
@@ -127,7 +129,25 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
       return;
     }
 
-    const drug = pricingStore.upsertDrug(parsedBody.data as DrugRecordInput);
+    const payload = parsedBody.data as DrugRecordInput;
+    const sanitizedName = sanitizeUserString(payload.name);
+    const sanitizedDisplayName = payload.displayName !== undefined
+      ? sanitizeUserString(payload.displayName)
+      : undefined;
+
+    if (!sanitizedName) {
+      res.status(400).json({
+        error: "Drug name must contain safe characters",
+        code: "VALIDATION_INVALID_INPUT",
+      });
+      return;
+    }
+
+    const drug = pricingStore.upsertDrug({
+      ...payload,
+      name: sanitizedName,
+      displayName: sanitizedDisplayName,
+    });
     res.status(201).json({ drug });
   });
 
@@ -147,7 +167,25 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
       return;
     }
 
-    const drug = pricingStore.upsertDrug(parsedBody.data as DrugRecordInput);
+    const payload = parsedBody.data as DrugRecordInput;
+    const sanitizedName = sanitizeUserString(payload.name);
+    const sanitizedDisplayName = payload.displayName !== undefined
+      ? sanitizeUserString(payload.displayName)
+      : undefined;
+
+    if (!sanitizedName) {
+      res.status(400).json({
+        error: "Drug name must contain safe characters",
+        code: "VALIDATION_INVALID_INPUT",
+      });
+      return;
+    }
+
+    const drug = pricingStore.upsertDrug({
+      ...payload,
+      name: sanitizedName,
+      displayName: sanitizedDisplayName,
+    });
     res.json({ drug });
   });
 
@@ -174,9 +212,20 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
       return;
     }
 
-    const pharmacy = pricingStore.upsertPharmacy(
-      parsedBody.data as PharmacyRecordInput,
-    );
+    const payload = parsedBody.data as PharmacyRecordInput;
+    const sanitizedName = sanitizeUserString(payload.name);
+    if (!sanitizedName) {
+      res.status(400).json({
+        error: "Pharmacy name must contain safe characters",
+        code: "VALIDATION_INVALID_INPUT",
+      });
+      return;
+    }
+
+    const pharmacy = pricingStore.upsertPharmacy({
+      ...payload,
+      name: sanitizedName,
+    });
     res.status(201).json({ pharmacy });
   });
 
@@ -197,9 +246,20 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
       return;
     }
 
-    const pharmacy = pricingStore.upsertPharmacy(
-      parsedBody.data as PharmacyRecordInput,
-    );
+    const payload = parsedBody.data as PharmacyRecordInput;
+    const sanitizedName = sanitizeUserString(payload.name);
+    if (!sanitizedName) {
+      res.status(400).json({
+        error: "Pharmacy name must contain safe characters",
+        code: "VALIDATION_INVALID_INPUT",
+      });
+      return;
+    }
+
+    const pharmacy = pricingStore.upsertPharmacy({
+      ...payload,
+      name: sanitizedName,
+    });
     res.json({ pharmacy });
   });
 
@@ -227,9 +287,11 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
     }
 
     try {
-      const price = pricingStore.upsertPrice(
-        parsedBody.data as PharmacyPriceInput,
-      );
+      const payload = parsedBody.data as PharmacyPriceInput;
+      const price = pricingStore.upsertPrice({
+        ...payload,
+        drug: sanitizeUserString(payload.drug),
+      });
       res.json({ price });
     } catch (error) {
       const message =
@@ -284,10 +346,7 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
       );
     } catch (error) {
       pharmacyUnknownDrugTotal.inc({ drug });
-      res.status(404).json({
-        error: `No pricing records found for drug: ${drug}`,
-        code: "NOT_FOUND_DRUG",
-      });
+      res.status(404).json(buildNoPricesFoundResponse(drug));
     }
   });
 
@@ -327,6 +386,35 @@ const entrypointUrl = process.argv[1]
   ? pathToFileURL(path.resolve(process.argv[1])).href
   : "";
 
+/**
+ * Wire up a SIGTERM handler that:
+ *   1. Stops accepting new connections (`setDraining`).
+ *   2. Waits for the HTTP server to drain (`server.close`).
+ *   3. Closes the SQLite pricing-store handle (`pricingStore.close`).
+ *   4. Exits cleanly, or force-exits after `timeoutMs` if draining stalls.
+ *
+ * Exported so tests can call it without forking a child process.
+ */
+export function registerSigterm(
+  pharmApp: ReturnType<typeof createPharmacyApp>,
+  server: ReturnType<typeof pharmApp.app.listen>,
+  timeoutMs = 30_000,
+): void {
+  process.on("SIGTERM", () => {
+    logger.info("SIGTERM received. Draining server...");
+    pharmApp.setDraining(true);
+    server.close(() => {
+      pharmApp.pricingStore.close();
+      logger.info("Server and pricing store closed. Exiting process.");
+      process.exit(0);
+    });
+    setTimeout(() => {
+      logger.error("Graceful shutdown timeout. Forcing exit.");
+      process.exit(1);
+    }, timeoutMs);
+  });
+}
+
 if (import.meta.url === entrypointUrl) {
   const startedApp = defaultPharmacyApp;
   const server = startedApp.app.listen(PORT, () => {
@@ -344,16 +432,5 @@ if (import.meta.url === entrypointUrl) {
     );
   });
 
-  process.on("SIGTERM", () => {
-    logger.info("SIGTERM received. Draining server...");
-    startedApp.setDraining(true);
-    server.close(() => {
-      logger.info("Server closed. Exiting process.");
-      process.exit(0);
-    });
-    setTimeout(() => {
-      logger.error("Graceful shutdown timeout. Forcing exit.");
-      process.exit(1);
-    }, 30000);
-  });
+  registerSigterm(startedApp, server);
 }

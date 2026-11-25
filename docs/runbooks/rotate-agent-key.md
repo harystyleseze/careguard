@@ -46,3 +46,7 @@ systemctl restart careguard-agent   # or your equivalent
 - The 60-second TTL means that without SIGHUP, the old signer is used for up to 60 seconds after environment rotation.
 - SIGHUP is not forwarded by all process managers. Verify your deployment supports it or use a full restart.
 - `AGENT_SECRET_KEY` rotation does **not** rotate the MPP client keypair (`agentKeypair`) — that requires a full restart. The MPP keypair is used only for Soroban authorization, not x402.
+
+## Game-Day Drill
+
+See [docs/drills/964-sighup-key-rotation.md](../drills/964-sighup-key-rotation.md) and `scripts/drills/drill-sighup-key-rotation.ts` for the live-traffic rotation rehearsal.

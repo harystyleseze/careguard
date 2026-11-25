@@ -30,3 +30,7 @@ This lets you switch between `testnet` and `public` without a full process resta
   server listens on for MPP receipts).
 - `MULTI_PHARMACY_MODE=true` requires `PHARMACY_2_PUBLIC_KEY` to be set before the server starts.
   Changing this flag always requires a restart.
+
+## Game-Day Drill
+
+See [docs/drills/967-network-switch.md](../drills/967-network-switch.md) and `scripts/drills/drill-network-switch.ts` for the staging rehearsal and startup guard checks.

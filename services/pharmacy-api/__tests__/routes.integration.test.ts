@@ -190,6 +190,27 @@ describe("POST /pharmacy/drugs", () => {
     expect(res.body.drug.defaultDosage).toBe("10mg");
   });
 
+  it("strips control characters and disallowed characters from admin-submitted drug name and displayName", async () => {
+    const { app } = makeApp();
+    const res = await request(app)
+      .post("/pharmacy/drugs")
+      .set(adminHeader)
+      .send({
+        name: "atorvastatin\x00\x1f",
+        displayName: "Atorvastatin <50mg>\x07",
+        defaultDosage: "50mg",
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.drug.name).toBe("atorvastatin");
+    expect(res.body.drug.displayName).toBe("Atorvastatin 50mg");
+
+    // Verify stored state in database
+    const listRes = await request(app).get("/pharmacy/drugs");
+    const stored = listRes.body.drugs.find((d: any) => d.name === "atorvastatin");
+    expect(stored).toBeDefined();
+    expect(stored.displayName).toBe("Atorvastatin 50mg");
+  });
+
   it("upserts (does not duplicate) on a second POST with the same name", async () => {
     const { app } = makeApp();
     await request(app).post("/pharmacy/drugs").set(adminHeader).send({ name: "ibuprofen" });
@@ -228,6 +249,21 @@ describe("PUT /pharmacy/drugs/:drugName", () => {
     expect(res.status).toBe(200);
     expect(res.body.drug.name).toBe("lisinopril");
     expect(res.body.drug.displayName).toBe("Lisinopril Updated");
+  });
+
+  it("strips control characters and disallowed characters on update", async () => {
+    const { app } = makeApp();
+    await request(app)
+      .post("/pharmacy/drugs")
+      .set(adminHeader)
+      .send({ name: "metformin", displayName: "Metformin" });
+
+    const res = await request(app)
+      .put("/pharmacy/drugs/metformin")
+      .set(adminHeader)
+      .send({ displayName: "Metformin\x00 (Extended-Release)\x1f<>" });
+    expect(res.status).toBe(200);
+    expect(res.body.drug.displayName).toBe("Metformin (Extended-Release)");
   });
 });
 
@@ -301,6 +337,25 @@ describe("POST /pharmacy/pharmacies", () => {
     expect(res.body.pharmacy.id).toBe("costco-001");
     expect(res.body.pharmacy.name).toBe("Costco Pharmacy");
     expect(res.body.pharmacy.distanceMiles).toBe(2.1);
+  });
+
+  it("strips control characters and disallowed characters from admin-submitted pharmacy name", async () => {
+    const { app } = makeApp();
+    const res = await request(app)
+      .post("/pharmacy/pharmacies")
+      .set(adminHeader)
+      .send({
+        id: "walgreens-001",
+        name: "Walgreens\x00 #101 <Main St>\x1f",
+        distanceMiles: 1.5,
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.pharmacy.name).toBe("Walgreens 101 Main St");
+
+    const listRes = await request(app).get("/pharmacy/pharmacies");
+    const stored = listRes.body.pharmacies.find((p: any) => p.id === "walgreens-001");
+    expect(stored).toBeDefined();
+    expect(stored.name).toBe("Walgreens 101 Main St");
   });
 });
 
@@ -456,7 +511,7 @@ describe("GET /pharmacy/compare", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 404 with NO_PRICES_FOUND for a drug not in the catalog", async () => {
+  it("returns 404 with the canonical not-found body for a drug not in the catalog", async () => {
     const { app } = makeApp();
     const res = await request(app).get("/pharmacy/compare").query({ drug: "unknowndrug", zip: "90210" });
     expect(res.status).toBe(404);
