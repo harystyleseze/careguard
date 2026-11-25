@@ -35,6 +35,7 @@ import {
   PharmacyCompareQuerySchema,
   PharmacyPriceSchema,
   PharmacyRecordSchema,
+  X402_PROTOCOL_PRICE,
 } from "./logic.ts";
 import type {
   DrugRecordInput,
@@ -113,9 +114,9 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
           scheme: "exact",
           network: NETWORK,
           payTo: options.payTo,
-          price: "$0.002",
+          price: X402_PROTOCOL_PRICE,
         },
-        description: "Pharmacy price comparison query — $0.002 USDC",
+        description: `Pharmacy price comparison query — ${X402_PROTOCOL_PRICE} USDC`,
       },
     });
   }
@@ -345,6 +346,7 @@ export function createPharmacyApp(options: PharmacyAppOptions) {
           payTo: options.payTo,
           network: NETWORK,
           prices,
+          protocolPrice: X402_PROTOCOL_PRICE,
         }),
       );
     } catch (error) {

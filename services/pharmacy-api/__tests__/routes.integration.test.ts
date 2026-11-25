@@ -533,9 +533,13 @@ describe("GET /pharmacy/compare", () => {
     expect(res.body.prices[0].price).toBeLessThanOrEqual(res.body.prices[1].price);
   });
 
-  it("echoes the zipCode back in the response", async () => {
+  it("echoes the zipCode back in the response (Issue #912)", async () => {
     const { app } = makeApp();
     await seedCompareData(app);
+    // When a non-default zip is requested (94105), the response should:
+    // - Echo the requested zip in zipCode
+    // - Set isFallbackZip to true (a boolean)
+    // - Use the default zip (90210) as usedZipCode (a string, not a boolean)
     const res = await request(app).get("/pharmacy/compare").query({ drug: "lisinopril", zip: "94105" });
     expect(res.status).toBe(200);
     expect(res.body.zipCode).toBe("94105");
@@ -570,6 +574,15 @@ describe("GET /pharmacy/compare", () => {
     for (const price of res.body.prices) {
       expect(price.inStock).toBe(true);
     }
+  });
+
+  it("includes protocol.price from X402_PROTOCOL_PRICE constant (Issue #913)", async () => {
+    const { app } = makeApp();
+    await seedCompareData(app);
+    const res = await request(app).get("/pharmacy/compare").query({ drug: "lisinopril", zip: "90210" });
+    expect(res.status).toBe(200);
+    expect(res.body.protocol.price).toBe("$0.002");
+    expect(res.body.protocol.name).toBe("x402");
   });
 });
 

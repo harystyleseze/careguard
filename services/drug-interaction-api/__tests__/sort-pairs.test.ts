@@ -94,4 +94,23 @@ describe('sortPairsBySeverity', () => {
     expect(sorted[0].severity).toBe('severe');
     expect(sorted[1].severity).toBe('unknown');
   });
+
+  it('should not mutate the input array (Issue #914)', () => {
+    const original = [
+      { drug1: 'Zoloft', drug2: 'Alcohol', severity: 'moderate', description: 'interaction 1' },
+      { drug1: 'Aspirin', drug2: 'Warfarin', severity: 'severe', description: 'interaction 2' },
+      { drug1: 'Metformin', drug2: 'Insulin', severity: 'mild', description: 'interaction 3' },
+    ];
+    // Store original order for comparison
+    const originalOrder = original.map(p => ({ drug1: p.drug1, drug2: p.drug2, severity: p.severity }));
+
+    const sorted = sortPairsBySeverity(original);
+
+    // Input array should remain unchanged
+    expect(original.map(p => ({ drug1: p.drug1, drug2: p.drug2, severity: p.severity }))).toEqual(originalOrder);
+    // Sorted array should be different (sorted by severity)
+    expect(sorted[0].severity).toBe('severe');
+    expect(sorted[1].severity).toBe('moderate');
+    expect(sorted[2].severity).toBe('mild');
+  });
 });

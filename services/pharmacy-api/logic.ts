@@ -105,6 +105,8 @@ export const PharmacyCompareResponseSchema = z.object({
 });
 export type PharmacyCompareResponse = z.infer<typeof PharmacyCompareResponseSchema>;
 
+export const X402_PROTOCOL_PRICE = "$0.002";
+
 type PharmacyComparePrice = {
   displayName?: unknown;
   pharmacy?: unknown;
@@ -125,7 +127,7 @@ export function buildCompareResponse(options: {
   payTo: string;
   network: string;
   prices: PharmacyComparePrice[];
-  protocolPrice?: string;
+  protocolPrice: string;
 }): PharmacyCompareResponse {
   if (options.prices.length === 0) {
     throw new Error("Cannot build a pharmacy comparison without prices");
@@ -160,7 +162,7 @@ export function buildCompareResponse(options: {
     protocol: {
       name: "x402",
       network: options.network,
-      price: options.protocolPrice ?? "$0.002",
+      price: options.protocolPrice,
       payTo: options.payTo,
     },
     prices: sorted,
