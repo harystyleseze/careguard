@@ -150,6 +150,69 @@ groups:
             gateway, or mismatched USDC balances.
           runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/wallet-low.md"
 
+      - alert: AgentTransactionRejectionRateSustained
+        # Fire when > 10 % of agent transactions are rejected over 5 min, sustained
+        # for 10 min.  This metric tracks agent-level transaction outcomes
+        # (completed/pending/rejected) which is broader in scope than
+        # StellarTxFailureRateHigh (watches stellar_tx_submitted_total — raw
+        # network submissions only) and PolicyBlockRateSustained (watches
+        # policy_blocks_total — in-process policy enforcement only).  A
+        # rejected agent transaction can result from either a policy block or
+        # a Stellar network failure, so this alert is the union of those two
+        # failure modes at the agent level.  See metrics-naming.md §3 for the
+        # known scope overlap.
+        expr: |
+          (
+            sum(rate(agent_transactions_total{status="rejected"}[5m]))
+            /
+            sum(rate(agent_transactions_total[5m]))
+          ) > 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agent transaction rejection rate above 10 % (5 m window)"
+          description: >
+            {{ $value | humanizePercentage }} of agent transactions are being
+            rejected.  This covers both spending-policy blocks and Stellar
+            network failures — check PolicyBlockRateSustained and
+            StellarTxFailureRateHigh to narrow the cause.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/wallet-low.md"
+
+  # -------------------------------------------------------------------------
+  # Agent spending / budget overruns (#950)
+  # -------------------------------------------------------------------------
+  - name: careguard-spending
+    rules:
+      - alert: AgentSpendingBudgetOverrun
+        # Fire when the hourly spend in any category exceeds a per-category
+        # threshold derived from the monthly budgets in docs/SPENDING-POLICY.md:
+        #   medications:   medicationMonthlyBudget = $300 → $50/hr (17 % of monthly)
+        #   bills:         billMonthlyBudget     = $500 → $200/hr (40 % of monthly)
+        #   service_fees:  API costs ~$0.03/run      → $5/hr (clear runaway signal)
+        # Sustained for 10 min to avoid paging on a single large legitimate
+        # payment (e.g. a $1,000 bill) that briefly spikes the delta.
+        #
+        # agent_spending_usd is a monotonically increasing Gauge (cumulative
+        # spend by category); delta() over a 1 h window gives the spend rate.
+        expr: |
+          delta(agent_spending_usd{category="medications"}[1h]) > 50
+          or
+          delta(agent_spending_usd{category="bills"}[1h]) > 200
+          or
+          delta(agent_spending_usd{category="service_fees"}[1h]) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agent spending in category {{ $labels.category }} exceeds budget threshold"
+          description: >
+            Hourly spend for {{ $labels.category }} is above the per-category
+            budget threshold.  This may indicate a runaway agent loop or an
+            unexpected cost spike.  Check the Spending by Category dashboard
+            panel and verify the spending policy limits.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/agent-cost-overrun.md"
+
   # -------------------------------------------------------------------------
   # Agent queue depth / saturation
   # -------------------------------------------------------------------------

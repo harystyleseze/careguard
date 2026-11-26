@@ -136,11 +136,11 @@ deviations that need to be fixed.
 | `agent_llm_iteration_tokens` | Gauge | `kind` | ✅ | — |
 | `agent_llm_context_usage_ratio` | Gauge | — | ✅ | — |
 | `agent_spending_usd` | Gauge | `category` | ✅ | — |
-| `agent_transactions_total` | Counter | `status` | ⚠️ | Overlaps with `agent_runs_total` and `stellar_tx_submitted_total`; clarify scope in a follow-up |
+| `agent_transactions_total` | Counter | `status` | ⚠️ | Overlaps with `agent_runs_total` and `stellar_tx_submitted_total`; alert `AgentTransactionRejectionRateSustained` documents the scope difference inline (agent-level outcomes vs. raw network submissions vs. in-process policy blocks) |
 | `x402_tx_extraction_failed_total` | Counter | — | ✅ | — |
-| `pharmacy_unknown_drug_total` | Counter | `drug` | ❌ | **High-cardinality label** — `drug` is a free-form user string; cap to a safe set or drop the label and use a separate low-cardinality label like `drug_known=false`. Track in issue. |
+| `pharmacy_unknown_drug_total` | Counter | `drug` | ❌ | **High-cardinality label** — `drug` is a free-form user string; cap to a safe set or drop the label and use a separate low-cardinality label like `drug_known=false`. Alerts `PharmacyUnknownDrugRateHigh` and `PharmacyUnknownDrugCardinalityHigh` watch for elevated rates and cardinality growth. Track in issue. |
 | `agent_llm_error_total` | Counter | — | ✅ | — |
-| `agent_llm_latency_ms` | Gauge | `model` | ❌ | **Unit suffix violation** — must be `_seconds` not `_ms`; rename to `agent_llm_latency_seconds` in a follow-up. Also a Gauge tracking only the latest observation — consider a Histogram. |
+| `agent_llm_latency_ms` | Histogram | `model` | ⚠️ | **Unit suffix violation** — must be `_seconds` not `_ms`; rename to `agent_llm_latency_seconds` in a follow-up. Converted from Gauge to Histogram in issue #1034; buckets cover 100 ms–30 s. Alert `AgentLlmLatencyHigh` uses `histogram_quantile(0.95, ...)`. |
 | `stellar_fee_bumps_total` | Counter | — | ✅ | — |
 | `stellar_tx_bad_seq_retries_total` | Counter | — | ✅ | — |
 | `bill_audit_oversized_rejections_total` | Counter | — | ✅ | — |
@@ -156,8 +156,8 @@ deviations that need to be fixed.
 
 | Priority | Metric | Issue |
 |----------|--------|-------|
-| High | `pharmacy_unknown_drug_total` | Unbounded `drug` label — cardinality risk |
-| Medium | `agent_llm_latency_ms` | Wrong unit suffix (`_ms` → `_seconds`); point-in-time Gauge rather than Histogram |
+| High | `pharmacy_unknown_drug_total` | Unbounded `drug` label — cardinality risk (alerts now in place) |
+| Medium | `agent_llm_latency_ms` | Wrong unit suffix (`_ms` → `_seconds`); converted to Histogram in #1034 |
 | Low | `stellar_tx_submitted_total` | `result` label should be `status` for consistency |
 | Low | `agent_transactions_total` | Scope overlap with other counters — needs clarification |
 
