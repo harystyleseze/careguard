@@ -26,6 +26,7 @@ import { applySecurityMiddleware } from "../../shared/security-middleware.ts";
 import { logger } from "../../shared/logger.ts";
 import { requestLifecycleMiddleware } from "../../shared/request-lifecycle.ts";
 import { gracefulShutdown } from "../../shared/graceful-shutdown.ts";
+import { createJsonBodyErrorHandler } from "../../shared/json-body-error.ts";
 import { checkInteractions, DrugInteractionsQuerySchema } from "./logic.ts";
 import type { DrugInteractionsQuery } from "./logic.ts";
 

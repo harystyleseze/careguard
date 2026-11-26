@@ -482,6 +482,19 @@ describe("POST /pharmacy/prices", () => {
     expect(res.body.price.drug).toBe("metformin");
     expect(res.body.price.pharmacyId).toBe("cvs-001");
   });
+
+  it("returns a JSON 400 for malformed JSON bodies", async () => {
+    const { app } = makeApp();
+    const res = await request(app)
+      .post("/pharmacy/prices")
+      .set(adminHeader)
+      .set("Content-Type", "application/json")
+      .send("{bad json");
+
+    expect(res.status).toBe(400);
+    expect(res.headers["content-type"]).toMatch(/application\/json/);
+    expect(res.body.code).toBe("INVALID_JSON_BODY");
+  });
 });
 
 // ---------------------------------------------------------------------------

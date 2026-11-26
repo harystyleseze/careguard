@@ -147,6 +147,31 @@ describe("POST /bill/audit (Issue #788)", () => {
     expect(res.body.details).toBeDefined();
     expect(res.body.details.limit).toBeDefined();
   });
+
+  it("rejects descriptions that sanitize to empty with a structured 400", async () => {
+    const res = await request(app)
+      .post("/bill/audit")
+      .send({
+        lineItems: [
+          { description: "???", cptCode: "99213", quantity: 1, chargedAmount: 50 },
+        ],
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("INVALID_SANITIZED_TEXT");
+    expect(res.body.details.issues[0].path).toBe("lineItems[0].description");
+  });
+
+  it("returns a JSON 400 for malformed JSON bodies", async () => {
+    const res = await request(app)
+      .post("/bill/audit")
+      .set("Content-Type", "application/json")
+      .send("{bad json");
+
+    expect(res.status).toBe(400);
+    expect(res.headers["content-type"]).toMatch(/application\/json/);
+    expect(res.body.code).toBe("INVALID_JSON_BODY");
+  });
 });
 
 describe("GET /bill/sample (Issue #788)", () => {

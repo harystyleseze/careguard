@@ -39,6 +39,7 @@ import { createCorsMiddleware } from "../../shared/cors.ts";
 import { applySecurityMiddleware } from "../../shared/security-middleware.ts";
 import { logger } from "../../shared/logger.ts";
 import { requestLifecycleMiddleware } from "../../shared/request-lifecycle.ts";
+import { createJsonBodyErrorHandler } from "../../shared/json-body-error.ts";
 import { gracefulShutdown } from "../../shared/graceful-shutdown.ts";
 import { sanitizeUserString } from "../../shared/sanitize.ts";
 import { MAX_FREE_TEXT_LENGTH } from "../../shared/free-text.ts";

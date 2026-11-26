@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { sanitizeUserString } from "../sanitize.ts";
+import {
+  sanitizeRequiredUserString,
+  sanitizeUserString,
+} from "../sanitize.ts";
 
 describe("sanitizeUserString", () => {
   it("passes through clean alphanumeric strings", () => {
@@ -46,5 +49,11 @@ describe("sanitizeUserString", () => {
 
   it("allows hyphens and parentheses", () => {
     expect(sanitizeUserString("Drug-Name (10mg)")).toBe("Drug-Name (10mg)");
+  });
+
+  it("rejects required fields that sanitize to empty", () => {
+    expect(() => sanitizeRequiredUserString("???", "drug")).toThrow(
+      "drug must contain at least one supported character after sanitization",
+    );
   });
 });

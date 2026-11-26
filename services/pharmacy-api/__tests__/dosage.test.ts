@@ -11,6 +11,10 @@ describe('Pharmacy dosage round-trip and recipient scoping (Issue #1065)', () =>
     expect(resolveRequestedDosage('lisinopril')).toBe('10mg');
   });
 
+  it('returns unspecified for a never-before-seen drug with no dosage', () => {
+    expect(resolveRequestedDosage('never-seen-drug')).toBe('unspecified');
+  });
+
   it('scopes dosage per recipient and prevents cross-recipient dosage leakage', () => {
     // Caregiver queries Lisinopril for recipient 'rosa' with dosage '20mg'
     expect(resolveRequestedDosage('lisinopril', '20mg', 'rosa')).toBe('20mg');
