@@ -41,6 +41,8 @@
     "check:vitest-lock": "node scripts/check-vitest-version-lock.mjs",
     "check:orphaned-tests": "node --import tsx scripts/check-orphaned-tests.ts",
     "simulate:spending-reset": "node --import tsx scripts/simulate-spending-reset.ts",
+    "drill:wallet-low": "node --import tsx scripts/drill-wallet-low.ts",
+    "drill:rotate-secrets": "node --import tsx scripts/drill-rotate-secrets.ts",
     "generate:sample-bill": "node --import tsx scripts/generate-sample-bill.ts",
     "clear:stale-locks": "node --import tsx scripts/clear-stale-locks.ts",
     "benchmark:investigations": "node --import tsx scripts/benchmark-investigations.ts",

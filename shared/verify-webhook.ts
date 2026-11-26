@@ -34,8 +34,12 @@ function parseSignature(header: string): string | null {
 }
 
 export interface VerifyWebhookOptions {
-  /** HMAC secret. Defaults to WEBHOOK_SECRET env var. */
+  /** Primary HMAC secret. Defaults to WEBHOOK_SECRET_NEW / WEBHOOK_SECRET env vars. */
   secret?: string;
+  /** Optional fallback HMAC secret accepted during zero-downtime dual-secret rotation. */
+  fallbackSecret?: string;
+  /** Explicit list of accepted HMAC secrets (overrides secret/fallbackSecret). */
+  secrets?: string[];
   /** Override tolerance window in ms (default 5 min). */
   toleranceMs?: number;
   /** Override replay window TTL in ms (default 10 min). */
@@ -50,12 +54,18 @@ export interface VerifyWebhookOptions {
  * express.raw() first and this middleware second.
  */
 export function verifyWebhook(opts: VerifyWebhookOptions = {}): RequestHandler {
-  const secret =
-    opts.secret ?? process.env.WEBHOOK_SECRET ?? "";
+  const candidates = (
+    opts.secrets !== undefined
+      ? opts.secrets
+      : opts.secret !== undefined
+        ? [opts.secret, opts.fallbackSecret]
+        : [process.env.WEBHOOK_SECRET_NEW, process.env.WEBHOOK_SECRET]
+  ).filter((s): s is string => typeof s === "string" && s.length > 0);
+  const secrets = [...new Set(candidates)];
   const toleranceMs = opts.toleranceMs ?? TOLERANCE_MS;
   const replayWindowMs = opts.replayWindowMs ?? REPLAY_WINDOW_MS;
 
-  if (!secret) {
+  if (secrets.length === 0) {
     logger.warn(
       "verifyWebhook: WEBHOOK_SECRET is not set — all webhook requests will be rejected",
     );
@@ -102,27 +112,28 @@ export function verifyWebhook(opts: VerifyWebhookOptions = {}): RequestHandler {
           ? req.body
           : JSON.stringify(req.body ?? "");
 
-    if (!secret) {
+    if (secrets.length === 0) {
       res.status(400).json({ error: "webhook secret not configured" });
       return;
     }
 
-    const expected = sign(secret, tsHeader, rawBody);
-
     let provided: Buffer;
-    let expectedBuf: Buffer;
     try {
       provided = Buffer.from(providedHex, "hex");
-      expectedBuf = Buffer.from(expected, "hex");
     } catch {
       res.status(400).json({ error: "malformed X-Webhook-Signature" });
       return;
     }
 
-    if (
-      provided.length !== expectedBuf.length ||
-      !timingSafeEqual(provided, expectedBuf)
-    ) {
+    const matched = secrets.some((candidate) => {
+      const expectedBuf = Buffer.from(sign(candidate, tsHeader, rawBody), "hex");
+      return (
+        provided.length === expectedBuf.length &&
+        timingSafeEqual(provided, expectedBuf)
+      );
+    });
+
+    if (!matched) {
       logger.warn({ path: req.path }, "webhook: signature mismatch");
       res.status(400).json({ error: "invalid webhook signature" });
       return;

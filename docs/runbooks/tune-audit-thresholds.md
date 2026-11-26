@@ -32,9 +32,15 @@ If these criteria are not met, the server will log an error and refuse to start 
   - Set `BILL_AUDIT_SUGGESTED_MULTIPLIER=1.5`
   - Set `BILL_AUDIT_UPCODED_MULTIPLIER=4.0`
 
-## Line-Item Cap (`BILL_AUDIT_MAX_ITEMS`)
+## Game-Day Drill: Boot-Time Multiplier Validation
 
-- **`BILL_AUDIT_MAX_ITEMS`** (default `500`): Maximum number of line items accepted by `POST /bill/audit` before returning HTTP `400` and incrementing `bill_audit_oversized_rejections_total`.
-- **Triaging `BillAuditOversizedRejectionsSustained` alerts**:
-  - **Legitimate oversized bills**: Inspect request logs / correlation IDs to see if real caregiver hospitalisations (e.g. multi-week ICU stays) are routinely exceeding 500 line items. If so, raise `BILL_AUDIT_MAX_ITEMS` (e.g. to `750` or `1000`) and verify `bill_audit_duration_ms` p95 stays within budget via `load/bill-audit.js`.
-  - **Abuse / limit probing**: If rejections come from a single IP, unauthenticated/repetitive payloads, or synthetic line-item counts far above clinical norms, tighten rate-limit rules (see `docs/runbooks/rate-limit-tuning.md`) rather than raising the cap.
+Rehearse the boot-time safety net in staging to confirm invalid multiplier combinations refuse to start:
+
+1. **Invalid Case 1 (`UPCODED <= OVERCHARGE`):** Start with `BILL_AUDIT_UPCODED_MULTIPLIER=2.0 BILL_AUDIT_OVERCHARGE_MULTIPLIER=2.0 BILL_AUDIT_SUGGESTED_MULTIPLIER=1.2` and confirm boot fails with `Invalid bill-audit multipliers config: must satisfy UPCODED > OVERCHARGE > SUGGESTED > 1.0`.
+2. **Invalid Case 2 (`SUGGESTED <= 1.0`):** Start with `BILL_AUDIT_SUGGESTED_MULTIPLIER=1.0` (and `0.9`) and confirm boot fails with the same clear error.
+3. **Valid Configurations:** Start with the Medicare-strictness (`1.3 / 1.1 / 3.0`) and Commercial-tolerance (`2.0 / 1.5 / 4.0`) examples above and confirm the server boots cleanly.
+4. **Error Clarity & Follow-ups:** Confirm the error output includes the configured values for fast operator diagnosis.
+
+| Date | Environment | Invalid Cases Refused? | Valid Presets Booted? | Follow-ups |
+|------|-------------|------------------------|-----------------------|------------|
+| _TBD_ | staging | _TBD_ | _TBD_ | _TBD_ (#968) |
