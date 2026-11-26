@@ -26,6 +26,18 @@ kill -HUP <pid>
 
 In-flight requests that were already signed with the old key complete normally. Only new x402 payments after the reload use the new key.
 
+## Under-load verification
+
+The single-request check above does not prove the zero-downtime claim under
+concurrent traffic. `load/agent-run-rotation.js` keeps 20 VUs on `/agent/run`
+and rotates the key partway through the run (env update + SIGHUP through the
+test-only preload hook in `load/rotation-hook.mjs`), then asserts zero 500s,
+zero misrouted/duplicate payments, and consistent key settlement across the
+rotation boundary. See [`load/README.md`](../../load/README.md#agent-key-rotation-load-test)
+for the exact command and required environment. A failing run refutes the
+zero-downtime claim in this runbook and should be treated as a signer-cache
+regression, not a flaky load test.
+
 ## Full restart (alternative)
 
 If zero-downtime is not required:

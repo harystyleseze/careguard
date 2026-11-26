@@ -474,11 +474,10 @@ export function requireNonDegradedMode(
 }
 
 // --- Liveness probe — no I/O, always fast ---
+// Liveness never reflects dependency state: docs/observability/health-checks.md
+// pins this response to exactly { status: "ok" } with HTTP 200 (Render uses it
+// for process restarts). Degraded state belongs in /ready, not here.
 app.get("/health", (_req, res) => {
-  if (isDegradedMode) {
-    res.status(200).json({ status: "degraded", degraded: true });
-    return;
-  }
   res.json({ status: "ok" });
 });
 
