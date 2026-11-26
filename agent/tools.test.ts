@@ -24,17 +24,18 @@ vi.mock('./tz', async (importOriginal) => {
 // same way agent/__tests__/tools-x402.test.ts does: stub wrapFetchWithPayment
 // to hand back one fixed mock fetch function.
 const { x402FetchMock } = vi.hoisted(() => ({ x402FetchMock: vi.fn() }));
-vi.mock('@x402/fetch', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@x402/fetch')>();
-  return {
-    ...actual,
-    wrapFetchWithPayment: vi.fn().mockReturnValue(x402FetchMock),
-    x402Client: vi.fn().mockReturnValue({ register: vi.fn().mockReturnThis() }),
-  };
-});
+vi.mock('@x402/fetch', () => ({
+  wrapFetchWithPayment: vi.fn(() => x402FetchMock),
+  x402Client: class {
+    register() {
+      return this;
+    }
+  },
+  decodePaymentResponseHeader: vi.fn(),
+}));
 vi.mock('@x402/stellar', () => ({
   createEd25519Signer: vi.fn().mockReturnValue({}),
-  ExactStellarScheme: vi.fn(),
+  ExactStellarScheme: class {},
 }));
 
 describe('Spending Policy Engine', () => {
@@ -50,7 +51,7 @@ describe('Spending Policy Engine', () => {
   });
 
   afterEach(() => {
-    vi.resetAllMocks();
+    vi.clearAllMocks();
   });
 
   it('allows payment when budget is available', () => {
@@ -82,7 +83,7 @@ describe('Spending Policy Engine', () => {
 
     const result = checkSpendingPolicy(30, TRANSACTION_CATEGORY.MEDICATIONS);
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('exceeds medication monthly budget');
+    expect(result.reason).toContain('exceeds medications monthly budget');
   });
 
   it('rejects payment if daily spending limit is exceeded', () => {
@@ -91,7 +92,7 @@ describe('Spending Policy Engine', () => {
       medicationMonthlyBudget: 500,
       billMonthlyBudget: 500,
       dailyLimit: 100,
-      approvalThreshold: 200, // High threshold
+      approvalThreshold: 100, // High threshold <= dailyLimit
     });
     const tracker = getSpendingTracker();
     tracker.medications = 0;

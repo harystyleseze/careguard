@@ -8,10 +8,10 @@
 # Multi-window pairs follow the Google SRE workbook's multi-window, multi-burn-rate
 # approach: a short window (5m/1h) for fast detection, paired with a longer window
 # (6h/3d) that must also be breached before alerting, to avoid paging on noise.
-# The alert rules that pair these windows and apply burn-rate thresholds are a
-# follow-up (docker/prometheus/alert-rules.yml does not exist yet) — this file only
-# provides the pre-aggregated series so that follow-up (and Grafana panels) can query
-# stable, cheap-to-evaluate metrics instead of the raw counters directly.
+# The alert rules that pair these windows and apply burn-rate thresholds live in
+# docker/prometheus/alert-rules.yml — this file provides the pre-aggregated series
+# so those alerts (and Grafana panels) can query stable, cheap-to-evaluate metrics
+# instead of the raw counters directly.
 #
 # Validate with: promtool check rules docker/prometheus/recording-rules.yml
 

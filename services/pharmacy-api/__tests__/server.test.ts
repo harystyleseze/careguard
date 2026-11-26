@@ -15,8 +15,8 @@ process.env.PHARMACY_1_PUBLIC_KEY = "GBQTESTPHARMACY1";
 process.env.PHARMACY_ADMIN_TOKEN = "admin-secret";
 
 const { createPharmacyPricingStore } = await import("../db.ts");
-const { PharmacyCompareQuerySchema } = await import("../logic.ts");
-const { createPharmacyApp } = await import("../server.ts");
+const { buildNoPricesFoundResponse, PharmacyCompareQuerySchema } = await import("../logic.ts");
+const { createPharmacyApp, registerSigterm } = await import("../server.ts");
 
 describe("pharmacy API persistence", () => {
   let tempDir: string;
@@ -125,15 +125,58 @@ describe("pharmacy API persistence", () => {
     expect(response.body.error).toContain("80 characters");
   });
 
-  it("returns 404 and NO_PRICES_FOUND for an unknown drug", async () => {
+  it("returns the canonical 404 response for an unknown drug", async () => {
     const response = await request(app)
       .get("/pharmacy/compare")
       .query({ drug: "UnknownDrug", zip: "90210" });
 
     expect(response.status).toBe(404);
-    expect(response.body).toEqual({
-      error: "No pricing records found for drug: unknowndrug",
-      code: "NOT_FOUND_DRUG"
-    });
+    expect(response.body).toEqual(buildNoPricesFoundResponse("unknowndrug"));
   });
+});
+
+describe("registerSigterm — graceful shutdown closes pricingStore", () => {
+  it("calls pricingStore.close() inside the server.close callback", () =>
+    new Promise<void>((resolve, reject) => {
+      const tempDir = mkdtempSync(path.join(tmpdir(), "careguard-sigterm-"));
+      const store = createPharmacyPricingStore({
+        dbPath: path.join(tempDir, "pricing.sqlite"),
+      });
+      const pharmApp = createPharmacyApp({
+        payTo: "GBQTESTPHARMACY1",
+        adminToken: "admin-secret",
+        pricingStore: store,
+        enablePayments: false,
+      });
+
+      // Spy on pricingStore.close so we can assert it was called.
+      const closeSpy = vi.spyOn(store, "close");
+
+      // Intercept process.exit so the test process doesn't actually terminate.
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((() => {}) as never);
+
+      const server = pharmApp.app.listen(0, () => {
+        registerSigterm(pharmApp, server, 5_000);
+
+        // Simulate SIGTERM.
+        process.emit("SIGTERM");
+
+        // Give server.close() time to invoke the callback.
+        setTimeout(() => {
+          try {
+            expect(closeSpy).toHaveBeenCalledOnce();
+            expect(exitSpy).toHaveBeenCalledWith(0);
+          } catch (e) {
+            reject(e);
+          } finally {
+            closeSpy.mockRestore();
+            exitSpy.mockRestore();
+            rmSync(tempDir, { recursive: true, force: true });
+            resolve();
+          }
+        }, 200);
+      });
+    }));
 });

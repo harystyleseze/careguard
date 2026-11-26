@@ -59,3 +59,53 @@ Output indicators of tampering:
 ## Related
 
 - [ADR 008: Append-Only Hash-Chained Audit Log Design](../adr/008-audit-log-hash-chain.md)
+- [Quarterly Secret Rotation & Game-Day Schedule](rotate-secrets.md#quarterly-rotation-calendar)
+
+---
+
+## Game-Day Drill
+
+Run this drill **quarterly** in a non-production environment alongside the secret-rotation calendar to keep on-call muscle memory sharp and verify detection tooling.
+
+### Target SLAs
+
+- **Time-to-Detect (TTD)**: ≤ 5 minutes from drill start to identifying the exact broken line/index.
+- **Time-to-Lockdown (TTL)**: ≤ 10 minutes from detection to isolating the tampered copy (`chmod 400`) and verifying a clean backup.
+
+### Procedure
+
+1. **Inject a hash-chain break (drill facilitator, non-production only)**:
+   ```bash
+   npx tsx scripts/drill-audit-tamper.ts
+   ```
+   This copies `data/audit.log.jsonl` (or generates a synthetic 3-entry chain if absent) into `/tmp/careguard-audit-drill-<timestamp>/audit.log.jsonl` and mutates one entry without updating its `hash`. Never mutate the live `data/audit.log.jsonl`.
+
+2. **Cold detection (on-call engineer — start TTD timer)**:
+   Run the verifier against the drill file:
+   ```bash
+   AUDIT_FILE=/tmp/careguard-audit-drill-<timestamp>/audit.log.jsonl npx tsx scripts/verify-audit-log.ts
+   ```
+   Confirm exit code is `1` and output matches the documented **Detect** indicators:
+   - `Verification Failed at line <LineNumber> (index <Index>):`
+   - `  Expected hash: <ExpectedHash>`
+   - `  Actual hash:   <ActualHash>`
+   Record **TTD**.
+
+3. **Simulated lockdown & recovery (start TTL timer)**:
+   ```bash
+   cp /tmp/careguard-audit-drill-<timestamp>/audit.log.jsonl /tmp/careguard-audit-drill-<timestamp>/audit.log.jsonl.tampered
+   chmod 400 /tmp/careguard-audit-drill-<timestamp>/audit.log.jsonl.tampered
+   ```
+   Identify the tampered line, simulate restoring from a clean backup, and re-run `scripts/verify-audit-log.ts` to confirm `Audit log successfully verified.` (exit code `0`). Record **TTL**.
+
+### Drill Scorecard & Follow-up Issues
+
+| Field | Value |
+|---|---|
+| Date / Facilitator / On-call | |
+| TTD (Target ≤ 5m) | |
+| TTL (Target ≤ 10m) | |
+| Output matched runbook? (Y/N) | |
+| Follow-up issues filed (false positives, unclear output, missing tooling) | |
+
+Log any false positives, unclear verifier output, or missing tooling as GitHub issues before closing the drill.

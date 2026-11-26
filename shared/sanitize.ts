@@ -71,3 +71,19 @@ export function sanitizeAnnotation(input: unknown): string {
   if (s.length > ANNOTATION_MAX_LENGTH) s = s.slice(0, ANNOTATION_MAX_LENGTH);
   return s;
 }
+
+/**
+ * Sanitizer for sentence-like free text (e.g. handoff notes, #1180) where
+ * punctuation must survive. Strips control characters and bidi marks and
+ * collapses all whitespace, including newlines, to single spaces. Length
+ * limits are left to the caller's validation so oversized input is rejected
+ * rather than silently truncated.
+ */
+export function sanitizeFreeText(input: unknown): string {
+  if (typeof input !== "string") return "";
+  return input
+    .replace(CONTROL_CHARS, "")
+    .replace(BIDI_CONTROLS, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}

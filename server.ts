@@ -90,6 +90,8 @@ import {
   type PauseReason,
 } from "./shared/agent-state.ts";
 import { checkWalletBalance, formatResult, fetchWalletBalances } from "./shared/wallet-balance.ts";
+import { resolveStellarNetwork } from "./shared/stellar-network.ts";
+const STELLAR_CONFIG = resolveStellarNetwork();
 import { appendAuditEntry, auditRouter } from "./shared/audit-log.ts";
 import { pushTokenRouter } from "./shared/push-tokens.ts";
 import {
@@ -181,6 +183,7 @@ const envSchema = z
     LLM_MODEL: z.string().min(1).optional(),
     CAREGIVER_TOKEN: z.string().min(1, "CAREGIVER_TOKEN required"),
     AGENT_API_KEY: z.string().min(1).optional(),
+    PHARMACY_ADMIN_TOKEN: z.string().min(1).optional(),
     OZ_FACILITATOR_API_KEY: z.string().min(1).optional(),
     X402_FACILITATOR_URL: z.string().min(1).optional(),
     BILL_AUDIT_OVERCHARGE_MULTIPLIER: z.coerce.number().positive().default(1.5),
@@ -217,6 +220,13 @@ if (!env.success) {
 if (process.env.NODE_ENV === "production" && !process.env.AGENT_API_KEY) {
   process.stderr.write(
     "Missing/invalid env: AGENT_API_KEY — required in production\n",
+  );
+  process.exit(1);
+}
+
+if (process.env.NODE_ENV === "production" && !process.env.PHARMACY_ADMIN_TOKEN) {
+  process.stderr.write(
+    "Missing/invalid env: PHARMACY_ADMIN_TOKEN — required in production\n",
   );
   process.exit(1);
 }
@@ -299,7 +309,7 @@ function loadBillAuditConfig() {
       readFileSync(thresholdsPath, "utf-8"),
     ) as AuditThresholdConfig;
     if (process.env.BILL_AUDIT_OVERCHARGE_MULTIPLIER) {
-      thresholds.default = env.data.BILL_AUDIT_OVERCHARGE_MULTIPLIER;
+      thresholds.default = env.data?.BILL_AUDIT_OVERCHARGE_MULTIPLIER ?? 1.5;
     }
     auditThresholds = thresholds;
     logger.info(
@@ -312,7 +322,7 @@ function loadBillAuditConfig() {
   } catch (error) {
     logger.error({ error }, "Failed to load bill-audit thresholds");
     auditThresholds = {
-      default: env.data.BILL_AUDIT_OVERCHARGE_MULTIPLIER,
+      default: env.data?.BILL_AUDIT_OVERCHARGE_MULTIPLIER ?? 1.5,
       byCpt: {},
     };
   }
@@ -322,7 +332,8 @@ function getAuditThreshold(cptCode: string): number {
   return (
     auditThresholds.byCpt[cptCode] ??
     auditThresholds.default ??
-    env.data.BILL_AUDIT_OVERCHARGE_MULTIPLIER
+    env.data?.BILL_AUDIT_OVERCHARGE_MULTIPLIER ??
+    1.5
   );
 }
 
@@ -584,6 +595,11 @@ app.put("/agent/recipients/:recipientId", (req, res) => {
 // PHARMACY PRICE API (was port 3001)
 // ============================================================
 
+if (!process.env.PHARMACY_ADMIN_TOKEN) {
+  logger.warn(
+    "PHARMACY_ADMIN_TOKEN not set; falling back to CAREGIVER_TOKEN",
+  );
+}
 const PHARMACY_ADMIN_TOKEN =
   process.env.PHARMACY_ADMIN_TOKEN || CAREGIVER_TOKEN;
 const pharmacyStore = createPharmacyPricingStore();
@@ -624,8 +640,25 @@ app.post("/pharmacy/drugs", requirePharmacyAdmin, (req, res) => {
     return;
   }
 
+  const payload = parsedBody.data as DrugRecordInput;
+  const sanitizedName = sanitizeUserString(payload.name);
+  const sanitizedDisplayName = payload.displayName !== undefined
+    ? sanitizeUserString(payload.displayName)
+    : undefined;
+
+  if (!sanitizedName) {
+    res.status(400).json({
+      error: "Drug name must contain safe characters",
+    });
+    return;
+  }
+
   res.status(201).json({
-    drug: pharmacyStore.upsertDrug(parsedBody.data as DrugRecordInput),
+    drug: pharmacyStore.upsertDrug({
+      ...payload,
+      name: sanitizedName,
+      displayName: sanitizedDisplayName,
+    }),
   });
 });
 
@@ -644,8 +677,25 @@ app.put("/pharmacy/drugs/:drugName", requirePharmacyAdmin, (req, res) => {
     return;
   }
 
+  const payload = parsedBody.data as DrugRecordInput;
+  const sanitizedName = sanitizeUserString(payload.name);
+  const sanitizedDisplayName = payload.displayName !== undefined
+    ? sanitizeUserString(payload.displayName)
+    : undefined;
+
+  if (!sanitizedName) {
+    res.status(400).json({
+      error: "Drug name must contain safe characters",
+    });
+    return;
+  }
+
   res.json({
-    drug: pharmacyStore.upsertDrug(parsedBody.data as DrugRecordInput),
+    drug: pharmacyStore.upsertDrug({
+      ...payload,
+      name: sanitizedName,
+      displayName: sanitizedDisplayName,
+    }),
   });
 });
 
@@ -670,10 +720,20 @@ app.post("/pharmacy/pharmacies", requirePharmacyAdmin, (req, res) => {
     return;
   }
 
+  const payload = parsedBody.data as PharmacyRecordInput;
+  const sanitizedName = sanitizeUserString(payload.name);
+  if (!sanitizedName) {
+    res.status(400).json({
+      error: "Pharmacy name must contain safe characters",
+    });
+    return;
+  }
+
   res.status(201).json({
-    pharmacy: pharmacyStore.upsertPharmacy(
-      parsedBody.data as PharmacyRecordInput,
-    ),
+    pharmacy: pharmacyStore.upsertPharmacy({
+      ...payload,
+      name: sanitizedName,
+    }),
   });
 });
 
@@ -696,10 +756,20 @@ app.put(
       return;
     }
 
+    const payload = parsedBody.data as PharmacyRecordInput;
+    const sanitizedName = sanitizeUserString(payload.name);
+    if (!sanitizedName) {
+      res.status(400).json({
+        error: "Pharmacy name must contain safe characters",
+      });
+      return;
+    }
+
     res.json({
-      pharmacy: pharmacyStore.upsertPharmacy(
-        parsedBody.data as PharmacyRecordInput,
-      ),
+      pharmacy: pharmacyStore.upsertPharmacy({
+        ...payload,
+        name: sanitizedName,
+      }),
     });
   },
 );
@@ -768,7 +838,7 @@ app.get(
   "/pharmacy/compare",
   perRouteLimiters.pharmacyCompare,
   concurrentRequestsMiddleware("pharmacy_compare"),
-  (req, res) => {
+  async (req, res) => {
     const parsedQuery = PharmacyCompareQuerySchema.safeParse({
       drug: req.query.drug,
       dosage: req.query.dosage,
@@ -1270,16 +1340,16 @@ app.get("/agent/adherence", (req, res) => {
   const recipientId = (req.query.recipient_id as string) || "rosa";
   res.json(getAdherenceStatus(recipientId));
 });
-app.get("/agent/adherence/pending", (req, res) => {
+app.get("/agent/adherence/pending", async (req, res) => {
   const recipientId = (req.query.recipient_id as string) || "rosa";
-  const pending = getPendingAdherences(recipientId);
+  const pending = await getPendingAdherences(recipientId);
   res.json({ pending, count: pending.length, recipientId });
 });
-app.post("/agent/adherence/confirm", (req, res) => {
+app.post("/agent/adherence/confirm", async (req, res) => {
   const { record_id } = req.body ?? {};
   if (!record_id)
     return res.status(400).json({ error: "record_id is required" });
-  const success = confirmAdherenceReminder(record_id);
+  const success = await confirmAdherenceReminder(record_id);
   res.json({ success: success.success });
 });
 // #1237: manual vitals logging, charted alongside medication adherence.
@@ -1621,7 +1691,7 @@ export async function bootAccountCheck(
     const fetchPromise = fetchWalletBalances(
       publicKey,
       STELLAR_CONFIG.horizonUrl,
-      env.data.USDC_ISSUER || "",
+      process.env.USDC_ISSUER || "",
     );
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(

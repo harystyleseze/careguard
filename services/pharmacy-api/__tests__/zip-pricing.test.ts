@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { getPharmacyPrices } from "../../../shared/pharmacy-pricing.ts";
 import { buildCompareResponse, PharmacyCompareResponseSchema } from "../logic.ts";
+import { logger } from "../../../shared/logger.ts";
 
 describe("Zip-aware pharmacy pricing (Issue #11)", () => {
   it("same zip returns identical prices", () => {
@@ -54,4 +55,49 @@ describe("Zip-aware pharmacy pricing (Issue #11)", () => {
       expect(parsed.data.isFallbackZip).toBe(false);
     }
   });
+
+  it("rejects an empty price list instead of returning a non-comparison response", () => {
+    expect(() =>
+      buildCompareResponse({
+        drug: "lisinopril",
+        dosage: "10mg",
+        zip: "90210",
+        payTo: "GXXXXXX",
+        network: "stellar:testnet",
+        prices: [],
+      }),
+    ).toThrow("Cannot build a pharmacy comparison without prices");
+  });
+
+  it.each([undefined, "n/a mi"])(
+    "returns a null distance and warns when distance is missing or malformed (%s)",
+    (distance) => {
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+      try {
+        const response = buildCompareResponse({
+          drug: "lisinopril",
+          dosage: "10mg",
+          zip: "90210",
+          payTo: "GXXXXXX",
+          network: "stellar:testnet",
+          prices: [{
+            pharmacy: "Test Pharmacy",
+            pharmacyId: "test-001",
+            price: 4.5,
+            distance,
+          }],
+        });
+
+        expect(response.prices[0].distance).toBeNull();
+        expect(response.cheapest.distance).toBeNull();
+        expect(PharmacyCompareResponseSchema.parse(response)).toEqual(response);
+        expect(warn).toHaveBeenCalledWith(
+          expect.objectContaining({ pharmacyId: "test-001" }),
+          "Unable to normalize pharmacy distance; returning null",
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
 });

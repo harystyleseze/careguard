@@ -23,6 +23,20 @@ Operational runbooks for on-call engineers. Each runbook follows the template:
 | [disk-full.md](disk-full.md) | Disk full / data directory exhaustion — diagnosing largest writers, safe recovery without breaking the audit-log hash chain |
 | [grafana-backup.md](grafana-backup.md) | Grafana dashboard state lost after `docker compose down -v` — what's provisioned (survives) vs. UI-only (doesn't), exporting dashboards back into `docker/grafana/dashboards/`, restoring provisioning after a fresh boot |
 | [rate-limit-tuning.md](rate-limit-tuning.md) | Tuning `RATE_LIMIT_*` thresholds safely — reading `ratelimit_hits_total`, telling throttling apart from abuse, and rolling out a change without locking out the dashboard |
+| [tune-audit-thresholds.md](tune-audit-thresholds.md) | Tuning `BILL_AUDIT_*` multipliers and `BILL_AUDIT_MAX_ITEMS`, plus triaging `bill_audit_oversized_rejections_total` |
+| [process-health.md](process-health.md) | Diagnosing Node.js event-loop lag, V8 heap pressure, RSS growth, and GC pause alerts |
+| [audit-log-tamper-detected.md](audit-log-tamper-detected.md) | Detecting, locking down, and recovering from a broken audit-log hash chain, plus quarterly game-day drill |
+
+---
+
+## Game-Day Drills
+
+| Drill | Issue | Summary |
+|---|---|---|
+| [962-oz-facilitator-outage.md](../drills/962-oz-facilitator-outage.md) | #962 | Block outbound OZ facilitator egress and verify fail-closed behaviour & recovery |
+| [964-sighup-key-rotation.md](../drills/964-sighup-key-rotation.md) | #964 | Rehearse SIGHUP-based `AGENT_SECRET_KEY` rotation under live traffic & 60s TTL fallback |
+| [965-render-secret-rotation.md](../drills/965-render-secret-rotation.md) | #965 | Rehearse Render `sync:false` secret update, SIGHUP reload, and manual restart timing |
+| [967-network-switch.md](../drills/967-network-switch.md) | #967 | Rehearse runtime `STELLAR_NETWORK` switch via SIGHUP and verify startup guards |
 
 ---
 

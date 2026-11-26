@@ -1,0 +1,176 @@
+# CareGuard Multi-Window, Multi-Burn-Rate SLO Alert Rules — Issue #958
+#
+# Implements the Google SRE workbook multi-window, multi-burn-rate alerting
+# pattern on top of the pre-aggregated SLI ratio series defined in
+# docker/prometheus/recording-rules.yml (`careguard:<sli>:error:ratio_rate<window>`).
+#
+# Each alert pairs a short-window breach with a long-window breach so transient
+# spikes do not page on-call while genuine error-budget burn is caught quickly:
+#   - Fast burn (critical): 14.4x burn rate (2% of 30d budget consumed in 1h)
+#     paired across 1h AND 5m windows.
+#   - Slow burn (warning):  1x burn rate (sustained budget exhaustion over 3d)
+#     paired across 3d AND 6h windows.
+#
+# Validate with:
+#   promtool check rules docker/prometheus/alert-rules.yml
+#
+# Cross-linked: docker/prometheus/recording-rules.yml,
+#               docker/prometheus/prometheus.yml,
+#               docs/observability/slo.md.
+
+groups:
+  # -------------------------------------------------------------------------
+  # Agent run SLO (target >= 99% success => 0.01 error budget)
+  # -------------------------------------------------------------------------
+  - name: careguard-burn-rate-agent-run
+    rules:
+      - alert: AgentRunBurnRateCritical
+        # 14.4x burn rate on 1% error budget = 0.144
+        expr: |
+          careguard:agent_run_error:ratio_rate1h > (14.4 * 0.01)
+          and
+          careguard:agent_run_error:ratio_rate5m > (14.4 * 0.01)
+        for: 2m
+        labels:
+          severity: critical
+          slo: agent_run
+        annotations:
+          summary: "Agent run error budget burning fast (14.4x)"
+          description: >
+            Agent run error ratio is {{ $value | humanizePercentage }} across
+            both 5m and 1h windows (14.4x burn rate against 99% SLO).
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/README.md"
+
+      - alert: AgentRunBurnRateWarning
+        # 1x burn rate on 1% error budget = 0.01
+        expr: |
+          careguard:agent_run_error:ratio_rate3d > (1 * 0.01)
+          and
+          careguard:agent_run_error:ratio_rate6h > (1 * 0.01)
+        for: 15m
+        labels:
+          severity: warning
+          slo: agent_run
+        annotations:
+          summary: "Agent run error budget sustained burn (1x)"
+          description: >
+            Agent run error ratio is {{ $value | humanizePercentage }} across
+            both 6h and 3d windows (sustained burn against 99% SLO).
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/README.md"
+
+  # -------------------------------------------------------------------------
+  # Stellar transaction SLO (target >= 99.5% success => 0.005 error budget)
+  # -------------------------------------------------------------------------
+  - name: careguard-burn-rate-stellar-tx
+    rules:
+      - alert: StellarTxBurnRateCritical
+        # 14.4x burn rate on 0.5% error budget = 0.072
+        expr: |
+          careguard:stellar_tx_error:ratio_rate1h > (14.4 * 0.005)
+          and
+          careguard:stellar_tx_error:ratio_rate5m > (14.4 * 0.005)
+        for: 2m
+        labels:
+          severity: critical
+          slo: stellar_tx
+        annotations:
+          summary: "Stellar tx error budget burning fast (14.4x)"
+          description: >
+            Stellar tx error ratio is {{ $value | humanizePercentage }} across
+            both 5m and 1h windows (14.4x burn rate against 99.5% SLO).
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/oz-facilitator-outage.md"
+
+      - alert: StellarTxBurnRateWarning
+        # 1x burn rate on 0.5% error budget = 0.005
+        expr: |
+          careguard:stellar_tx_error:ratio_rate3d > (1 * 0.005)
+          and
+          careguard:stellar_tx_error:ratio_rate6h > (1 * 0.005)
+        for: 15m
+        labels:
+          severity: warning
+          slo: stellar_tx
+        annotations:
+          summary: "Stellar tx error budget sustained burn (1x)"
+          description: >
+            Stellar tx error ratio is {{ $value | humanizePercentage }} across
+            both 6h and 3d windows (sustained burn against 99.5% SLO).
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/oz-facilitator-outage.md"
+
+  # -------------------------------------------------------------------------
+  # x402 settlement SLO (target >= 99.5% success => 0.005 error budget)
+  # -------------------------------------------------------------------------
+  - name: careguard-burn-rate-x402-settlement
+    rules:
+      - alert: X402SettlementBurnRateCritical
+        # 14.4x burn rate on 0.5% error budget = 0.072
+        expr: |
+          careguard:x402_settlement_error:ratio_rate1h > (14.4 * 0.005)
+          and
+          careguard:x402_settlement_error:ratio_rate5m > (14.4 * 0.005)
+        for: 2m
+        labels:
+          severity: critical
+          slo: x402_settlement
+        annotations:
+          summary: "x402 settlement error budget burning fast (14.4x)"
+          description: >
+            x402 settlement error ratio is {{ $value | humanizePercentage }} across
+            both 5m and 1h windows (14.4x burn rate against 99.5% SLO).
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/x402-facilitator-down.md"
+
+      - alert: X402SettlementBurnRateWarning
+        # 1x burn rate on 0.5% error budget = 0.005
+        expr: |
+          careguard:x402_settlement_error:ratio_rate3d > (1 * 0.005)
+          and
+          careguard:x402_settlement_error:ratio_rate6h > (1 * 0.005)
+        for: 15m
+        labels:
+          severity: warning
+          slo: x402_settlement
+        annotations:
+          summary: "x402 settlement error budget sustained burn (1x)"
+          description: >
+            x402 settlement error ratio is {{ $value | humanizePercentage }} across
+            both 6h and 3d windows (sustained burn against 99.5% SLO).
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/x402-facilitator-down.md"
+
+  # -------------------------------------------------------------------------
+  # Agent LLM SLO (target <= 1% error => 0.01 error budget)
+  # -------------------------------------------------------------------------
+  - name: careguard-burn-rate-agent-llm
+    rules:
+      - alert: AgentLlmBurnRateCritical
+        # 14.4x burn rate on 1% error budget = 0.144
+        expr: |
+          careguard:agent_llm_error:ratio_rate1h > (14.4 * 0.01)
+          and
+          careguard:agent_llm_error:ratio_rate5m > (14.4 * 0.01)
+        for: 2m
+        labels:
+          severity: critical
+          slo: agent_llm
+        annotations:
+          summary: "Agent LLM error budget burning fast (14.4x)"
+          description: >
+            Agent LLM error ratio is {{ $value | humanizePercentage }} across
+            both 5m and 1h windows (14.4x burn rate against 1% SLO).
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/llm-rate-limit.md"
+
+      - alert: AgentLlmBurnRateWarning
+        # 1x burn rate on 1% error budget = 0.01
+        expr: |
+          careguard:agent_llm_error:ratio_rate3d > (1 * 0.01)
+          and
+          careguard:agent_llm_error:ratio_rate6h > (1 * 0.01)
+        for: 15m
+        labels:
+          severity: warning
+          slo: agent_llm
+        annotations:
+          summary: "Agent LLM error budget sustained burn (1x)"
+          description: >
+            Agent LLM error ratio is {{ $value | humanizePercentage }} across
+            both 6h and 3d windows (sustained burn against 1% SLO).
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/llm-rate-limit.md"

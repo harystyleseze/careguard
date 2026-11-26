@@ -31,3 +31,10 @@ If these criteria are not met, the server will log an error and refuse to start 
   - Set `BILL_AUDIT_OVERCHARGE_MULTIPLIER=2.0`
   - Set `BILL_AUDIT_SUGGESTED_MULTIPLIER=1.5`
   - Set `BILL_AUDIT_UPCODED_MULTIPLIER=4.0`
+
+## Line-Item Cap (`BILL_AUDIT_MAX_ITEMS`)
+
+- **`BILL_AUDIT_MAX_ITEMS`** (default `500`): Maximum number of line items accepted by `POST /bill/audit` before returning HTTP `400` and incrementing `bill_audit_oversized_rejections_total`.
+- **Triaging `BillAuditOversizedRejectionsSustained` alerts**:
+  - **Legitimate oversized bills**: Inspect request logs / correlation IDs to see if real caregiver hospitalisations (e.g. multi-week ICU stays) are routinely exceeding 500 line items. If so, raise `BILL_AUDIT_MAX_ITEMS` (e.g. to `750` or `1000`) and verify `bill_audit_duration_ms` p95 stays within budget via `load/bill-audit.js`.
+  - **Abuse / limit probing**: If rejections come from a single IP, unauthenticated/repetitive payloads, or synthetic line-item counts far above clinical norms, tighten rate-limit rules (see `docs/runbooks/rate-limit-tuning.md`) rather than raising the cap.

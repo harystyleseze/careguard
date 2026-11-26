@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import type { Server } from "http";
+import { MAX_FREE_TEXT_LENGTH } from "../../../shared/free-text.ts";
 
 /**
  * HTTP integration tests (Issue #788) for POST /bill/audit, GET /bill/sample,
@@ -109,6 +110,24 @@ describe("POST /bill/audit (Issue #788)", () => {
     const res = await request(app).post("/bill/audit").send({ lineItems });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/exceeds max/);
+    expect(res.body.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("rejects an oversized per-item description before any payment step (Issue #920)", async () => {
+    const res = await request(app)
+      .post("/bill/audit")
+      .send({
+        lineItems: [
+          {
+            description: "A".repeat(MAX_FREE_TEXT_LENGTH + 1),
+            cptCode: "99213",
+            quantity: 1,
+            chargedAmount: 50,
+          },
+        ],
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/description/);
     expect(res.body.code).toBe("VALIDATION_ERROR");
   });
 

@@ -2,6 +2,7 @@ import { mkdirSync } from "fs";
 import { createRequire } from "module";
 import path from "path";
 import { logger } from "../../shared/logger.ts";
+import { getDataFilePath } from "../../shared/paths.ts";
 import { PHARMACY_SEED_DATA, type PharmacySeedData } from "./seed.ts";
 
 const require = createRequire(import.meta.url);
@@ -33,11 +34,11 @@ export interface PharmacyPricingStoreOptions {
   seedData?: PharmacySeedData;
 }
 
-function normalizeDrugName(drugName: string) {
+export function normalizeDrugName(drugName: string) {
   return drugName.trim().toLowerCase();
 }
 
-function normalizePharmacyId(pharmacyId: string) {
+export function normalizePharmacyId(pharmacyId: string) {
   return pharmacyId.trim().toLowerCase();
 }
 
@@ -50,27 +51,40 @@ function defaultDbPath() {
     return ":memory:";
   }
 
-  // Fall back to DATA_DIR so a single-volume-mount deployment works (#1043).
-  if (process.env.DATA_DIR) {
-    return path.join(process.env.DATA_DIR, "pharmacy-pricing.sqlite");
-  }
-
-  return new URL("../../data/pharmacy-pricing.sqlite", import.meta.url).pathname;
+  return getDataFilePath("pharmacy-pricing.sqlite");
 }
 
 export class PharmacyPricingStore {
   private readonly db: any;
 
+  /**
+   * Synchronous SQLite operations (prepare().all(), .get(), .run()) block the Node.js event loop
+   * for their full duration. Under concurrent requests or large datasets, this serializes all
+   * pharmacy-api routes and can impact latency for unrelated endpoints in the same process.
+   *
+   * shortcut: Synchronous DatabaseSync API for now. Upgrade path: offload to worker thread or
+   * switch to async binding (e.g. better-sqlite3 worker pool, or sqlite3 async) when load
+   * testing shows blocking overhead under concurrent load.
+   */
   constructor(options: PharmacyPricingStoreOptions = {}) {
-    const dbPath = options.dbPath ?? defaultDbPath();
-    if (dbPath !== ":memory:") {
-      mkdirSync(path.dirname(dbPath), { recursive: true });
-    }
+    const configuredPath = options.dbPath ?? defaultDbPath();
+    const dbPath = configuredPath === ":memory:" ? configuredPath : path.resolve(configuredPath);
 
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA foreign_keys = ON");
-    this.migrate();
-    this.seedIfEmpty(options.seedData ?? PHARMACY_SEED_DATA);
+    try {
+      if (dbPath !== ":memory:") {
+        mkdirSync(path.dirname(dbPath), { recursive: true });
+      }
+
+      this.db = new DatabaseSync(dbPath);
+      this.db.exec("PRAGMA foreign_keys = ON");
+      this.migrate();
+      this.seedIfEmpty(options.seedData ?? PHARMACY_SEED_DATA);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Unable to initialize pharmacy pricing database at ${dbPath}: ${reason}`, {
+        cause: error,
+      });
+    }
   }
 
   private migrate() {
@@ -265,6 +279,7 @@ export class PharmacyPricingStore {
   }
 
   getPrices(drugName: string): PharmacyPriceRecord[] {
+    // Keep this SQLite lookup as the source of truth for GET /pharmacy/compare in both API entrypoints.
     const normalizedDrugName = normalizeDrugName(drugName);
     const rows = this.db
       .prepare(`
@@ -305,28 +320,33 @@ export class PharmacyPricingStore {
     const drug = normalizeDrugName(input.drug);
     const pharmacyId = normalizePharmacyId(input.pharmacyId);
 
-    const drugExists = this.db
-      .prepare("SELECT 1 AS found FROM drugs WHERE name = ?")
-      .get(drug) as { found?: number } | undefined;
-    if (!drugExists?.found) {
-      throw new Error(`Drug not found: ${input.drug}`);
-    }
+    try {
+      this.db
+        .prepare(`
+          INSERT INTO prices (drug_name, pharmacy_id, price)
+          VALUES (?, ?, ?)
+          ON CONFLICT(drug_name, pharmacy_id) DO UPDATE SET
+            price = excluded.price
+        `)
+        .run(drug, pharmacyId, input.price);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("FOREIGN KEY constraint failed")) {
+        const drugExists = this.db
+          .prepare("SELECT 1 AS found FROM drugs WHERE name = ?")
+          .get(drug) as { found?: number } | undefined;
+        if (!drugExists?.found) {
+          throw new Error(`Drug not found: ${input.drug}`, { cause: error });
+        }
 
-    const pharmacyExists = this.db
-      .prepare("SELECT 1 AS found FROM pharmacies WHERE id = ?")
-      .get(pharmacyId) as { found?: number } | undefined;
-    if (!pharmacyExists?.found) {
-      throw new Error(`Pharmacy not found: ${input.pharmacyId}`);
+        const pharmacyExists = this.db
+          .prepare("SELECT 1 AS found FROM pharmacies WHERE id = ?")
+          .get(pharmacyId) as { found?: number } | undefined;
+        if (!pharmacyExists?.found) {
+          throw new Error(`Pharmacy not found: ${input.pharmacyId}`, { cause: error });
+        }
+      }
+      throw error;
     }
-
-    this.db
-      .prepare(`
-        INSERT INTO prices (drug_name, pharmacy_id, price)
-        VALUES (?, ?, ?)
-        ON CONFLICT(drug_name, pharmacy_id) DO UPDATE SET
-          price = excluded.price
-      `)
-      .run(drug, pharmacyId, input.price);
 
     return this.db
       .prepare(`

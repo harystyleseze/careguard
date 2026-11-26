@@ -39,3 +39,7 @@ If `SIGHUP` cannot be sent or for secrets that are evaluated only at boot time (
 2. Send `SIGHUP` signal to the running server.
 3. Make an x402 API query (e.g. `GET /pharmacy/compare?drug=lisinopril`).
 4. Verify the response succeeds without downtime and logs confirm new key usage.
+
+## Game-Day Drill
+
+See [docs/drills/965-render-secret-rotation.md](../drills/965-render-secret-rotation.md) and `scripts/drills/drill-render-secret-rotation.ts` for the full staging rehearsal procedure.

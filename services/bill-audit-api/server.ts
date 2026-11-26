@@ -13,10 +13,17 @@ if (!process.stdout.isTTY) {
 }
 
 import "dotenv/config";
+import path from "path";
+import { pathToFileURL } from "url";
 import express from "express";
 import { readFileSync } from "fs";
+import { z } from "zod";
 import {
   BillAuditValidationError,
+  DEFAULT_RATES_AS_OF,
+  DEFAULT_RATES_VALID_UNTIL,
+  DEFAULT_SUGGESTED_MULTIPLIER,
+  DEFAULT_UPCODED_MULTIPLIER,
   FAIR_MARKET_RATES,
   auditBill as sharedAuditBill,
   type LineItem,
@@ -34,17 +41,22 @@ import { logger } from "../../shared/logger.ts";
 import { requestLifecycleMiddleware } from "../../shared/request-lifecycle.ts";
 import { createJsonBodyErrorHandler } from "../../shared/json-body-error.ts";
 import { gracefulShutdown } from "../../shared/graceful-shutdown.ts";
+import { sanitizeUserString } from "../../shared/sanitize.ts";
+import { MAX_FREE_TEXT_LENGTH } from "../../shared/free-text.ts";
 import {
-  SanitizationError,
-  sanitizeRequiredUserString,
-} from "../../shared/sanitize.ts";
-import { billAuditOversizedRejectionsTotal } from "../../shared/metrics.ts";
+  billAuditOversizedRejectionsTotal,
+  billAuditConfigLoadFailureTotal,
+  billAuditConfigLoaded,
+} from "../../shared/metrics.ts";
 import { extractLineItemsFromBillImage } from "../../shared/bill-ocr.ts";
 
 const PORT = parseInt(process.env.BILL_AUDIT_API_PORT || "3002", 10);
-const PAY_TO = process.env.BILL_PROVIDER_PUBLIC_KEY;
 
-if (!PAY_TO) throw new Error("BILL_PROVIDER_PUBLIC_KEY required in .env");
+function validateStartup() {
+  const payTo = process.env.BILL_PROVIDER_PUBLIC_KEY;
+  if (!payTo) throw new Error("BILL_PROVIDER_PUBLIC_KEY required in .env");
+  return payTo;
+}
 
 // Duplicate detection allowlist configuration
 interface DuplicateAllowlistEntry {
@@ -55,23 +67,55 @@ interface DuplicateAllowlistEntry {
   facilityId?: string; // Optional: per-facility override
 }
 
+// Runtime schema validation for config files (Issue #918).
+const DuplicateAllowlistEntrySchema = z.object({
+  code: z.string(),
+  reason: z.string(),
+  addedBy: z.string(),
+  addedAt: z.string(),
+  facilityId: z.string().optional(),
+});
+const DuplicateAllowlistSchema = z.array(DuplicateAllowlistEntrySchema);
+
+const AuditThresholdsSchema = z
+  .object({
+    default: z.number().finite(),
+    byCpt: z.record(z.string(), z.number().finite()),
+  })
+  .strict();
+
 let duplicateAllowlist: Set<string> = new Set();
 let allowlistMetadata: Map<string, DuplicateAllowlistEntry> = new Map();
-let allowlistLoaded = false;
+export let allowlistLoaded = false;
 
-function loadDuplicateAllowlist() {
+export function loadDuplicateAllowlist() {
   try {
     const allowlistPath = new URL(
       "./duplicates-allowlist.json",
       import.meta.url,
     ).pathname;
-    const data = JSON.parse(
-      readFileSync(allowlistPath, "utf-8"),
-    ) as DuplicateAllowlistEntry[];
-
+    const raw = JSON.parse(readFileSync(allowlistPath, "utf-8"));
+    const parsed = DuplicateAllowlistSchema.safeParse(raw);
+    if (!parsed.success) {
+      const issues = parsed.error.issues
+        .map((i) => `${String(i.path.join("."))}: ${i.message}`)
+        .join("; ");
+      logger.error(
+        { issues, file: allowlistPath },
+        "duplicates-allowlist.json failed schema validation; using empty allowlist",
+      );
+      duplicateAllowlist = new Set();
+      allowlistMetadata = new Map();
+      allowlistLoaded = false;
+      billAuditConfigLoaded({ config: "allowlist" }).set(0);
+      billAuditConfigLoadFailureTotal({ config: "allowlist" }).inc();
+      return;
+    }
+    const data = parsed.data;
     duplicateAllowlist = new Set(data.map((entry) => entry.code));
     allowlistMetadata = new Map(data.map((entry) => [entry.code, entry]));
     allowlistLoaded = true;
+    billAuditConfigLoaded({ config: "allowlist" }).set(1);
 
     logger.info(
       { count: duplicateAllowlist.size, codes: Array.from(duplicateAllowlist) },
@@ -85,6 +129,8 @@ function loadDuplicateAllowlist() {
     duplicateAllowlist = new Set();
     allowlistMetadata = new Map();
     allowlistLoaded = false;
+    billAuditConfigLoaded({ config: "allowlist" }).set(0);
+    billAuditConfigLoadFailureTotal({ config: "allowlist" }).inc();
   }
 }
 
@@ -102,10 +148,10 @@ export const BILL_AUDIT_OVERCHARGE_MULTIPLIER = parseFloat(
   process.env.BILL_AUDIT_OVERCHARGE_MULTIPLIER || "1.5",
 );
 export const BILL_AUDIT_SUGGESTED_MULTIPLIER = parseFloat(
-  process.env.BILL_AUDIT_SUGGESTED_MULTIPLIER || "1.2",
+  process.env.BILL_AUDIT_SUGGESTED_MULTIPLIER || String(DEFAULT_SUGGESTED_MULTIPLIER),
 );
 export const BILL_AUDIT_UPCODED_MULTIPLIER = parseFloat(
-  process.env.BILL_AUDIT_UPCODED_MULTIPLIER || "3.0",
+  process.env.BILL_AUDIT_UPCODED_MULTIPLIER || String(DEFAULT_UPCODED_MULTIPLIER),
 );
 
 if (
@@ -128,23 +174,69 @@ interface AuditThresholdConfig {
   byCpt: Record<string, number>;
 }
 
-let auditThresholds: AuditThresholdConfig = {
+export let auditThresholds: AuditThresholdConfig = {
   default: BILL_AUDIT_OVERCHARGE_MULTIPLIER,
   byCpt: {},
 };
-let thresholdsLoaded = false;
+export let thresholdsLoaded = false;
 
-function loadAuditThresholds() {
+export function isValidByCptMultiplier(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value > 1.0 &&
+    value <= BILL_AUDIT_UPCODED_MULTIPLIER
+  );
+}
+
+export function loadAuditThresholds() {
   try {
     const thresholdsPath = new URL("./audit_thresholds.json", import.meta.url)
       .pathname;
-    auditThresholds = JSON.parse(
-      readFileSync(thresholdsPath, "utf-8"),
-    ) as AuditThresholdConfig;
-    if (process.env.BILL_AUDIT_OVERCHARGE_MULTIPLIER) {
-      auditThresholds.default = BILL_AUDIT_OVERCHARGE_MULTIPLIER;
+    const raw = JSON.parse(readFileSync(thresholdsPath, "utf-8"));
+    const parsed = AuditThresholdsSchema.safeParse(raw);
+    if (!parsed.success) {
+      const issues = parsed.error.issues
+        .map((i) => `${String(i.path.join("."))}: ${i.message}`)
+        .join("; ");
+      logger.error(
+        { issues, file: thresholdsPath },
+        "audit_thresholds.json failed schema validation; using default threshold",
+      );
+      auditThresholds = { default: BILL_AUDIT_OVERCHARGE_MULTIPLIER, byCpt: {} };
+      thresholdsLoaded = false;
+      billAuditConfigLoaded({ config: "thresholds" }).set(0);
+      billAuditConfigLoadFailureTotal({ config: "thresholds" }).inc();
+      return;
     }
+    const data = parsed.data;
+    if (process.env.BILL_AUDIT_OVERCHARGE_MULTIPLIER) {
+      data.default = BILL_AUDIT_OVERCHARGE_MULTIPLIER;
+    }
+
+    // #919: re-validate each byCpt override against the same ordering invariant
+    // before accepting it. An invalid override is rejected and the previous
+    // valid thresholds are retained.
+    const badEntry = Object.entries(data.byCpt ?? {}).find(
+      ([, value]) => !isValidByCptMultiplier(value),
+    );
+    if (badEntry) {
+      const [cptCode, value] = badEntry;
+      billAuditConfigLoadFailureTotal({ config: "thresholds" }).inc();
+      logger.error(
+        {
+          cptCode,
+          value,
+          validRange: `> 1.0 and <= ${BILL_AUDIT_UPCODED_MULTIPLIER}`,
+        },
+        "Rejected invalid byCpt threshold override; retaining previous thresholds",
+      );
+      return;
+    }
+
+    auditThresholds = data;
     thresholdsLoaded = true;
+    billAuditConfigLoaded({ config: "thresholds" }).set(1);
     logger.info(
       {
         default: auditThresholds.default,
@@ -159,10 +251,12 @@ function loadAuditThresholds() {
     );
     auditThresholds = { default: BILL_AUDIT_OVERCHARGE_MULTIPLIER, byCpt: {} };
     thresholdsLoaded = false;
+    billAuditConfigLoaded({ config: "thresholds" }).set(0);
+    billAuditConfigLoadFailureTotal({ config: "thresholds" }).inc();
   }
 }
 
-function getAuditThreshold(cptCode: string): number {
+export function getAuditThreshold(cptCode: string): number {
   return auditThresholds.byCpt[cptCode] ?? auditThresholds.default;
 }
 
@@ -176,8 +270,8 @@ process.on("SIGHUP", () => {
 });
 
 // Rates valid dates
-const RATES_AS_OF = "2026-01-01";
-const RATES_VALID_UNTIL = "2026-12-31";
+const RATES_AS_OF = DEFAULT_RATES_AS_OF;
+const RATES_VALID_UNTIL = DEFAULT_RATES_VALID_UNTIL;
 
 export { FAIR_MARKET_RATES };
 
@@ -256,224 +350,266 @@ export function auditBill(
   return result;
 }
 
-export const app = express();
-applySecurityMiddleware(app);
-app.use(createCorsMiddleware());
-app.use(express.json({ limit: process.env.BILL_AUDIT_BODY_LIMIT ?? "256kb" }));
-app.use(requestLifecycleMiddleware());
+function createBillAuditApp(payTo: string) {
+  const app = express();
+  applySecurityMiddleware(app);
+  app.use(createCorsMiddleware());
+  app.use(express.json({ limit: process.env.BILL_AUDIT_BODY_LIMIT ?? "256kb" }));
+  app.use(requestLifecycleMiddleware());
 
-app.get("/", (_req, res) => {
-  res.json({
-    service: "CareGuard Medical Bill Audit API",
-    version: "1.0.0",
-    protocol: "x402 on Stellar",
-    network: NETWORK,
-    payTo: PAY_TO,
-    price: "$0.01 per audit",
-  });
-});
-
-app.get("/bill/sample", (req, res) => {
-  // In standalone mode the recipient DB is unavailable; accept a patientName hint from the caller.
-  // In unified mode, server.ts intercepts this route and resolves the name from the recipients DB.
-  const patientName =
-    typeof req.query.patientName === "string"
-      ? req.query.patientName
-      : "Rosa Garcia";
-  res.json({
-    patientName,
-    facilityName: "General Hospital",
-    dateOfService: "2026-03-15",
-    lineItems: [
-      {
-        description: "Hospital care, high complexity",
-        cptCode: "99233",
-        quantity: 3,
-        chargedAmount: 630,
-      },
-      {
-        description: "Comprehensive metabolic panel",
-        cptCode: "80053",
-        quantity: 1,
-        chargedAmount: 95,
-      },
-      {
-        description: "Complete blood count (CBC)",
-        cptCode: "85025",
-        quantity: 1,
-        chargedAmount: 45,
-      },
-      {
-        description: "Complete blood count (CBC)",
-        cptCode: "85025",
-        quantity: 1,
-        chargedAmount: 45,
-      },
-      {
-        description: "Venipuncture (blood draw)",
-        cptCode: "36415",
-        quantity: 1,
-        chargedAmount: 10,
-      },
-      {
-        description: "Chest X-ray, 2 views",
-        cptCode: "71046",
-        quantity: 1,
-        chargedAmount: 180,
-      },
-      {
-        description: "Electrocardiogram (ECG)",
-        cptCode: "93000",
-        quantity: 1,
-        chargedAmount: 35,
-      },
-      {
-        description: "Office visit, complex",
-        cptCode: "99215",
-        quantity: 1,
-        chargedAmount: 1250,
-      },
-      {
-        description: "Hospital discharge day",
-        cptCode: "99238",
-        quantity: 1,
-        chargedAmount: 160,
-      },
-      {
-        description: "Injection, subcutaneous",
-        cptCode: "96372",
-        quantity: 2,
-        chargedAmount: 50,
-      },
-    ],
-  });
-});
-
-// Reject oversized bill audit requests BEFORE x402 payment is charged (issue #13)
-const BILL_AUDIT_MAX_ITEMS = parseInt(
-  process.env.BILL_AUDIT_MAX_ITEMS || "500",
-  10,
-);
-app.post("/bill/audit", (req, res, next) => {
-  const items = req.body?.lineItems;
-  if (Array.isArray(items) && items.length > BILL_AUDIT_MAX_ITEMS) {
-    billAuditOversizedRejectionsTotal.inc();
-    res.status(400).json({
-      error: `lineItems exceeds max (${BILL_AUDIT_MAX_ITEMS})`,
-      code: "VALIDATION_ERROR",
-    });
-    return;
-  }
-  next();
-});
-
-// x402 payment middleware
-applyX402Middleware(app, {
-  "POST /bill/audit": {
-    accepts: {
-      scheme: "exact",
+  app.get("/", (_req, res) => {
+    res.json({
+      service: "CareGuard Medical Bill Audit API",
+      version: "1.0.0",
+      protocol: "x402 on Stellar",
       network: NETWORK,
-      payTo: PAY_TO,
-      price: "$0.01",
-    },
-    description: "Medical bill audit — $0.01 USDC",
-  },
-});
+      payTo,
+      price: "$0.01 per audit",
+    });
+  });
 
-app.post("/bill/audit", (req, res) => {
-  try {
-    const validatedData = validateBillAuditRequest(req.body);
-    const sanitizedLineItems = validatedData.lineItems.map((item, index) => ({
-      ...item,
-      description: sanitizeRequiredUserString(
-        item.description,
-        `lineItems[${index}].description`,
-      ),
-    }));
-    res.json(
-      auditBill(sanitizedLineItems, {
-        providerId: validatedData.providerId,
-        providerName: validatedData.providerName,
-        recipientId: validatedData.recipientId,
-      }),
-    );
-  } catch (error) {
-    if (error instanceof SanitizationError) {
-      res.status(400).json({
-        error: error.message,
-        code: "INVALID_SANITIZED_TEXT",
-        details: {
-          issues: [{ path: error.field, message: error.message }],
+  app.get("/bill/sample", (req, res) => {
+    // In standalone mode the recipient DB is unavailable; accept a patientName hint from the caller.
+    // In unified mode, server.ts intercepts this route and resolves the name from the recipients DB.
+    const patientName =
+      typeof req.query.patientName === "string"
+        ? req.query.patientName
+        : "Rosa Garcia";
+    res.json({
+      patientName,
+      facilityName: "General Hospital",
+      dateOfService: "2026-03-15",
+      lineItems: [
+        {
+          description: "Hospital care, high complexity",
+          cptCode: "99233",
+          quantity: 3,
+          chargedAmount: 630,
         },
-      });
-    } else if (error instanceof BillAuditValidationError) {
-      const validationError = error as BillAuditValidationError;
-      res.status(400).json({
-        error: validationError.message,
-        code: validationError.code,
-        details: { issues: validationError.issues },
-      });
-    } else {
-      res.status(400).json({
-        error: "Invalid request body",
-        code: "INVALID_REQUEST_BODY",
-      });
-    }
-  }
-});
-
-app.use(
-  createJsonBodyErrorHandler({
-    code: "INVALID_JSON_BODY",
-    includeDetails: true,
-  }),
-);
-
-// --- Bill OCR endpoint (#1229) ---
-app.post("/bill/ocr", async (req, res) => {
-  const { image } = req.body ?? {};
-  if (!image || typeof image !== "string") {
-    return res.status(400).json({ error: "image (base64) is required" });
-  }
-  try {
-    const result = await extractLineItemsFromBillImage(image);
-    res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || "OCR extraction failed" });
-  }
-});
-
-let isDraining = false;
-app.get("/ready", (_req, res) => {
-  if (isDraining) {
-    res.status(503).send("Service Unavailable");
-    return;
-  }
-  if (!thresholdsLoaded || !allowlistLoaded) {
-    res.status(503).json({
-      status: "degraded",
-      checks: { thresholdsLoaded, allowlistLoaded },
+        {
+          description: "Comprehensive metabolic panel",
+          cptCode: "80053",
+          quantity: 1,
+          chargedAmount: 95,
+        },
+        {
+          description: "Complete blood count (CBC)",
+          cptCode: "85025",
+          quantity: 1,
+          chargedAmount: 45,
+        },
+        {
+          description: "Complete blood count (CBC)",
+          cptCode: "85025",
+          quantity: 1,
+          chargedAmount: 45,
+        },
+        {
+          description: "Venipuncture (blood draw)",
+          cptCode: "36415",
+          quantity: 1,
+          chargedAmount: 10,
+        },
+        {
+          description: "Chest X-ray, 2 views",
+          cptCode: "71046",
+          quantity: 1,
+          chargedAmount: 180,
+        },
+        {
+          description: "Electrocardiogram (ECG)",
+          cptCode: "93000",
+          quantity: 1,
+          chargedAmount: 35,
+        },
+        {
+          description: "Office visit, complex",
+          cptCode: "99215",
+          quantity: 1,
+          chargedAmount: 1250,
+        },
+        {
+          description: "Hospital discharge day",
+          cptCode: "99238",
+          quantity: 1,
+          chargedAmount: 160,
+        },
+        {
+          description: "Injection, subcutaneous",
+          cptCode: "96372",
+          quantity: 2,
+          chargedAmount: 50,
+        },
+      ],
     });
-    return;
-  }
-  res.send("OK");
-});
+  });
 
-export const server = app.listen(PORT, () => {
-  logger.info(
-    {
-      port: PORT,
-      network: NETWORK,
-      facilitator: OZ_FACILITATOR_URL,
-      payTo: PAY_TO,
-    },
-    "Bill Audit API started",
+  // Reject oversized bill audit requests BEFORE x402 payment is charged (issue #13)
+  const BILL_AUDIT_MAX_ITEMS = parseInt(
+    process.env.BILL_AUDIT_MAX_ITEMS || "500",
+    10,
   );
-});
+  app.post("/bill/audit", (req, res, next) => {
+    const items = req.body?.lineItems;
+    if (Array.isArray(items) && items.length > BILL_AUDIT_MAX_ITEMS) {
+      billAuditOversizedRejectionsTotal.inc();
+      res.status(400).json({
+        error: `lineItems exceeds max (${BILL_AUDIT_MAX_ITEMS})`,
+        code: "VALIDATION_ERROR",
+      });
+      return;
+    }
+    // #920: reject per-item fields that exceed the validation schema's limits
+    // before the x402 payment step, so a real payment is never charged on a
+    // request that will fail post-payment validation.
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        if (
+          item &&
+          typeof item.description === "string" &&
+          item.description.length > MAX_FREE_TEXT_LENGTH
+        ) {
+          billAuditOversizedRejectionsTotal.inc();
+          res.status(400).json({
+            error: `line item description exceeds ${MAX_FREE_TEXT_LENGTH} characters`,
+            code: "VALIDATION_ERROR",
+          });
+          return;
+        }
+      }
+    }
+    next();
+  });
 
-gracefulShutdown({
-  server,
-  onDrainStart: () => {
-    isDraining = true;
-  },
-});
+  // x402 payment middleware
+  applyX402Middleware(app, {
+    "POST /bill/audit": {
+      accepts: {
+        scheme: "exact",
+        network: NETWORK,
+        payTo,
+        price: "$0.01",
+      },
+      description: "Medical bill audit — $0.01 USDC",
+    },
+  });
+
+  app.post("/bill/audit", (req, res) => {
+    try {
+      const validatedData = validateBillAuditRequest(req.body);
+      const sanitizedLineItems = validatedData.lineItems.map((item) => ({
+        ...item,
+        description: sanitizeUserString(item.description),
+      }));
+      res.json(
+        auditBill(sanitizedLineItems, {
+          providerId: validatedData.providerId,
+          providerName: validatedData.providerName,
+          recipientId: validatedData.recipientId,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof BillAuditValidationError) {
+        const validationError = error as BillAuditValidationError;
+        res.status(400).json({
+          error: validationError.message,
+          code: validationError.code,
+          details: { issues: validationError.issues },
+        });
+      } else {
+        res.status(400).json({
+          error: "Invalid request body",
+          code: "INVALID_REQUEST_BODY",
+        });
+      }
+    }
+  });
+
+  app.use(
+    (
+      err: any,
+      _req: express.Request,
+      res: express.Response,
+      next: express.NextFunction,
+    ) => {
+      if (err.type === "entity.too.large") {
+        return res.status(413).json({
+          error: "Request body too large",
+          code: "BODY_TOO_LARGE",
+          details: { limit: err.limit },
+        });
+      }
+      next(err);
+    },
+  );
+
+  // --- Bill OCR endpoint (#1229) ---
+  app.post("/bill/ocr", async (req, res) => {
+    const { image } = req.body ?? {};
+    if (!image || typeof image !== "string") {
+      return res.status(400).json({ error: "image (base64) is required" });
+    }
+    try {
+      const result = await extractLineItemsFromBillImage(image);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "OCR extraction failed" });
+    }
+  });
+
+  let isDraining = false;
+  app.get("/ready", (_req, res) => {
+    if (isDraining) {
+      res.status(503).send("Service Unavailable");
+      return;
+    }
+    if (!thresholdsLoaded || !allowlistLoaded) {
+      res.status(503).json({
+        status: "degraded",
+        checks: { thresholdsLoaded, allowlistLoaded },
+      });
+      return;
+    }
+    res.send("OK");
+  });
+
+  return { app, setDraining: (draining: boolean) => { isDraining = draining; } };
+}
+
+const entrypointUrl = process.argv[1]
+  ? pathToFileURL(path.resolve(process.argv[1])).href
+  : "";
+
+let appInstance: ReturnType<typeof createBillAuditApp> | undefined;
+
+export function getApp() {
+  if (appInstance === undefined) {
+    throw new Error("Bill Audit app not initialized. Must call from entrypoint.");
+  }
+  return appInstance.app;
+}
+
+export let server: ReturnType<typeof express().listen> | undefined;
+
+if (import.meta.url === entrypointUrl) {
+  const payTo = validateStartup();
+  appInstance = createBillAuditApp(payTo);
+  server = appInstance.app.listen(PORT, () => {
+    logger.info(
+      {
+        port: PORT,
+        network: NETWORK,
+        facilitator: OZ_FACILITATOR_URL,
+        payTo,
+      },
+      "Bill Audit API started",
+    );
+  });
+
+  gracefulShutdown({
+    server,
+    onDrainStart: () => {
+      appInstance?.setDraining(true);
+    },
+  });
+}

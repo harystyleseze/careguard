@@ -13,6 +13,8 @@ if (!process.stdout.isTTY) {
 }
 
 import "dotenv/config";
+import path from "path";
+import { pathToFileURL } from "url";
 import express from "express";
 import {
   applyX402Middleware,
@@ -29,93 +31,133 @@ import { checkInteractions, DrugInteractionsQuerySchema } from "./logic.ts";
 import type { DrugInteractionsQuery } from "./logic.ts";
 
 const PORT = parseInt(process.env.DRUG_INTERACTION_API_PORT || "3003", 10);
-const PAY_TO = process.env.PHARMACY_2_PUBLIC_KEY;
 
-if (!PAY_TO) throw new Error("PHARMACY_2_PUBLIC_KEY required in .env");
+function validateStartup() {
+  const payTo = process.env.PHARMACY_2_PUBLIC_KEY;
+  if (!payTo) throw new Error("PHARMACY_2_PUBLIC_KEY required in .env");
+  return payTo;
+}
 
-export const app = express();
-applySecurityMiddleware(app);
-app.use(createCorsMiddleware());
-app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "20kb" }));
-app.use(requestLifecycleMiddleware());
+function createDrugInteractionApp(payTo: string) {
+  const app = express();
+  applySecurityMiddleware(app);
+  app.use(createCorsMiddleware());
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "20kb" }));
+  app.use(requestLifecycleMiddleware());
 
-app.get("/", (_req, res) => {
-  res.json({
-    service: "CareGuard Drug Interaction Check API",
-    version: "1.0.0",
-    protocol: "x402 on Stellar",
-    network: NETWORK,
-    payTo: PAY_TO,
-    price: "$0.001 per check",
-  });
-});
-
-// x402 payment middleware
-applyX402Middleware(app, {
-  "GET /drug/interactions": {
-    accepts: {
-      scheme: "exact",
+  app.get("/", (_req, res) => {
+    res.json({
+      service: "CareGuard Drug Interaction Check API",
+      version: "1.0.0",
+      protocol: "x402 on Stellar",
       network: NETWORK,
-      payTo: PAY_TO,
-      price: "$0.001",
-    },
-    description: "Drug interaction check — $0.001 USDC",
-  },
-});
-
-app.get("/drug/interactions", (req, res) => {
-  const parsedQuery = DrugInteractionsQuerySchema.safeParse({
-    meds: req.query.meds,
-  });
-  if (!parsedQuery.success) {
-    res.status(400).json({
-      error:
-        parsedQuery.error.issues[0]?.message ?? "Invalid meds query parameter",
+      payTo,
+      price: "$0.001 per check",
     });
-    return;
-  }
-
-  const result = checkInteractions(
-    (parsedQuery.data as DrugInteractionsQuery).medications,
-  );
-  res.json({
-    checkTimestamp: new Date().toISOString(),
-    protocol: {
-      name: "x402",
-      network: NETWORK,
-      price: "$0.001",
-      payTo: PAY_TO,
-    },
-    ...result,
   });
-});
 
-app.use(createJsonBodyErrorHandler());
-
-let isDraining = false;
-app.get("/ready", (_req, res) => {
-  if (isDraining) {
-    res.status(503).send("Service Unavailable");
-    return;
-  }
-  res.send("OK");
-});
-
-export const server = app.listen(PORT, () => {
-  logger.info(
-    {
-      port: PORT,
-      network: NETWORK,
-      facilitator: OZ_FACILITATOR_URL,
-      payTo: PAY_TO,
+  // x402 payment middleware
+  applyX402Middleware(app, {
+    "GET /drug/interactions": {
+      accepts: {
+        scheme: "exact",
+        network: NETWORK,
+        payTo,
+        price: "$0.001",
+      },
+      description: "Drug interaction check — $0.001 USDC",
     },
-    "Drug Interaction API started",
-  );
-});
+  });
 
-gracefulShutdown({
-  server,
-  onDrainStart: () => {
-    isDraining = true;
-  },
-});
+  app.get("/drug/interactions", (req, res) => {
+    const parsedQuery = DrugInteractionsQuerySchema.safeParse({
+      meds: req.query.meds,
+    });
+    if (!parsedQuery.success) {
+      res.status(400).json({
+        error:
+          parsedQuery.error.issues[0]?.message ?? "Invalid meds query parameter",
+      });
+      return;
+    }
+
+    const result = checkInteractions(
+      (parsedQuery.data as DrugInteractionsQuery).medications,
+    );
+    res.json({
+      checkTimestamp: new Date().toISOString(),
+      protocol: {
+        name: "x402",
+        network: NETWORK,
+        price: "$0.001",
+        payTo,
+      },
+      ...result,
+    });
+  });
+
+  app.use(
+    (
+      err: any,
+      _req: express.Request,
+      res: express.Response,
+      next: express.NextFunction,
+    ) => {
+      if (err.type === "entity.too.large") {
+        return res
+          .status(413)
+          .json({ error: "Request body too large", limit: err.limit });
+      }
+      next(err);
+    },
+  );
+
+  let isDraining = false;
+  app.get("/ready", (_req, res) => {
+    if (isDraining) {
+      res.status(503).send("Service Unavailable");
+      return;
+    }
+    res.send("OK");
+  });
+
+  return { app, setDraining: (draining: boolean) => { isDraining = draining; } };
+}
+
+const entrypointUrl = process.argv[1]
+  ? pathToFileURL(path.resolve(process.argv[1])).href
+  : "";
+
+let appInstance: ReturnType<typeof createDrugInteractionApp> | undefined;
+
+export function getApp() {
+  if (appInstance === undefined) {
+    throw new Error("Drug Interaction app not initialized. Must call from entrypoint.");
+  }
+  return appInstance.app;
+}
+
+export let server: ReturnType<typeof express().listen> | undefined;
+
+if (import.meta.url === entrypointUrl) {
+  const payTo = validateStartup();
+  appInstance = createDrugInteractionApp(payTo);
+  server = appInstance.app.listen(PORT, () => {
+    logger.info(
+      {
+        port: PORT,
+        network: NETWORK,
+        facilitator: OZ_FACILITATOR_URL,
+        payTo,
+      },
+      "Drug Interaction API started",
+    );
+  });
+
+  gracefulShutdown({
+    server,
+    onDrainStart: () => {
+      appInstance?.setDraining(true);
+    },
+  });
+}

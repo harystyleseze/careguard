@@ -4,6 +4,7 @@ import {
   optionalFreeTextSchema,
   zipCodeSchema,
 } from "../../shared/free-text.ts";
+import { logger } from "../../shared/logger.ts";
 import { DEFAULT_ZIP_CODE } from "../../shared/pharmacy-pricing.ts";
 import { toDisplayName } from "./db.ts";
 
@@ -56,9 +57,22 @@ export const PharmacyPriceItemSchema = z.object({
   pharmacyName: z.string(),
   pharmacyId: z.string(),
   price: z.number().positive(),
-  distance: z.number().nonnegative(),
+  distance: z.number().nonnegative().nullable(),
   inStock: z.boolean(),
 });
+
+export const NoPricesFoundResponseSchema = z.object({
+  error: z.string(),
+  code: z.literal("NOT_FOUND_DRUG"),
+});
+export type NoPricesFoundResponse = z.infer<typeof NoPricesFoundResponseSchema>;
+
+export function buildNoPricesFoundResponse(drug: string): NoPricesFoundResponse {
+  return NoPricesFoundResponseSchema.parse({
+    error: `No pricing records found for drug: ${drug}`,
+    code: "NOT_FOUND_DRUG",
+  });
+}
 
 export const PharmacyCompareResponseSchema = z.object({
   drug: z.string(),
@@ -78,18 +92,31 @@ export const PharmacyCompareResponseSchema = z.object({
     pharmacyName: z.string(),
     pharmacyId: z.string(),
     price: z.number().positive(),
-    distance: z.number().nonnegative(),
+    distance: z.number().nonnegative().nullable(),
   }),
   mostExpensive: z.object({
     pharmacyName: z.string(),
     pharmacyId: z.string(),
     price: z.number().positive(),
-    distance: z.number().nonnegative(),
+    distance: z.number().nonnegative().nullable(),
   }),
   potentialSavings: z.number().nonnegative(),
   savingsPercent: z.number().nonnegative(),
 });
 export type PharmacyCompareResponse = z.infer<typeof PharmacyCompareResponseSchema>;
+
+export const X402_PROTOCOL_PRICE = "$0.002";
+
+type PharmacyComparePrice = {
+  displayName?: unknown;
+  pharmacy?: unknown;
+  pharmacyName?: unknown;
+  pharmacyId?: unknown;
+  id?: unknown;
+  price?: unknown;
+  distanceMiles?: unknown;
+  distance?: unknown;
+};
 
 export function buildCompareResponse(options: {
   drug: string;
@@ -99,28 +126,24 @@ export function buildCompareResponse(options: {
   isFallbackZip?: boolean;
   payTo: string;
   network: string;
-  prices: any[];
-  protocolPrice?: string;
+  prices: PharmacyComparePrice[];
+  protocolPrice: string;
 }): PharmacyCompareResponse {
-  if (!options.prices || options.prices.length === 0) {
-    return { ok: false, reason: "NO_PRICES_FOUND" } as any;
+  if (options.prices.length === 0) {
+    throw new Error("Cannot build a pharmacy comparison without prices");
   }
 
   const usedZipCode = options.usedZipCode ?? options.zip;
   const isFallbackZip = options.isFallbackZip ?? (usedZipCode !== options.zip);
 
   const formattedPrices = options.prices.map((p) => {
-    const distNum = typeof p.distanceMiles === "number"
-      ? p.distanceMiles
-      : typeof p.distance === "number"
-        ? p.distance
-        : parseFloat(String(p.distance || "0").replace(" mi", "")) || 0;
+    const distance = normalizeDistance(p);
 
     return {
       pharmacyName: p.pharmacy || p.pharmacyName,
       pharmacyId: p.pharmacyId || p.id,
       price: Number(p.price),
-      distance: +distNum.toFixed(1),
+      distance: distance === null ? null : +distance.toFixed(1),
       inStock: true,
     };
   });
@@ -139,7 +162,7 @@ export function buildCompareResponse(options: {
     protocol: {
       name: "x402",
       network: options.network,
-      price: options.protocolPrice ?? "$0.002",
+      price: options.protocolPrice,
       payTo: options.payTo,
     },
     prices: sorted,
@@ -160,4 +183,35 @@ export function buildCompareResponse(options: {
   };
 
   return PharmacyCompareResponseSchema.parse(response);
+}
+
+function normalizeDistance(price: {
+  pharmacyId?: unknown;
+  id?: unknown;
+  distanceMiles?: unknown;
+  distance?: unknown;
+}): number | null {
+  for (const value of [price.distanceMiles, price.distance]) {
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const match = value.match(/^\s*(\d+(?:\.\d+)?)\s*(?:mi)?\s*$/i);
+      if (match) {
+        const distance = Number(match[1]);
+        if (Number.isFinite(distance)) return distance;
+      }
+    }
+  }
+
+  logger.warn(
+    {
+      pharmacyId: price.pharmacyId ?? price.id,
+      distanceMiles: price.distanceMiles,
+      distance: price.distance,
+    },
+    "Unable to normalize pharmacy distance; returning null",
+  );
+  return null;
 }
