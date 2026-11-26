@@ -65,6 +65,58 @@ groups:
           runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/README.md"
 
   # -------------------------------------------------------------------------
+  # Per-tool failure rates (agent_tool_calls_total) — Issue #956
+  # -------------------------------------------------------------------------
+  - name: careguard-agent-tools
+    rules:
+      - alert: AgentX402ToolErrorRateHigh
+        # Fire when an individual x402-backed tool's error rate exceeds 10 % over
+        # 5 min (with >= 5 calls in the window to avoid paging on single-call noise).
+        # Distinguishes a single failing x402 endpoint from AgentRunErrorRateHigh
+        # and links to the OZ facilitator / x402 runbook.
+        expr: |
+          (
+            sum by (tool) (rate(agent_tool_calls_total{tool=~"compare_pharmacy_prices|audit_medical_bill|check_drug_interactions|pay_for_medication|pay_bill|fetch_and_audit_bill",status="error"}[5m]))
+            /
+            sum by (tool) (rate(agent_tool_calls_total{tool=~"compare_pharmacy_prices|audit_medical_bill|check_drug_interactions|pay_for_medication|pay_bill|fetch_and_audit_bill"}[5m]))
+          ) > 0.10
+          and
+          sum by (tool) (increase(agent_tool_calls_total{tool=~"compare_pharmacy_prices|audit_medical_bill|check_drug_interactions|pay_for_medication|pay_bill|fetch_and_audit_bill"}[5m])) >= 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "x402 tool {{ $labels.tool }} error rate exceeds 10 % (5 m window)"
+          description: >
+            Tool {{ $labels.tool }} is failing {{ $value | humanizePercentage }}
+            of calls over the last 5 min. Check OZ facilitator connectivity and
+            the corresponding x402 endpoint.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/oz-facilitator-outage.md"
+
+      - alert: AgentToolErrorRateHigh
+        # Fire when any non-x402 tool's error rate exceeds 10 % over 5 min
+        # (with >= 5 calls in the window). Uses the bounded low-cardinality `tool`
+        # label set documented in docs/observability/metrics-naming.md.
+        expr: |
+          (
+            sum by (tool) (rate(agent_tool_calls_total{tool!~"compare_pharmacy_prices|audit_medical_bill|check_drug_interactions|pay_for_medication|pay_bill|fetch_and_audit_bill",status="error"}[5m]))
+            /
+            sum by (tool) (rate(agent_tool_calls_total{tool!~"compare_pharmacy_prices|audit_medical_bill|check_drug_interactions|pay_for_medication|pay_bill|fetch_and_audit_bill"}[5m]))
+          ) > 0.10
+          and
+          sum by (tool) (increase(agent_tool_calls_total{tool!~"compare_pharmacy_prices|audit_medical_bill|check_drug_interactions|pay_for_medication|pay_bill|fetch_and_audit_bill"}[5m])) >= 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agent tool {{ $labels.tool }} error rate exceeds 10 % (5 m window)"
+          description: >
+            Tool {{ $labels.tool }} is failing {{ $value | humanizePercentage }}
+            of calls over the last 5 min. Check agent logs for tool-specific
+            validation errors, timeouts, or downstream service failures.
+          runbook_url: "https://github.com/harystyleseze/careguard/blob/main/docs/runbooks/README.md"
+
+  # -------------------------------------------------------------------------
   # Stellar transaction failures
   # -------------------------------------------------------------------------
   - name: careguard-stellar-tx
